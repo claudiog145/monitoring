@@ -1,0 +1,123 @@
+# ============================================================================================
+# COUPLING ALLOW-LIST - the inventory of Arrivia-specific coupling still present in the code.
+# ============================================================================================
+#
+# Enforced by Portal/tests/JourneyMonitor.Tests/Company/CouplingInventoryTests.cs.
+#
+# WHAT THIS FILE IS
+#   Every line below is a company-specific literal that is still hardcoded in
+#   JourneyMonitor.Core or JourneyMonitor.Infrastructure. The guardrail fails on any such
+#   literal that is NOT listed here, so this file is the exact, countable boundary between
+#   "debt we already owe" and "debt someone just added".
+#
+# THIS LIST IS MEANT TO SHRINK, NEVER TO GROW.
+#   Each entry is a blocker for onboarding a second customer. When the value moves into
+#   CompanyProfile, DELETE the line - the guardrail fails on stale entries precisely so the
+#   count cannot drift away from reality. The number of lines here is the progress metric.
+#
+# ADDING AN ENTRY
+#   Requires a real reason in the third column (the test rejects reasons under 10 characters).
+#   "temporary", "wip" and "fix later" are not reasons. If you cannot explain in one line why
+#   this literal cannot live in the company profile today, it belongs in the company profile.
+#
+# FORMAT
+#   path|literal|reason
+#     path    - relative to Portal/src, forward slashes. Line numbers are deliberately NOT
+#               part of the key: they churn on every edit and would make this file unmergeable.
+#     literal - the rule id from CouplingInventoryTests.Rules (not the matched text).
+#     reason  - why it is still here, and ideally who owns moving it.
+#   Lines starting with '#' and blank lines are ignored.
+#
+# EXEMPT LOCATIONS (never need an entry)
+#   - JourneyMonitor.Core/Company/**           the profile model itself
+#   - any file whose name contains "Arrivia"   the per-customer adapter/seed
+#   - JourneyMonitor.Infrastructure/Kql/*.txt  raw KQL, migrated by a separate track
+#
+# WHAT IS *NOT* ENFORCED, AND WHY (read before arguing the count is too low)
+#   - Comment-only lines. "Arrivia maps Service to Vertical" is documentation, not coupling.
+#   - Company-flavoured IDENTIFIERS: the `Vertical` property (143 occurrences across 34 files,
+#     including the SQL column and the Dapper row records), the `Club`/`Brand` nouns, and
+#     `Domain` as a synonym for vertical. These are a mechanical rename owned by another
+#     track; enforcing them here would bury the ~70 behavioural couplings below - the ones
+#     that actually produce wrong answers for a second customer - under 150 cosmetic hits.
+#     `IcePartnerId` IS enforced because it encodes a customer-identity concept, not a name.
+#   - Genuine false positives that were checked and dismissed:
+#       Infrastructure/Search/AzureDevOpsSearchTransport.cs:21 "499b84ac-...": the well-known
+#         Azure DevOps AAD resource id, identical for every tenant - not a subscription.
+#       Core/Incidents/IncidentIngestionPlanner.cs:236 and Infrastructure/Sql/SqlIncidentReader.cs
+#         "00000000-0000-0000-0000-000000000000": the empty-GUID sentinel.
+#       Core/Options/AzureDevOpsSearchOptions.cs:22 "arrivia": appears only in a doc comment
+#         as an example organisation, and has no default value in code.
+#
+# ============================================================================================
+
+JourneyMonitor.Core/Abstractions/IBrandCatalog.cs|icepartner|BrandClub carries the ICE partner id; becomes a generic EntityIdentity field
+JourneyMonitor.Core/Abstractions/IClubInventoryStore.cs|icepartner|Club inventory row shape mirrors brand.Information; follows the schema rename
+JourneyMonitor.Core/Abstractions/IDashboardMetricStore.cs|service-name-literal|Chart set is chosen per vertical in code; belongs in ServiceDefinition
+JourneyMonitor.Core/Analytics/DomainComparisonCalculator.cs|service-name-literal|Comparison domains and per-domain predicates are hardcoded per vertical
+JourneyMonitor.Core/Analytics/DomainComparisonCalculator.cs|step-name-literal|"reached search" is decided by stage label; needs a StepDefinition role flag
+JourneyMonitor.Core/Configuration/InsightsSourceResolver.cs|service-name-literal|Resolver branches per vertical; superseded by TelemetrySourceAliases
+JourneyMonitor.Core/Configuration/InsightsSourceResolver.cs|t-mobile|Cruise fallback host; belongs in ServiceDefinition.HostFilters
+JourneyMonitor.Core/Configuration/TelemetrySourceDefaults.cs|azure-subscription-id|Seed rows for the shipped App Insights resources; move to configuration/seed SQL
+JourneyMonitor.Core/Configuration/TelemetrySourceDefaults.cs|sor-frontend|Arrivia SaveOnResorts telemetry alias in the shipped seed
+JourneyMonitor.Core/Domain/Inspector.cs|icepartner|ForensicCase stores the ICE partner id as a first-class field
+JourneyMonitor.Core/Domain/PortalDomains.cs|service-name-literal|The portal's vertical list is a constant; becomes CompanyProfile.Services
+JourneyMonitor.Core/Domain/Scout.cs|icepartner|Scout rows and ClubResolution.IcePartnerIdMatch name the ICE identity source
+JourneyMonitor.Core/Filtering/BrandClubOptions.cs|icepartner|Picks club id vs ICE partner id per vertical; EntityIdentitySource order replaces this
+JourneyMonitor.Core/Filtering/BrandClubOptions.cs|saveonuat|Staging hostname of the pilot customer used to classify an environment
+JourneyMonitor.Core/Filtering/BrandClubOptions.cs|service-name-literal|Hardcodes which verticals are identified by partner id
+JourneyMonitor.Core/Filtering/ClubDiscoveryKql.cs|service-name-literal|Discovery KQL is generated per vertical with literal domain keys
+JourneyMonitor.Core/Filtering/ClubDiscoveryKql.cs|vacationclub|VacationClubID custom dimension; belongs in EntityIdentitySource.Key
+JourneyMonitor.Core/Filtering/ClubFilter.cs|entity-id-literal|Demo club ids 15639/308 are the pilot customer's real ids, compiled in
+JourneyMonitor.Core/Filtering/ClubFilter.cs|saveonuat|Pilot customer staging hostnames in the demo club table
+JourneyMonitor.Core/Filtering/ClubFilter.cs|service-name-literal|Per-vertical demo clubs, labels and query guards keyed on literal domains
+JourneyMonitor.Core/Filtering/ClubFilter.cs|t-mobile|Pilot customer production hostnames and brand label in the demo club table
+JourneyMonitor.Core/Incidents/IncidentIngestionPlanner.cs|service-name-literal|Car-vs-hotel exception routing branches on the literal vertical key
+JourneyMonitor.Core/Incidents/IncidentIngestionPlanner.cs|step-name-literal|Returns funnel stage labels directly; must resolve through StepDefinition
+JourneyMonitor.Core/Incidents/JourneyStageResolver.cs|service-name-literal|Stage resolution dispatches on the literal vertical key
+JourneyMonitor.Core/Incidents/JourneyStageResolver.cs|step-name-literal|The entire 28-stage funnel is a C# switch; the single biggest profile item
+JourneyMonitor.Core/Incidents/JourneyStageResolver.cs|tmo|AuthenticateTmo operation name is a pilot-customer SSO matcher
+JourneyMonitor.Core/Incidents/JourneyStageResolver.cs|t-mobile|"01 T-Mobile SSO" names the customer inside a stage label
+JourneyMonitor.Core/Mapping/AirJourneyMapper.cs|service-name-literal|Air rows are stamped with literal vertical keys during mapping
+JourneyMonitor.Core/Mapping/HotelJourneyMapper.cs|service-name-literal|One mapper serves three verticals by branching on literal domain keys
+JourneyMonitor.Core/Mapping/HotelJourneyMapper.cs|tmo|"No TMO API duration" is customer wording shown in the UI
+JourneyMonitor.Core/Mapping/HotelJourneyMapper.cs|t-mobile|"T-Mobile SSO Failed" error label for stage 1
+JourneyMonitor.Core/Monitoring/ClubIdentityResolver.cs|icepartner|Entity resolution tries ClubId then IcePartnerId; becomes profile-driven order
+JourneyMonitor.Core/Monitoring/Inspector/InspectorMonkeyService.cs|icepartner|Copies the ICE partner id onto the investigation package
+JourneyMonitor.Core/Monitoring/Inspector/InspectorSpecialists.cs|service-name-literal|Board vertical labels are mapped to store domain keys by a literal dictionary
+JourneyMonitor.Core/Monitoring/Inspector/RedAlertPolicy.cs|icepartner|Red Alert treats an ICE partner id as proof the entity is identified
+JourneyMonitor.Core/Monitoring/ScoutAssessorService.cs|icepartner|Prompt text names the ICE partner id to the model
+JourneyMonitor.Core/Monitoring/ScoutMonkeyService.cs|icepartner|Copies the ICE partner id onto the scout row
+JourneyMonitor.Core/Options/JourneySyncOptions.cs|entity-id-literal|Default sync club is the pilot customer's club 15639
+JourneyMonitor.Core/Options/RedAlertOptions.cs|service-name-literal|Pilot scope defaults to the Arrivia hotel and cruise verticals
+JourneyMonitor.Core/Options/ScoutOptions.cs|service-name-literal|Scout entry domain defaults to the Arrivia hotels app
+JourneyMonitor.Core/UseCases/ClubHostResolver.cs|service-name-literal|Demo host resolution switches on literal vertical keys
+JourneyMonitor.Core/UseCases/GetClubsService.cs|entity-id-literal|Maps pilot club 15639 to cruise partner 308 in code
+JourneyMonitor.Core/UseCases/GetClubsService.cs|service-name-literal|Club source per vertical is a literal switch
+JourneyMonitor.Core/UseCases/GetClubsService.cs|t-mobile|Operator-facing explanation text names the pilot customer
+JourneyMonitor.Core/UseCases/GetDashboardMetricsService.cs|service-name-literal|Request validation hardcodes the four Arrivia verticals
+JourneyMonitor.Core/UseCases/GetDbJourneysService.cs|service-name-literal|ValidDomains is the Arrivia vertical list
+JourneyMonitor.Core/UseCases/GetIncidentsService.cs|service-name-literal|ValidDomains is the Arrivia vertical list
+JourneyMonitor.Core/UseCases/GetJourneysService.cs|entity-id-literal|Default club falls back to the pilot customer's 15639/308
+JourneyMonitor.Core/UseCases/GetJourneysService.cs|service-name-literal|Air takes a separate code path selected by the literal vertical key
+JourneyMonitor.Core/UseCases/GetOverviewService.cs|service-name-literal|ValidDomains is the Arrivia vertical list
+JourneyMonitor.Core/UseCases/KqlQueryAdminService.cs|service-name-literal|Query catalog keys and descriptions are built per Arrivia vertical
+JourneyMonitor.Core/UseCases/LatencySpikeSettingsService.cs|service-name-literal|KnownDomains is the Arrivia vertical list
+JourneyMonitor.Core/UseCases/MonkeyRunners.cs|service-name-literal|Monkey run scope is the Arrivia vertical list
+JourneyMonitor.Core/UseCases/SloDefinitionsService.cs|service-name-literal|SLO scope validation uses the Arrivia vertical list
+JourneyMonitor.Core/UseCases/SyncDashboardMetricsService.cs|service-name-literal|Cruise is keyed by partner id and others by host, decided in code
+JourneyMonitor.Core/UseCases/SyncIncidentsService.cs|icepartner|Chooses the PartnerId column per vertical when filtering exceptions
+JourneyMonitor.Core/UseCases/SyncIncidentsService.cs|service-name-literal|Which verticals are synced and how is branched on literal domain keys
+JourneyMonitor.Core/UseCases/SyncJourneysService.cs|entity-id-literal|Cruise/Air sync falls back to the pilot customer's partner 308
+JourneyMonitor.Core/UseCases/SyncJourneysService.cs|service-name-literal|Per-vertical vs per-club sync strategy is chosen by literal domain key
+JourneyMonitor.Infrastructure/Demo/DemoJourneyFixtureProvider.cs|tmo|Default fixture filename is the pilot customer's exported snapshot
+JourneyMonitor.Infrastructure/Kql/DbKqlQueryTextProvider.cs|service-name-literal|Air has a dedicated accessor keyed on the literal vertical
+JourneyMonitor.Infrastructure/Kql/KqlQueryTextProvider.cs|service-name-literal|Embedded-resource map is keyed by Arrivia vertical
+JourneyMonitor.Infrastructure/Kql/KqlQueryTextProvider.cs|t-mobile|Embedded KQL resource filenames carry the pilot customer's name
+JourneyMonitor.Infrastructure/Monitoring/InMemoryInspectorRepositories.cs|icepartner|In-memory club match mirrors the SQL proc's ClubId/IcePartnerId pair
+JourneyMonitor.Infrastructure/Sql/SqlBrandCatalog.cs|icepartner|Reads IcePartnerId from brand.Information; follows the schema rename
+JourneyMonitor.Infrastructure/Sql/SqlClubInventoryStore.cs|icepartner|Selects IcePartnerId from the club inventory table
+JourneyMonitor.Infrastructure/Sql/SqlForensicCaseRepository.cs|icepartner|IcePartnerId is a stored procedure parameter and a column name
+JourneyMonitor.Infrastructure/Sql/SqlInvestigationPackageRepository.cs|icepartner|IcePartnerId is a stored procedure parameter and a column name
+JourneyMonitor.Infrastructure/Sql/SqlJourneyStore.cs|service-name-literal|Maps Arrivia vertical keys to the per-vertical SQL schema names
+JourneyMonitor.Infrastructure/Sql/SqlOverviewReader.cs|service-name-literal|Maps Arrivia vertical keys to the per-vertical SQL schema names

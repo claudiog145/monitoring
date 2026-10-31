@@ -1,0 +1,1856 @@
+[
+  {
+    "name": "GetAgentBudgets",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.AgentBudgetFunction.GetAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "agent-budgets",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "UpsertAgentBudget",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.AgentBudgetFunction.UpsertAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "put"
+        ],
+        "route": "agent-budgets/{id}",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetAgentBudgetHistory",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.AgentBudgetFunction.GetHistoryAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "agent-budgets/{id}/history",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetCompanyProfiles",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.CompanyProfileAdminFunctions.ListAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/company-profiles",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetCompanyProfileAudit",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.CompanyProfileAdminFunctions.AuditAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/company-profiles-audit",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetActiveCompanyProfile",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.CompanyProfileAdminFunctions.GetActiveAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/company-profiles-active",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "SetActiveCompanyProfile",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.CompanyProfileAdminFunctions.SetActiveAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "put"
+        ],
+        "route": "settings/company-profiles-active",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetCompanyProfile",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.CompanyProfileAdminFunctions.GetAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/company-profiles/{key}",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "UpsertCompanyProfile",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.CompanyProfileAdminFunctions.UpsertAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "put"
+        ],
+        "route": "settings/company-profiles/{key}",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "ComposeRca",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.ComposeRcaFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "post"
+        ],
+        "route": "inspector/cases/{id}/rca",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "DiscardInspectorQueue",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.DiscardInspectorQueueFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "post"
+        ],
+        "route": "inspector/queue/discard",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetAlertChannelSettingsAudit",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetAlertChannelSettingsAuditFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/notifications/audit",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetAlertChannelSettings",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetAlertChannelSettingsFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/notifications",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetClubInventory",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetClubInventoryFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "club-inventory",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetClubs",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetClubsFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "clubs",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetDashboardMetrics",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetDashboardMetricsFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "analytics/metrics",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetDbJourneys",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetDbJourneysFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "journeys/db",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetFindings",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetFindingsFunction.GetFindingsAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "findings",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetFindingDoctorReport",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetFindingsFunction.GetDoctorReportAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "findings/{id:guid}/doctor-report",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetIncidents",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetIncidentsFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "exceptions",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetInspectorCases",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetInspectorFunction.GetCasesAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "inspector/cases",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetInspectorCaseById",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetInspectorFunction.GetCaseByIdAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "inspector/cases/{id}",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetInspectorQueue",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetInspectorFunction.GetQueueAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "inspector/queue",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetInspectorToasts",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetInspectorFunction.GetToastsAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "inspector/toasts",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetKnowledgeDocuments",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetKnowledgeDocumentsFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "knowledge/documents",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetKnowledgeDocument",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetKnowledgeDocumentsFunction.RunDocumentAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "knowledge/document",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetLatencySpikeSettingsAudit",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetLatencySpikeSettingsAuditFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/latency/audit",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetLatencySpikeSettings",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetLatencySpikeSettingsFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/latency",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetLlmClientSettingsAudit",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetLlmClientSettingsAuditFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/llm-client/audit",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetLlmClientSettings",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetLlmClientSettingsFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/llm-client",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetMonkeys",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetMonkeysFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "monkeys",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetOverview",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetOverviewFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "overview",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetRca",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetRcaFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "inspector/cases/{id}/rca",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetScoutPackages",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetScoutPackagesFunction.GetPackagesAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "scout/packages",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetScoutPackageById",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetScoutPackagesFunction.GetPackageByIdAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "scout/packages/{id}",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetScoutRuns",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetScoutPackagesFunction.GetRunsAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "scout/runs",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetScoutStats",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetScoutPackagesFunction.GetStatsAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "scout/stats",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetSloDefinitionsAudit",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetSloDefinitionsAuditFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/slo/audit",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetSloDefinitions",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetSloDefinitionsFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/slo",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetStoredJourneys",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.GetStoredJourneysFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "journeys/stored",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "ImportKnowledgeCorpus",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.ImportKnowledgeCorpusFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "post"
+        ],
+        "route": "knowledge/import",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "InspectorMonkey",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.InspectorMonkeyFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timer",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 */1 * * * *",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "GetKqlQueries",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.KqlQueryAdminFunctions.ListAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/kql",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetKqlQuery",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.KqlQueryAdminFunctions.GetAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/kql/{key}",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "UpsertKqlQuery",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.KqlQueryAdminFunctions.UpsertAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "put"
+        ],
+        "route": "settings/kql/{key}",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "RevertKqlQuery",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.KqlQueryAdminFunctions.RevertAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "post"
+        ],
+        "route": "settings/kql/{key}/revert",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetKqlQueryAudit",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.KqlQueryAdminFunctions.AuditAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/kql-audit",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetKqlQueryAuditEntry",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.KqlQueryAdminFunctions.AuditEntryAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/kql-audit/{auditId:long}",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "RestoreKqlQueryVersion",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.KqlQueryAdminFunctions.RestoreAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "post"
+        ],
+        "route": "settings/kql-audit/{auditId:long}/restore",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "ImportBuiltInKqlQueries",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.KqlQueryAdminFunctions.ImportAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "post"
+        ],
+        "route": "settings/kql/import-builtins",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "LatencySpikeMonkey",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.LatencySpikeMonkeyFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timer",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 */5 * * * *",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "ListLlmClientModels",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.ListLlmClientModelsFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "post"
+        ],
+        "route": "settings/llm-client/models",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "PauseMonkey",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.PauseMonkeyFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "post"
+        ],
+        "route": "monkeys/{id}/pause",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "RefreshJourneys",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.RefreshJourneysFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "post"
+        ],
+        "route": "journeys/refresh",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "RunMonkeyNow",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.RunMonkeyNowFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "post"
+        ],
+        "route": "monkeys/{id}/run",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "LatencyScoutMonkey",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.LatencyScoutMonkeyFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timer",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 */5 * * * *",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "ExceptionScoutMonkey",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.ExceptionScoutMonkeyFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timer",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 */5 * * * *",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "SearchKnowledge",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.SearchKnowledgeFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "knowledge/search",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "SloBurnRateMonkey",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.SloBurnRateMonkeyFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timer",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 */5 * * * *",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "SyncHotelJourneys",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.SyncJourneysFunction.SyncHotelsAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timer",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "%platform_reliability_cron_setting%",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "SyncCruiseJourneys",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.SyncJourneysFunction.SyncCruisesAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timer",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "%platform_reliability_cron_setting%",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "DiscoverTelemetryResource",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.TelemetryDiscoveryFunctions.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "onboarding/discover",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "BuildCompanyProfileDraft",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.TelemetryDiscoveryFunctions.DraftAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "post"
+        ],
+        "route": "onboarding/draft",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetTelemetrySources",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.TelemetrySourceAdminFunctions.ListAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/telemetry-sources",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "UpsertTelemetrySource",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.TelemetrySourceAdminFunctions.UpsertAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "put"
+        ],
+        "route": "settings/telemetry-sources",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "DeleteTelemetrySource",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.TelemetrySourceAdminFunctions.DeleteAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "post"
+        ],
+        "route": "settings/telemetry-sources/{alias}/{environment}/delete",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetTelemetrySourceAudit",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.TelemetrySourceAdminFunctions.AuditAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "settings/telemetry-sources-audit",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "UpsertAlertChannelSetting",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.UpsertAlertChannelSettingFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "put"
+        ],
+        "route": "settings/notifications",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "UpsertLatencySpikeSetting",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.UpsertLatencySpikeSettingFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "put"
+        ],
+        "route": "settings/latency/{domain}",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "UpsertLlmClientSetting",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.UpsertLlmClientSettingFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "put"
+        ],
+        "route": "settings/llm-client",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "UpsertSloDefinition",
+    "scriptFile": "JourneyMonitor.Functions.dll",
+    "entryPoint": "JourneyMonitor.Functions.Functions.UpsertSloDefinitionFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "put"
+        ],
+        "route": "settings/slo",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  }
+]

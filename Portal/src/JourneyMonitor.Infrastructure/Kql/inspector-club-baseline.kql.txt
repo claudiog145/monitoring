@@ -1,0 +1,77 @@
+// Inspector Monkey / LogsAgent - per-club exception baseline.
+//
+// Answers the one question the Scout's own rule cannot: "is this volume actually abnormal for
+// THIS club?". The exception board compares a bucket only against the immediately preceding one,
+// so a club climbing out of a quiet valley trips the rule at a volume that is ordinary for it -
+// measured on stays.tmobiletravel.com, a bucket packaged as "Investigate now" (1683 exceptions)
+// sat BELOW that same club's 7-day P95 (2243, median 358).
+//
+// Exceptions are attributed to a club exactly the way the board attributes them: an Application
+// Insights exception row carries no club id of its own, so it inherits one from the request that
+// shares its operation_Id. Attributing them any other way would produce a baseline that is not
+// comparable with the number the Scout packaged, which is the whole point of this query.
+//
+// Placeholders are substituted by ClubBaselineTool before the text reaches Application Insights.
+// {{ENTITY_KEY_B64}} is base64 so no club or host name can ever terminate a KQL string literal.
+// The resource list mirrors scout-drilldown/scout-*-priorities; keep them in sync.
+let entityKey = base64_decode_tostring('{{ENTITY_KEY_B64}}');
+// "club:140" -> "140", "host:stays.example.com" -> "stays.example.com". Used only for the cheap
+// pre-filter below; the exact match is still done on the full Entity.
+let entityValue = substring(entityKey, indexof(entityKey, ":") + 1);
+let bucketSize = toint('{{BUCKET_MINUTES}}') * 1m;
+let tEnd = {{TIME_END}};
+let tStart = tEnd - ({{LOOKBACK_DAYS}} * 1d);
+// The count the Scout packaged, so the percentile of the current bucket is computed here rather
+// than left to a model to work out from five summary numbers.
+let currentExceptions = todouble({{CURRENT_EXCEPTIONS}});
+// Every request this club made over the lookback, reduced to its operation ref. The
+// url/customDimensions pre-filter is a strict superset of the Entity test that follows - it only
+// exists so parse_url does not run over several days of three production resources.
+let entityRefs = materialize(union
+(app("{{SOURCE:sor-frontend}}").requests | where timestamp >= tStart and timestamp < tEnd | project timestamp, operation_Id, url, customDimensions | extend Source="SOR"),
+(app("{{SOURCE:cruise-core}}").requests | where timestamp >= tStart and timestamp < tEnd | project timestamp, operation_Id, url, customDimensions | extend Source="Cruise Core"),
+(app("{{SOURCE:cruise-api}}").requests | where timestamp >= tStart and timestamp < tEnd | project timestamp, operation_Id, url, customDimensions | extend Source="Cruise API")
+| where isnotempty(operation_Id)
+| where url contains entityValue or tostring(customDimensions) contains entityValue
+// The entity chain and the host normalisation below MIRROR the company profile
+// (monitoring.CompanyProfile, key 'arrivia') because this query is compared against an entity key
+// the profile produced: Host is lowercased exactly as the board and the profile lowercase it, or
+// a mixed-case hostname in the url yields "host:Members.X.com" here against "host:members.x.com"
+// there and == silently reports that this club has no history at all. customDimensions.CobrandId
+// is absent for the same reason it was dropped from the profile - zero occurrences in 23,802
+// sampled rows, so it only ever lengthened the chain. The cobrand query parameters stay.
+| extend Host=tolower(tostring(parse_url(url).Host)),
+         Club=coalesce(tostring(customDimensions.VacationClubId),tostring(customDimensions.VacationClubID),tostring(customDimensions.ClubId),tostring(customDimensions.club_id),tostring(parse_url(url)["Query Parameters"]["cobrand"]),tostring(parse_url(url)["Query Parameters"]["cobrandId"]))
+| extend Entity=iff(isnotempty(Club),strcat("club:",Club),iff(isnotempty(Host),strcat("host:",Host),"[host/club unavailable]"))
+| where Entity == entityKey
+| summarize by Ref=strcat(Source,":",operation_Id));
+let buckets = union
+(app("{{SOURCE:sor-frontend}}").exceptions | where timestamp >= tStart and timestamp < tEnd | project timestamp, operation_Id | extend Source="SOR"),
+(app("{{SOURCE:cruise-core}}").exceptions | where timestamp >= tStart and timestamp < tEnd | project timestamp, operation_Id | extend Source="Cruise Core"),
+(app("{{SOURCE:cruise-api}}").exceptions | where timestamp >= tStart and timestamp < tEnd | project timestamp, operation_Id | extend Source="Cruise API")
+| where isnotempty(operation_Id)
+| extend Ref=strcat(Source,":",operation_Id)
+| join hint.shufflekey=Ref kind=inner (entityRefs) on Ref
+| summarize Exceptions=count() by Bucket=bin(timestamp, bucketSize);
+buckets
+| summarize BucketsObserved=count(),
+            MedianExceptions=round(todouble(percentile(Exceptions, 50)), 1),
+            P95Exceptions=round(todouble(percentile(Exceptions, 95)), 1),
+            MaxExceptions=max(Exceptions),
+            MeanExceptions=round(avg(todouble(Exceptions)), 1),
+            BucketsAtOrBelowCurrent=countif(todouble(Exceptions) <= currentExceptions)
+// BucketsObserved counts only buckets that had at least one exception. BucketsPossible is how
+// many buckets the lookback contains, so a sparse club is not mistaken for a continuous one -
+// a median over 12 busy buckets and a median over 2016 are not the same claim.
+| extend EntityKey=entityKey,
+         LookbackDays={{LOOKBACK_DAYS}},
+         BucketMinutes=toint('{{BUCKET_MINUTES}}'),
+         WindowStart=tStart,
+         WindowEnd=tEnd,
+         BucketsPossible=toint(datetime_diff("minute", tEnd, tStart) / toint('{{BUCKET_MINUTES}}')),
+         CurrentExceptions=currentExceptions
+| extend CurrentPercentileOfBaseline=iff(BucketsObserved > 0, round(100.0 * BucketsAtOrBelowCurrent / BucketsObserved, 1), real(null))
+| project EntityKey, LookbackDays, BucketMinutes, WindowStart, WindowEnd,
+          BucketsObserved, BucketsPossible,
+          MedianExceptions, P95Exceptions, MaxExceptions, MeanExceptions,
+          CurrentExceptions, CurrentPercentileOfBaseline

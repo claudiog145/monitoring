@@ -1,0 +1,42 @@
+// Hotel — latency SPIKE detection (per-transaction rows, NOT aggregated). Derived from the same
+// stage classifier used by TMobile_HOTEL_Query_KQL_v6d_demo_2h.txt's httpCalls block, scoped down
+// to only what LatencySpikeDetectorService needs. {{WINDOW_MINUTES}} and {{FLOOR_MS}} are
+// substituted by LatencySpikeDetectorService before this text is sent to Application Insights.
+let win = {{WINDOW_MINUTES}}m;
+let tmoHost = "stays.tmobiletravel.com";
+let floorMs = {{FLOOR_MS}};
+requests
+| where timestamp > ago(win)
+| where url has tmoHost
+| extend ReqCorr = coalesce(tostring(customDimensions.CorrelationId), tostring(customDimensions.correlationId), tostring(customDimensions.correlation_id))
+| extend StageNo = case(
+    url has "login.json" or url has "logincheck", 1,
+    url has "search.json", 2,
+    url has "BackgroundHotelSearch", 3,
+    url has "searchrooms" or url has "getcancelpolicy" or url has "HotelDetails"
+        or url has "ZentrumHubHotelDetailsContent" or url has "GetReviews", 4,
+    url has "book.json", 5,
+    url has "/reservations/Purchase" and url !has "PurchaseComplete"
+        and url !has "CompletePurchase", 6,
+    url has "userpeople_read" or url has "AddRemoveInsurance"
+        or url has "TravelerProfile", 6,
+    url has "CompletePurchase" or url has "determine3dseligibility", 7,
+    url has "PurchaseComplete", 8,
+    url has "/reservations/Cancel", 9,
+    0)
+| where StageNo > 0
+| extend Stage = case(
+    StageNo == 1, "01 Login",
+    StageNo == 2, "02 Hotel Search",
+    StageNo == 3, "03 Hotel Results",
+    StageNo == 4, "04 Hotel Details",
+    StageNo == 5, "05 PreBook",
+    StageNo == 6, "06 Checkout",
+    StageNo == 7, "07 Booking",
+    StageNo == 8, "08 Confirmation",
+    "09 Cancellation")
+| extend Ms = todouble(duration)
+| where Ms > floorMs
+| project Ts = timestamp, CorrelationId = ReqCorr, OperationId = operation_Id, Stage, Ms,
+          ResultCode = tostring(resultCode), Success = success
+| order by Ts desc

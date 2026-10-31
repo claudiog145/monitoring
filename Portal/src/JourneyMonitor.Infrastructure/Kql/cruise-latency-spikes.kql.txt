@@ -1,0 +1,46 @@
+// Cruise — latency SPIKE detection (per-transaction rows, NOT aggregated). Derived from the same
+// stage classifier used by TMobile_CRUISE_Query_KQL_v2.txt's webCalls block. Cruise stage timing
+// is frontend pageViews (not backend requests, unlike Cars/Hotel), so there is no HTTP
+// ResultCode here — the classifier treats a missing breakdown as "unknown" honestly rather than
+// guessing. {{WINDOW_MINUTES}} and {{FLOOR_MS}} are substituted by LatencySpikeDetectorService.
+let win = {{WINDOW_MINUTES}}m;
+let tmoHost = "cruise.tmobiletravel.com";
+let tmoPartner = "308";
+let floorMs = {{FLOOR_MS}};
+pageViews
+| where timestamp > ago(win)
+| extend SessionId = tostring(customDimensions.session_id),
+         PartnerId = tostring(customDimensions.partnerId),
+         Product = tostring(customDimensions.product)
+| where isnotempty(SessionId)
+| where PartnerId == tmoPartner
+| where Product == "cruise" or url has tmoHost
+| extend StageNo = case(
+    url has "cruise-listing" or name == "DestinationSearch" or url == "/search", 2,
+    url has "cruise-detail" or name == "ProductDetails" or url == "/itinerary", 3,
+    url has "rooms-rates" or name == "RoomsandRates" or url == "/category", 4,
+    url has "total-price" or name == "PriceReview" or url == "/pricing", 5,
+    url has "cabin-selection" or name == "SelectaRoom" or url == "/cabin", 6,
+    url has "/passenger" or name has "Passenger", 7,
+    url has "/options", 8,
+    url has "/payment" or name has "Payment", 9,
+    url has "/review" or name has "BookingReview", 10,
+    url has "confirm" or name has "Confirm", 11,
+    0)
+| where StageNo > 0
+| extend Stage = case(
+    StageNo == 2, "02 Cruise Listing",
+    StageNo == 3, "03 Cruise Detail",
+    StageNo == 4, "04 Rooms & Rates",
+    StageNo == 5, "05 Total Price",
+    StageNo == 6, "06 Cabin Selection",
+    StageNo == 7, "07 Passenger",
+    StageNo == 8, "08 Options",
+    StageNo == 9, "09 Payment",
+    StageNo == 10, "10 Review",
+    "11 Confirmation")
+| extend Ms = todouble(duration)
+| where Ms > floorMs
+| project Ts = timestamp, CorrelationId = SessionId, OperationId = operation_Id, Stage, Ms,
+          ResultCode = "", Success = true
+| order by Ts desc

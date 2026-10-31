@@ -1,0 +1,457 @@
+// Air Journey — PORTAL copy. `let win` is injected from the header Time range
+// (15m / 1h / 6h / 24h / 7d). Sample is the newest 15 journeys, not a full feed.
+// Cross-resource: Production UI+API (default below). Staging injects UAT UI+API.
+// T-Mobile partner/club = 308. No tmoHost (Air does not scope by hotel hostname).
+// Keep this file as one contiguous block: Azure Logs treats blank lines as query separators.
+// Returns newest LastSeen first:
+//   Status | BookingId | BookOk | BookFail | FailedCalls | IsBookSuccessful | PassedSearch | Exceptions |
+//   JourneyTotalMs | OverallP95 | SlowestCallMs | UserId | ClubId | Route |
+//   CorrelationId | StepsCompleted | FunnelStep | LastStep | FirstSeen | LastSeen | Sources | Steps | Journey
+// Status: BOOKED when step 06 Confirmation ran or Book Success fired;
+// FAILED AT STEP N when first-party FailedCalls or Book Error fired (N = first failed step,
+// else FunnelStep); otherwise DROPPED AT STEP N where N = FunnelStep.
+// FunnelStep is the last step reached with no hole below it; LastStep is the highest step seen.
+// They differ when a stray later call is classified into a step the user never reached, so
+// DROPPED AT STEP N now means steps 01..N all have telemetry and no first-party error.
+// IN_PROGRESS covers FunnelStep = 0, including API-side correlation ids that never had a
+// 01 Flight Search of their own.
+// IsBookSuccessful is true when BookOk > 0. PassedSearch is true when StepsCompleted > 0.
+// Exceptions is FailedCalls for that CorrelationId (already the per-journey sum of first-party failures).
+// Journey is an ordered collection, one entry per completed journey step:
+//   stepNo, step, offsetMs, durationMs, sumCallMs, sumApiMs, sumUiMs, maxCallMs, p95Ms, wallMs,
+//   callCount, fails, calls
+// calls is the list of external HTTP/dependency/latency items in that step, each with:
+//   name, kind (request|dependency|event), source (Air.UI|Air.API), durationMs, durationSource,
+//   maxMs, p50Ms, p90Ms, p95Ms, p99Ms, gapMs, offsetMs, failed, status, target, path
+// Percentiles are across repeats of the same call name in that step (one hit => all equal durationMs).
+// durationMs comes from request/dependency duration, customMeasurements.elapsedMs, or an
+// elapsed-style customDimension; durationSource names which resource and field supplied it.
+// SCOPE: both resources are queried explicitly with app(), so the query returns the same result
+// no matter which resource the Logs blade is pointed at. The API-side requests/dependencies are
+// what carry the real server durations for the lower calls.
+// Production ARM ids are the defaults in this file. The portal Environment=Staging injector
+// swaps them for the UAT UI+API resources in insights-config.js (AIR_CROSS_RESOURCE).
+// Keep this file as one contiguous block: Azure Logs treats blank lines as query separators.
+// T-Mobile Travel = partner 308 (OvsPartnerCatalog). ClubId is often the same id when stamped as club_id.
+// PERFORMANCE: three cheap indexed passes instead of one big scan.
+//   1. find the newest T-Mobile correlation ids   (has "308" hits the term index)
+//   2. map those ids to operation_Ids             (has_any over 10 ids hits the term index)
+//   3. pull the journey rows and materialize once (every regex runs on the small set only)
+// materialize() is what matters most: without it the whole scored pipeline is recomputed
+// once per downstream let (journeyStarts, callStats, stepCalls, stepRows, final summarize).
+let win = 15m;
+// Replaced from the Club dropdown. Air options are ICE partner ids; there is no hostname scope.
+let tmoPartner = "308";
+let tmoClub = "308";
+let evAll =
+    union isfuzzy=true
+        (app('{{SOURCE:air-ui}}').customEvents  | extend Src = "Air.UI"),
+        (app('{{SOURCE:air-api}}').customEvents | extend Src = "Air.API");
+let pvAll =
+    union isfuzzy=true
+        (app('{{SOURCE:air-ui}}').pageViews  | extend Src = "Air.UI"),
+        (app('{{SOURCE:air-api}}').pageViews | extend Src = "Air.API");
+let reqAll =
+    union isfuzzy=true
+        (app('{{SOURCE:air-ui}}').requests  | extend Src = "Air.UI"),
+        (app('{{SOURCE:air-api}}').requests | extend Src = "Air.API");
+let depAll =
+    union isfuzzy=true
+        (app('{{SOURCE:air-ui}}').dependencies  | extend Src = "Air.UI"),
+        (app('{{SOURCE:air-api}}').dependencies | extend Src = "Air.API");
+// PASS 1 — newest T-Mobile journeys, from UI-stamped events (partnerId/club_id = 308).
+// "has tmoClub" is a term-index lookup, so only candidate rows are ever stringified.
+let tmoCorrTable = materialize(
+    union isfuzzy=true
+        (evAll | where timestamp > ago(win) | where customDimensions has tmoClub | project timestamp, customDimensions),
+        (pvAll | where timestamp > ago(win) | where customDimensions has tmoClub | project timestamp, customDimensions)
+    | extend Dims = tostring(customDimensions)
+    | extend CorrelationId = coalesce(
+            tostring(coalesce(customDimensions.correlationId, customDimensions.CorrelationId, customDimensions["correlationId"], customDimensions["CorrelationId"])),
+            extract(@"[Cc]orrelation[Ii]d\\?""?\s*:\s*\\?""?\s*([0-9a-fA-F-]{36})", 1, Dims),
+            extract(@"[Cc]orrelation[Ii]d[=:\s""]+([0-9a-fA-F-]{36})", 1, Dims)),
+             ClubId = coalesce(
+            extract(@"[Cc]lub[Ii]d\\?""?\s*:\s*\\?""?\s*([^""\\]+)", 1, Dims),
+            extract(@"club_id\\?""?\s*:\s*\\?""?\s*([^""\\]+)", 1, Dims)),
+             PartnerId = coalesce(
+            extract(@"[Pp]artner[Ii]d\\?""?\s*:\s*\\?""?\s*([^""\\]+)", 1, Dims),
+            extract(@"partner_id\\?""?\s*:\s*\\?""?\s*([^""\\]+)", 1, Dims))
+    | where isnotempty(CorrelationId)
+    | where ClubId == tmoClub or PartnerId == tmoPartner
+    | summarize LastHint = max(timestamp) by CorrelationId
+    | top 50 by LastHint desc);
+let tmoCorrs = tmoCorrTable | project CorrelationId;
+// Dynamic set drives the has_any() term-index lookups below.
+// PORTAL: this cap, not the `top` above, is what actually feeds passes 2 and 3.
+// Keep it >= every `top N` in this file or journeys are dropped silently.
+let corrSet = toscalar(tmoCorrTable | summarize make_set(CorrelationId, 15));
+// PASS 2 — operation_Ids belonging to those journeys, so API rows that never stamp the
+// correlation id still join to the right journey.
+let opIds = materialize(
+    union isfuzzy=true
+        (evAll | where timestamp > ago(win) | where customDimensions has_any (corrSet) | project operation_Id),
+        (pvAll | where timestamp > ago(win) | where customDimensions has_any (corrSet) | project operation_Id)
+    | where isnotempty(operation_Id)
+    | distinct operation_Id);
+// PASS 3 — the journey rows themselves. Both predicates are index-friendly.
+let items = materialize(
+    union
+        (evAll
+         | where timestamp > ago(win)
+         | where customDimensions has_any (corrSet) or operation_Id in (opIds)
+         | project timestamp, operation_Id,
+                   CorrelationId = tostring(coalesce(customDimensions.correlationId, customDimensions.CorrelationId, customDimensions["correlationId"], customDimensions["CorrelationId"])),
+                   EventName = tostring(name),
+                   Path = "",
+                   Target = "",
+                   Code = "",
+                   Ms = todouble(coalesce(customMeasurements.elapsedMs, customMeasurements["elapsedMs"], customMeasurements.ElapsedMs)),
+                   Failed = ((tostring(customDimensions.success) == "false") or (tostring(name) has "Error") or (tostring(name) has "Failed")),
+                   Timed = false,
+                   Kind = "event",
+                   Src,
+                   Dims = tostring(customDimensions),
+                   OpName = tostring(operation_Name)),
+        (pvAll
+         | where timestamp > ago(win)
+         | where customDimensions has_any (corrSet) or operation_Id in (opIds)
+         | project timestamp, operation_Id,
+                   CorrelationId = tostring(coalesce(customDimensions.correlationId, customDimensions.CorrelationId, customDimensions["correlationId"], customDimensions["CorrelationId"])),
+                   EventName = tostring(name), Path = tostring(url), Target = "", Code = "",
+                   Ms = todouble(duration), Failed = false, Timed = true, Kind = "page", Src,
+                   Dims = tostring(customDimensions), OpName = tostring(operation_Name)),
+        (reqAll
+         | where timestamp > ago(win)
+         | where customDimensions has_any (corrSet) or operation_Id in (opIds)
+         | project timestamp, operation_Id,
+                   CorrelationId = tostring(coalesce(customDimensions.correlationId, customDimensions.CorrelationId, customDimensions["correlationId"], customDimensions["CorrelationId"])),
+                   EventName = tostring(name), Path = tostring(url),
+                   Target = tostring(cloud_RoleName), Code = tostring(resultCode),
+                   Ms = todouble(duration), Failed = (success == false), Timed = true, Kind = "request", Src,
+                   Dims = tostring(customDimensions), OpName = tostring(operation_Name)),
+        (depAll
+         | where timestamp > ago(win)
+         | where customDimensions has_any (corrSet) or operation_Id in (opIds)
+         | project timestamp, operation_Id,
+                   CorrelationId = tostring(coalesce(customDimensions.correlationId, customDimensions.CorrelationId, customDimensions["correlationId"], customDimensions["CorrelationId"])),
+                   EventName = tostring(name),
+                   Path = iff(isnotempty(tostring(data)), tostring(data), tostring(name)),
+                   Target = tostring(target), Code = tostring(resultCode),
+                   Ms = todouble(duration), Failed = (success == false), Timed = true, Kind = "dependency", Src,
+                   Dims = tostring(customDimensions), OpName = tostring(operation_Name)));
+// Browser dependencies never carry the correlation id, so unstamped rows are attached by
+// operation_Id. But the Air UI is a single-page app: one operation_Id covers a whole browser
+// session, and a session holds several searches, each minting its own correlation id.
+// Measured in PROD over 6h on 2026-09-08: of 5058 operations carrying a T-Mobile correlation
+// id, 1211 carried between 2 and 20 of them. take_any() therefore handed every unstamped row
+// of a session to one arbitrary journey in it. Observed on operation 57cc8a7b...: a
+// /svc/air/v1/alternativecurrencies call at 22:10:02, belonging to a search that started at
+// 22:10:03, was drawn as "05 Review & Pay" on journey d3cd411a..., whose own first row is at
+// 22:11:56 - 114s later. It also pulled that journey's FirstSeen back by two minutes.
+// Instead, cut the operation into time segments: each correlation id owns the rows from its
+// first stamp until the next correlation id appears in the same operation, and the earliest
+// one also owns the page-load rows that precede it. Segments are disjoint and cover all time,
+// so the join below still returns exactly one row per telemetry item.
+let idmap =
+    items
+    | where isnotempty(CorrelationId) and isnotempty(operation_Id)
+    | summarize SegStart = min(timestamp) by operation_Id, MappedCorr = CorrelationId
+    | sort by operation_Id asc, SegStart asc
+    | extend SegEnd = iff(next(operation_Id) == operation_Id, next(SegStart), datetime(9999-12-31))
+    | extend SegStart = iff(prev(operation_Id) == operation_Id, SegStart, datetime(1900-01-01))
+    | project operation_Id, MappedCorr, SegStart, SegEnd;
+let scored = materialize(
+    items
+    | join hint.strategy=broadcast kind=leftouter idmap on operation_Id
+    // isnull(SegStart) = the operation has no stamped correlation id at all; keep that row and
+    // let the regex fallback below try. Otherwise only the segment owning this timestamp wins.
+    | where isnull(SegStart) or (timestamp >= SegStart and timestamp < SegEnd)
+    | extend CorrelationId = case(
+            isnotempty(CorrelationId), CorrelationId,
+            isnotempty(MappedCorr), MappedCorr,
+            isnotempty(extract(@"[Cc]orrelation[Ii]d\\?""?\s*:\s*\\?""?\s*([0-9a-fA-F-]{36})", 1, Dims)),
+                extract(@"[Cc]orrelation[Ii]d\\?""?\s*:\s*\\?""?\s*([0-9a-fA-F-]{36})", 1, Dims),
+            extract(@"[Cc]orrelation[Ii]d[=:\s""]+([0-9a-fA-F-]{36})", 1, Dims))
+    | where CorrelationId in (tmoCorrs)
+    // Route candidates, best source first:
+    //   A operation_Name search path .../SAN/HNL/2026-11-14/...
+    //   B dimension keys: DepartureAirport / "Departure Airport" / search_departure_airport /
+    //     OriginName (payload is double-encoded, so its quotes may be backslash-escaped)
+    //   C "airports":"SAN-HNL"        D uppercase /SAN/HNL/ path with no trailing date
+    | extend OA = extract(@"/([A-Z]{3})/([A-Z]{3})/(?:\d{4}-\d{2}-\d{2}|\d{8})", 1, OpName),
+             DA = extract(@"/([A-Z]{3})/([A-Z]{3})/(?:\d{4}-\d{2}-\d{2}|\d{8})", 2, OpName),
+             OB = extract(@"(?:[Oo]rigin|[Dd]eparture)(?:[ _]?(?:AirportCode|AirportName|Airport|Name|Code))?\\?""\s*:\s*\\?""\s*([A-Za-z]{3})", 1, Dims),
+             DB = extract(@"(?:[Dd]estination|[Aa]rrival)(?:[ _]?(?:AirportCode|AirportName|Airport|Name|Code))?\\?""\s*:\s*\\?""\s*([A-Za-z]{3})", 1, Dims),
+             OC = extract(@"airports\\?""\s*:\s*\\?""([A-Za-z]{3})\s*-\s*([A-Za-z]{3})", 1, Dims),
+             DC = extract(@"airports\\?""\s*:\s*\\?""([A-Za-z]{3})\s*-\s*([A-Za-z]{3})", 2, Dims),
+             OD = extract(@"/([A-Z]{3})/([A-Z]{3})(?:/|$)", 1, OpName),
+             DD = extract(@"/([A-Z]{3})/([A-Z]{3})(?:/|$)", 2, OpName)
+    | extend Origin = toupper(case(isnotempty(OA), OA, isnotempty(OB), OB, isnotempty(OC), OC, OD)),
+             Destination = toupper(case(isnotempty(DA), DA, isnotempty(DB), DB, isnotempty(DC), DC, DD))
+    // Pair origin+destination on the same row so the two halves can never come from different items.
+    // The exclusion list guards against path segments like /svc/air/ being read as airport codes.
+    | extend RoutePair = iff(isnotempty(Origin) and isnotempty(Destination) and Origin != Destination
+                                 and Origin !in ("SVC", "AIR", "API", "GET", "PUT", "WEB", "APP")
+                                 and Destination !in ("SVC", "AIR", "API", "GET", "PUT", "WEB", "APP"),
+                             strcat(Origin, " -> ", Destination), "")
+    // PORTAL ONLY — "alternativecurrenc" is NOT a Review & Pay signal and is left unclassified.
+    // /svc/air/v1/alternativecurrencies is the site currency list, fetched while the search
+    // results page boots: in PROD on 2026-09-08 it fired at 22:10:02.42, one second before the
+    // flight search response and before any results were on screen. Read as stage 05 it invented
+    // a Review & Pay step for sessions that never left the results page. The real payment page
+    // is still matched by payment / insurance / book / checkout on its own calls.
+    // Journey step. Classify on the event/call name first; operation_Name is only a fallback,
+    // because it carries the search path even for later calls in the same operation.
+    // Confirmation is tested before Review & Pay so getbooking/bookingretrieve are not read as "book".
+    | extend NameText = tolower(strcat(EventName, " ", Path)), OpText = tolower(OpName)
+    // PORTAL ONLY — browser beacons from third-party vendors (analytics, chat, RUM,
+    // tag managers, surveys). Their URLs carry the page title, so "traveler"/"review"
+    // inside a beacon payload was classifying them as journey steps, and their failures
+    // were counted as ours. Measured in PROD over 2h on 2026-09-01: of ~620 failed calls
+    // only 6 were air.tmobiletravel.com, and 03 Add Traveler Info had 61 of 74 steps
+    // made of beacons only.
+    // An allowlist of our own and supplier domains is used instead of a vendor denylist,
+    // so a new tracker does not silently reappear as a journey step. Note `has_any` is
+    // term-based and would not match "tealium" inside "tealiumapis.com"; endswith does.
+    // Only dependencies are checked: requests and events are always our own telemetry.
+    | extend HostRaw = tolower(iff(isnotempty(Target), tostring(Target), extract(@"https?://([^/\s]+)", 1, strcat(Path, " ", EventName))))
+    | extend CallHost = tostring(split(tostring(split(HostRaw, "|")[0]), ":")[0])
+    | extend CallHost = trim(@"\s", CallHost)
+    | extend IsThirdParty = Kind == "dependency" and isnotempty(CallHost) and not(
+            CallHost endswith "tmobiletravel.com"
+            or CallHost endswith "ovstravel.com"
+            or CallHost endswith "ourvacationstore.com"
+            or CallHost endswith "icengdev.com"
+            or CallHost endswith "icengprod.com"
+            or CallHost endswith "sabre.com"
+            or CallHost endswith "azure-api.net"
+            or CallHost endswith "core.windows.net")
+    | extend StageNo = case(
+        IsThirdParty, 0,
+        NameText contains "confirmation" or NameText contains "getbooking" or NameText contains "bookingretrieve"
+            or NameText contains "sendemail", 6,
+        NameText contains "seatmap" or NameText contains "seat map" or NameText contains "seatselection", 4,
+        NameText contains "traveler" or NameText contains "passenger", 3,
+        NameText contains "review and pay" or NameText contains "review & pay"
+            or NameText contains "book" or NameText contains "payment" or NameText contains "checkout"
+            or NameText contains "insurance" or NameText contains "loyaltypoint" or NameText contains "redemptionrate"
+            or NameText contains "earnrate" or NameText contains "calculatefee"
+            or NameText contains "supervisorvalidation", 5,
+        NameText contains "pricecheck" or NameText contains "price check" or NameText contains "farerules"
+            or NameText contains "fare rules" or NameText contains "getcontent" or NameText contains "itineraryreview"
+            or NameText contains "review", 2,
+        NameText contains "search" or NameText contains "bfm", 1,
+        OpText contains "pricecheck", 2,
+        OpText contains "seatmap", 4,
+        OpText contains "flightsearch" or OpText contains "/air/index/", 1,
+        0)
+    | extend Stage = case(
+        StageNo == 1, "01 Flight Search",
+        StageNo == 2, "02 Review Your Trip",
+        StageNo == 3, "03 Add Traveler Info",
+        StageNo == 4, "04 Choose Your Seat",
+        StageNo == 5, "05 Review & Pay",
+        StageNo == 6, "06 Confirmation",
+        "00 Unclassified")
+    // Duration on events usually lives in customDimensions as a QUOTED string, e.g.
+    // "ElapsedMilliseconds":"7851.69". Each candidate is converted with todouble() before
+    // coalesce: a failed extract() yields an empty string, which coalesce would treat as a hit.
+    | extend DimElapsed = coalesce(
+            todouble(extract(@"[Ee]lapsed[ _]?[Mm]illiseconds\\?""?\s*:\s*\\?""?\s*([0-9]+(?:\.[0-9]+)?)", 1, Dims)),
+            todouble(extract(@"[Ee]lapsed[ _]?[Mm]s\\?""?\s*:\s*\\?""?\s*([0-9]+(?:\.[0-9]+)?)", 1, Dims)),
+            todouble(extract(@"[Ee]lapsed[ _]?[Tt]ime(?:[ _]?[Mm]s)?\\?""?\s*:\s*\\?""?\s*([0-9]+(?:\.[0-9]+)?)", 1, Dims)),
+            todouble(extract(@"TimingResultCompute\(ms\)\\?""?\s*:\s*\\?""?\s*([0-9]+(?:\.[0-9]+)?)", 1, Dims)),
+            todouble(extract(@"[Ss]earch[ _]?[Tt]ime(?:[ _]?[Mm]s)?\\?""?\s*:\s*\\?""?\s*([0-9]+(?:\.[0-9]+)?)", 1, Dims)),
+            todouble(extract(@"[Dd]uration(?:[ _]?[Mm]s|[Mm]illiseconds)?\\?""?\s*:\s*\\?""?\s*([0-9]+(?:\.[0-9]+)?)", 1, Dims)),
+            todouble(extract(@"[Rr]esponse[ _]?[Tt]ime(?:[ _]?[Mm]s)?\\?""?\s*:\s*\\?""?\s*([0-9]+(?:\.[0-9]+)?)", 1, Dims)))
+    | extend MsSource = case(
+            isnotnull(Ms), strcat(Src, " ", Kind),
+            isnotnull(DimElapsed), strcat(Src, " dimension"),
+            "none")
+    | extend Ms = coalesce(Ms, DimElapsed)
+    | extend CallName = case(
+            isnotempty(EventName), EventName,
+            isnotempty(Path), Path,
+            OpName)
+    | extend IsExternal = (
+            Kind in ("request", "dependency")
+            or (Kind == "event" and (
+                EventName has "Latency" or EventName has "EndpointLatency"
+                or EventName has "Sabre" or EventName has "Web Request"
+                or EventName has "Dispatch")))
+    // UserId is MemberId from custom dimensions (memberId / MemberId / memberid).
+    // ClubId is ice club / member class (clubId / ClubId / club_id).
+    // PartnerId is stamped by telemetry as partnerId (ice_partner_id). T-Mobile Travel = 308.
+    | extend UserId = coalesce(
+            extract(@"[Mm]ember[Ii]d\\?""?\s*:\s*\\?""?\s*([^""\\]+)", 1, Dims),
+            extract(@"memberid\\?""?\s*:\s*\\?""?\s*([^""\\]+)", 1, Dims)),
+             ClubId = coalesce(
+            extract(@"[Cc]lub[Ii]d\\?""?\s*:\s*\\?""?\s*([^""\\]+)", 1, Dims),
+            extract(@"club_id\\?""?\s*:\s*\\?""?\s*([^""\\]+)", 1, Dims)),
+             PartnerId = coalesce(
+            extract(@"[Pp]artner[Ii]d\\?""?\s*:\s*\\?""?\s*([^""\\]+)", 1, Dims),
+            extract(@"partner_id\\?""?\s*:\s*\\?""?\s*([^""\\]+)", 1, Dims)),
+             // ICE AirBookingId (not PNR / ProviderBookingId). Also pulled from /confirmation/{member}/{bookingId}.
+             BookingId = coalesce(
+            extract(@"[Aa]ir[Bb]ooking[Ii]d\\?""?\s*:\s*\\?""?\s*([^""\\]+)", 1, Dims),
+            extract(@"(?:^|[^\w])[Bb]ooking[Ii]d\\?""?\s*:\s*\\?""?\s*([^""\\]+)", 1, Dims),
+            extract(@"/confirmation/[^/]+/([^/?""#]+)", 1, Path),
+            extract(@"/confirmation/[^/]+/([^/?""#]+)", 1, OpName)));
+let journeyStarts = materialize(
+    scored
+    | summarize JourneyStart = min(timestamp) by CorrelationId);
+// One row per completed step. durationMs prefers summed call latency and falls back to the
+// wall-clock span of the step, so a step whose events carry no elapsedMs still reports a number.
+let callStats =
+    scored
+    | where StageNo > 0 and IsExternal and isnotnull(Ms)
+    | summarize MaxMs = round(max(Ms)),
+                P50Ms = round(percentile(Ms, 50)),
+                P90Ms = round(percentile(Ms, 90)),
+                P95Ms = round(percentile(Ms, 95)),
+                P99Ms = round(percentile(Ms, 99))
+      by CorrelationId, StageNo, CallName, Kind;
+let stepCalls =
+    scored
+    | where StageNo > 0 and IsExternal
+    | join hint.strategy=broadcast kind=leftouter journeyStarts on CorrelationId
+    | extend OffsetMs = todouble(datetime_diff("millisecond", timestamp, JourneyStart)),
+             DurationMs = iff(isnotnull(Ms), round(Ms, 1), real(null))
+    | join hint.strategy=broadcast kind=leftouter callStats on CorrelationId, StageNo, CallName, Kind
+    | sort by CorrelationId asc, StageNo asc, timestamp asc
+    // gapMs = time until the next external call in the same step. It is a fallback shape for the
+    // waterfall when a call carries no elapsed value of its own; it is NOT the call's own latency.
+    | extend GapMs = iff(next(CorrelationId) == CorrelationId and next(StageNo) == StageNo,
+                         todouble(datetime_diff("millisecond", next(timestamp), timestamp)),
+                         real(null))
+    | summarize Calls = make_list(bag_pack(
+            "name", CallName,
+            "kind", Kind,
+            "source", Src,
+            "durationMs", DurationMs,
+            "durationSource", MsSource,
+            "maxMs", MaxMs,
+            "p50Ms", P50Ms,
+            "p90Ms", P90Ms,
+            "p95Ms", P95Ms,
+            "p99Ms", P99Ms,
+            "gapMs", GapMs,
+            "offsetMs", OffsetMs,
+            "failed", Failed,
+            "status", Code,
+            "target", Target,
+            "path", Path), 80)
+      by CorrelationId, StageNo;
+let stepRows =
+    scored
+    | where StageNo > 0
+    | summarize StepStart = min(timestamp),
+                StepEnd = max(timestamp),
+                CallCount = countif(IsExternal),
+                Fails = countif(Failed and IsExternal),
+                SumCallMs = round(sumif(Ms, IsExternal)),
+                MaxCallMs = round(maxif(Ms, IsExternal)),
+                SumApiMs = round(sumif(Ms, IsExternal and Src == "Air.API")),
+                SumUiMs = round(sumif(Ms, IsExternal and Src == "Air.UI")),
+                // percentileif() does not exist in this engine: null out the rows to exclude
+                // instead, because percentile() already ignores nulls.
+                StepP95 = round(percentile(iff(IsExternal, Ms, real(null)), 95))
+      by CorrelationId, StageNo, Stage
+    | join hint.strategy=broadcast kind=leftouter stepCalls on CorrelationId, StageNo
+    | join hint.strategy=broadcast kind=leftouter journeyStarts on CorrelationId
+    | extend WallMs = todouble(datetime_diff("millisecond", StepEnd, StepStart))
+    // Prefer API-side server time: summing UI and API together double counts the same call
+    // (the browser dependency and the server request it triggered).
+    | extend DurationMs = case(
+        isnotnull(SumApiMs) and SumApiMs > 0, SumApiMs,
+        isnotnull(SumCallMs) and SumCallMs > 0, SumCallMs,
+        WallMs > 0, WallMs,
+        0.0)
+    | extend OffsetMs = todouble(datetime_diff("millisecond", StepStart, JourneyStart)),
+             Calls = coalesce(Calls, dynamic([]));
+let steps =
+    stepRows
+    | sort by CorrelationId asc, StageNo asc
+    | summarize Journey = make_list(bag_pack(
+            "stepNo", StageNo,
+            "step", Stage,
+            "offsetMs", OffsetMs,
+            "durationMs", DurationMs,
+            "sumCallMs", SumCallMs,
+            "sumApiMs", SumApiMs,
+            "sumUiMs", SumUiMs,
+            "maxCallMs", MaxCallMs,
+            "p95Ms", StepP95,
+            "wallMs", WallMs,
+            "callCount", CallCount,
+            "fails", Fails,
+            "calls", Calls), 10),
+        Steps = make_list(Stage, 10),
+        StepSet = make_set(StageNo, 10),
+        StepsCompleted = count(),
+        LastStep = max(StageNo),
+        FailedStep = minif(StageNo, Fails > 0),
+        JourneyTotalMs = round(sum(todouble(coalesce(DurationMs, 0.0)))),
+        OverallP95 = round(max(StepP95)),
+        SlowestCallMs = round(max(MaxCallMs))
+      by CorrelationId
+    // Stages are matched per call, not walked as a funnel, so a journey can show 01 and 05 with
+    // nothing in between. FunnelStep is the last step reached without a hole, which is the only
+    // one that can honestly be called a drop-off point; LastStep stays the highest step seen.
+    | extend FunnelStep = case(
+        not(set_has_element(StepSet, 1)), 0,
+        not(set_has_element(StepSet, 2)), 1,
+        not(set_has_element(StepSet, 3)), 2,
+        not(set_has_element(StepSet, 4)), 3,
+        not(set_has_element(StepSet, 5)), 4,
+        not(set_has_element(StepSet, 6)), 5,
+        6)
+    | project-away StepSet;
+scored
+| summarize FirstSeen = min(timestamp),
+            LastSeen = max(timestamp),
+            Items = count(),
+            FailedCalls = countif(Failed and not(IsThirdParty)),
+            SumTimedMs = round(sumif(Ms, Timed and isnotnull(Ms))),
+            BookOk = countif(EventName == "Book Success"),
+            BookFail = countif(EventName == "Book Error"),
+            RouteFound = take_anyif(RoutePair, isnotempty(RoutePair)),
+            UserId = take_anyif(UserId, isnotempty(UserId)),
+            ClubId = take_anyif(ClubId, isnotempty(ClubId)),
+            PartnerId = take_anyif(PartnerId, isnotempty(PartnerId)),
+            BookingId = take_anyif(BookingId, isnotempty(BookingId)),
+            // Sanity check on scope: expect both Air.UI and Air.API here.
+            Sources = make_set(Src, 4)
+  by CorrelationId
+| join hint.strategy=broadcast kind=leftouter steps on CorrelationId
+// JourneyTotalMs = sum of step durations (API server time preferred). Wall-clock fallback if no steps.
+| extend WallMs = coalesce(todouble(datetime_diff("millisecond", LastSeen, FirstSeen)), 0.0)
+| extend JourneyTotalMs = coalesce(JourneyTotalMs, round(WallMs), 0.0)
+| extend Route = iff(isempty(RouteFound), "-", RouteFound)
+| extend BookingId = iff(BookOk > 0, iff(isempty(BookingId), "-", BookingId), "")
+| extend UserId = iff(isempty(UserId), "-", UserId),
+         ClubId = iff(isempty(ClubId), "-", ClubId),
+         PartnerId = iff(isempty(PartnerId), "-", PartnerId),
+         StepsCompleted = coalesce(StepsCompleted, 0),
+         LastStep = coalesce(LastStep, 0),
+         FunnelStep = coalesce(FunnelStep, 0),
+         FailedStep = coalesce(FailedStep, 0)
+// Drop-off is reported from FunnelStep, so a stray later step cannot claim the user reached it.
+// FunnelStep = 0 with steps present means step 01 is missing: an API-side correlation id that
+// never had a search (the Air API mints its own id per call), so it is not a funnel position.
+// First-party failures (and Book Error) override drop-off, same idea as Cruise Outcome.
+| extend Status = case(
+    Items == 0, "NO_DATA",
+    BookOk > 0 or LastStep == 6, "BOOKED",
+    (FailedCalls > 0 or BookFail > 0) and (FailedStep > 0 or FunnelStep > 0 or LastStep > 0),
+        strcat("FAILED AT STEP ", tostring(case(FailedStep > 0, FailedStep, FunnelStep > 0, FunnelStep, LastStep))),
+    FunnelStep > 0, strcat("DROPPED AT STEP ", tostring(FunnelStep)),
+    "IN_PROGRESS")
+| extend IsBookSuccessful = BookOk > 0,
+         PassedSearch = StepsCompleted > 0
+| where ClubId == tmoClub or PartnerId == tmoPartner
+| project Status, BookingId, BookOk, BookFail, FailedCalls, IsBookSuccessful, PassedSearch, Exceptions = FailedCalls, JourneyTotalMs, OverallP95, SlowestCallMs, UserId, ClubId, Route, CorrelationId, StepsCompleted, FunnelStep, LastStep, FirstSeen, LastSeen, Sources, Steps, Journey
+| top 50 by LastSeen desc
+// For the waterfall as a table (one row per step) instead of the card, replace everything from
+// the "scored | summarize" line above with:
+//   stepRows | sort by CorrelationId asc, StageNo asc | project CorrelationId, Stage, DurationMs, OffsetMs, SumCallMs, MaxCallMs, Calls, Fails

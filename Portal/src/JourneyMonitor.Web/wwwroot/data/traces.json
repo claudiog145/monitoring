@@ -1,0 +1,2152 @@
+{
+  "JNY-HOT-1000": {
+    "traceId": "trc-2348b96",
+    "spans": [
+      {
+        "traceId": "trc-2348b96",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 213,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-2348b96",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 130,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-2348b96",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Destination",
+        "durationMs": 464,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-2348b96",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-hotels",
+        "operation": "Retrieve Hotel Inventory",
+        "durationMs": 125,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-hotels"
+      },
+      {
+        "traceId": "trc-2348b96",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "pricing-svc",
+        "operation": "Apply Membership Pricing",
+        "durationMs": 154,
+        "resultCode": "200",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-2348b96",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "personalization-svc",
+        "operation": "Personalize Results",
+        "durationMs": 427,
+        "resultCode": "200",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-2348b96",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "web-portal",
+        "operation": "Select Room",
+        "durationMs": 371,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-2348b96",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "inventory-hotels",
+        "operation": "Validate Availability",
+        "durationMs": 225,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-hotels"
+      },
+      {
+        "traceId": "trc-2348b96",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 400,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-2348b96",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "booking-svc",
+        "operation": "Booking Creation",
+        "durationMs": 198,
+        "resultCode": "200",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-2348b96",
+        "spanId": "span-11",
+        "parentSpanId": "span-10",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 476,
+        "resultCode": "200",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-AIR-1001": {
+    "traceId": "trc-d8ebef",
+    "spans": [
+      {
+        "traceId": "trc-d8ebef",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 422,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-d8ebef",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 314,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-d8ebef",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Origin & Destination",
+        "durationMs": 321,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-d8ebef",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-air",
+        "operation": "Query Flight Suppliers",
+        "durationMs": 216,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-air"
+      },
+      {
+        "traceId": "trc-d8ebef",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "personalization-svc",
+        "operation": "Normalize Itineraries",
+        "durationMs": 122,
+        "resultCode": "200",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-d8ebef",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "pricing-svc",
+        "operation": "Apply Pricing Rules",
+        "durationMs": 100,
+        "resultCode": "200",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-d8ebef",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "web-portal",
+        "operation": "Select Itinerary",
+        "durationMs": 373,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-d8ebef",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "customer-profile-svc",
+        "operation": "Traveler Details",
+        "durationMs": 391,
+        "resultCode": "200",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-d8ebef",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 93,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-d8ebef",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "booking-svc",
+        "operation": "Ticket / Booking Confirmation",
+        "durationMs": 452,
+        "resultCode": "200",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-d8ebef",
+        "spanId": "span-11",
+        "parentSpanId": "span-10",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 120,
+        "resultCode": "200",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-CRU-1002": {
+    "traceId": "trc-4550ded",
+    "spans": [
+      {
+        "traceId": "trc-4550ded",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 232,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-4550ded",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 338,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-4550ded",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Sailing",
+        "durationMs": 366,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-4550ded",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-cruises",
+        "operation": "Retrieve Cruise Inventory",
+        "durationMs": 460,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-cruises"
+      },
+      {
+        "traceId": "trc-4550ded",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "web-portal",
+        "operation": "Select Cabin",
+        "durationMs": 385,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-4550ded",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "customer-profile-svc",
+        "operation": "Traveler Details",
+        "durationMs": 214,
+        "resultCode": "200",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-4550ded",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "pricing-svc",
+        "operation": "Pricing",
+        "durationMs": 298,
+        "resultCode": "200",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-4550ded",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 138,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-4550ded",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "booking-svc",
+        "operation": "Reservation Confirmation",
+        "durationMs": 427,
+        "resultCode": "200",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-4550ded",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 271,
+        "resultCode": "200",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-CAR-1003": {
+    "traceId": "trc-132f9e4",
+    "spans": [
+      {
+        "traceId": "trc-132f9e4",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 420,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-132f9e4",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "search-svc",
+        "operation": "Search Pickup Location",
+        "durationMs": 121,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-132f9e4",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "inventory-cars",
+        "operation": "Retrieve Supplier Inventory",
+        "durationMs": 462,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-cars"
+      },
+      {
+        "traceId": "trc-132f9e4",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "web-portal",
+        "operation": "Select Vehicle",
+        "durationMs": 145,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-132f9e4",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "personalization-svc",
+        "operation": "Extras",
+        "durationMs": 188,
+        "resultCode": "200",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-132f9e4",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "customer-profile-svc",
+        "operation": "Driver Details",
+        "durationMs": 364,
+        "resultCode": "200",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-132f9e4",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 161,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-132f9e4",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "booking-svc",
+        "operation": "Reservation Confirmation",
+        "durationMs": 183,
+        "resultCode": "200",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-132f9e4",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 326,
+        "resultCode": "200",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-HOT-1004": {
+    "traceId": "trc-50acd29",
+    "spans": [
+      {
+        "traceId": "trc-50acd29",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 423,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-50acd29",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 97,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-50acd29",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Destination",
+        "durationMs": 475,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-50acd29",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-hotels",
+        "operation": "Retrieve Hotel Inventory",
+        "durationMs": 175,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-hotels"
+      },
+      {
+        "traceId": "trc-50acd29",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "pricing-svc",
+        "operation": "Apply Membership Pricing",
+        "durationMs": 338,
+        "resultCode": "200",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-50acd29",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "personalization-svc",
+        "operation": "Personalize Results",
+        "durationMs": 199,
+        "resultCode": "200",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-50acd29",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "web-portal",
+        "operation": "Select Room",
+        "durationMs": 120,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-50acd29",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "inventory-hotels",
+        "operation": "Validate Availability",
+        "durationMs": 284,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-hotels"
+      },
+      {
+        "traceId": "trc-50acd29",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 289,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-50acd29",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "booking-svc",
+        "operation": "Booking Creation",
+        "durationMs": 322,
+        "resultCode": "200",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-50acd29",
+        "spanId": "span-11",
+        "parentSpanId": "span-10",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 306,
+        "resultCode": "200",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-AIR-1005": {
+    "traceId": "trc-27a4914",
+    "spans": [
+      {
+        "traceId": "trc-27a4914",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 241,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-27a4914",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 119,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-27a4914",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Origin & Destination",
+        "durationMs": 466,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-27a4914",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-air",
+        "operation": "Query Flight Suppliers",
+        "durationMs": 121,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-air"
+      },
+      {
+        "traceId": "trc-27a4914",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "personalization-svc",
+        "operation": "Normalize Itineraries",
+        "durationMs": 250,
+        "resultCode": "200",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-27a4914",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "pricing-svc",
+        "operation": "Apply Pricing Rules",
+        "durationMs": 115,
+        "resultCode": "200",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-27a4914",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "web-portal",
+        "operation": "Select Itinerary",
+        "durationMs": 334,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-27a4914",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "customer-profile-svc",
+        "operation": "Traveler Details",
+        "durationMs": 361,
+        "resultCode": "200",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-27a4914",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 119,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-27a4914",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "booking-svc",
+        "operation": "Ticket / Booking Confirmation",
+        "durationMs": 131,
+        "resultCode": "200",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-27a4914",
+        "spanId": "span-11",
+        "parentSpanId": "span-10",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 125,
+        "resultCode": "200",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-CRU-1006": {
+    "traceId": "trc-5c292d1",
+    "spans": [
+      {
+        "traceId": "trc-5c292d1",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 386,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-5c292d1",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 110,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-5c292d1",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Sailing",
+        "durationMs": 131,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-5c292d1",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-cruises",
+        "operation": "Retrieve Cruise Inventory",
+        "durationMs": 426,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-cruises"
+      },
+      {
+        "traceId": "trc-5c292d1",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "web-portal",
+        "operation": "Select Cabin",
+        "durationMs": 379,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-5c292d1",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "customer-profile-svc",
+        "operation": "Traveler Details",
+        "durationMs": 251,
+        "resultCode": "200",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-5c292d1",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "pricing-svc",
+        "operation": "Pricing",
+        "durationMs": 194,
+        "resultCode": "200",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-5c292d1",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 456,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-5c292d1",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "booking-svc",
+        "operation": "Reservation Confirmation",
+        "durationMs": 212,
+        "resultCode": "200",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-5c292d1",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 292,
+        "resultCode": "200",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-CAR-1007": {
+    "traceId": "trc-4f11928",
+    "spans": [
+      {
+        "traceId": "trc-4f11928",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 94,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-4f11928",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "search-svc",
+        "operation": "Search Pickup Location",
+        "durationMs": 408,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-4f11928",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "inventory-cars",
+        "operation": "Retrieve Supplier Inventory",
+        "durationMs": 141,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-cars"
+      },
+      {
+        "traceId": "trc-4f11928",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "web-portal",
+        "operation": "Select Vehicle",
+        "durationMs": 365,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-4f11928",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "personalization-svc",
+        "operation": "Extras",
+        "durationMs": 349,
+        "resultCode": "200",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-4f11928",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "customer-profile-svc",
+        "operation": "Driver Details",
+        "durationMs": 157,
+        "resultCode": "200",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-4f11928",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 125,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-4f11928",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "booking-svc",
+        "operation": "Reservation Confirmation",
+        "durationMs": 279,
+        "resultCode": "200",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-4f11928",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 170,
+        "resultCode": "200",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-HOT-1008": {
+    "traceId": "trc-2b53a17",
+    "spans": [
+      {
+        "traceId": "trc-2b53a17",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 360,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-2b53a17",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 431,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-2b53a17",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Destination",
+        "durationMs": 243,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-2b53a17",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-hotels",
+        "operation": "Retrieve Hotel Inventory",
+        "durationMs": 143,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-hotels"
+      },
+      {
+        "traceId": "trc-2b53a17",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "pricing-svc",
+        "operation": "Apply Membership Pricing",
+        "durationMs": 225,
+        "resultCode": "200",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-2b53a17",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "personalization-svc",
+        "operation": "Personalize Results",
+        "durationMs": 144,
+        "resultCode": "200",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-2b53a17",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "web-portal",
+        "operation": "Select Room",
+        "durationMs": 373,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-2b53a17",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "inventory-hotels",
+        "operation": "Validate Availability",
+        "durationMs": 229,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-hotels"
+      },
+      {
+        "traceId": "trc-2b53a17",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 399,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-2b53a17",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "booking-svc",
+        "operation": "Booking Creation",
+        "durationMs": 457,
+        "resultCode": "200",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-2b53a17",
+        "spanId": "span-11",
+        "parentSpanId": "span-10",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 194,
+        "resultCode": "200",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-AIR-1009": {
+    "traceId": "trc-e25f9e",
+    "spans": [
+      {
+        "traceId": "trc-e25f9e",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 137,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-e25f9e",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 306,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-e25f9e",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Origin & Destination",
+        "durationMs": 112,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-e25f9e",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-air",
+        "operation": "Query Flight Suppliers",
+        "durationMs": 260,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-air"
+      },
+      {
+        "traceId": "trc-e25f9e",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "personalization-svc",
+        "operation": "Normalize Itineraries",
+        "durationMs": 416,
+        "resultCode": "200",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-e25f9e",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "pricing-svc",
+        "operation": "Apply Pricing Rules",
+        "durationMs": 172,
+        "resultCode": "200",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-e25f9e",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "web-portal",
+        "operation": "Select Itinerary",
+        "durationMs": 316,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-e25f9e",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "customer-profile-svc",
+        "operation": "Traveler Details",
+        "durationMs": 451,
+        "resultCode": "200",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-e25f9e",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 377,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-e25f9e",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "booking-svc",
+        "operation": "Ticket / Booking Confirmation",
+        "durationMs": 147,
+        "resultCode": "200",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-e25f9e",
+        "spanId": "span-11",
+        "parentSpanId": "span-10",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 443,
+        "resultCode": "200",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-CRU-1010": {
+    "traceId": "trc-1e56439",
+    "spans": [
+      {
+        "traceId": "trc-1e56439",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 165,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-1e56439",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 155,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-1e56439",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Sailing",
+        "durationMs": 247,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-1e56439",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-cruises",
+        "operation": "Retrieve Cruise Inventory",
+        "durationMs": 110,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-cruises"
+      },
+      {
+        "traceId": "trc-1e56439",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "web-portal",
+        "operation": "Select Cabin",
+        "durationMs": 197,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-1e56439",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "customer-profile-svc",
+        "operation": "Traveler Details",
+        "durationMs": 217,
+        "resultCode": "200",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-1e56439",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "pricing-svc",
+        "operation": "Pricing",
+        "durationMs": 142,
+        "resultCode": "200",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-1e56439",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 376,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-1e56439",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "booking-svc",
+        "operation": "Reservation Confirmation",
+        "durationMs": 407,
+        "resultCode": "200",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-1e56439",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 169,
+        "resultCode": "200",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-CAR-1011": {
+    "traceId": "trc-c90d7a",
+    "spans": [
+      {
+        "traceId": "trc-c90d7a",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 467,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-c90d7a",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "search-svc",
+        "operation": "Search Pickup Location",
+        "durationMs": 300,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-c90d7a",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "inventory-cars",
+        "operation": "Retrieve Supplier Inventory",
+        "durationMs": 4685,
+        "resultCode": "504",
+        "dependencyTarget": "inventory-cars"
+      },
+      {
+        "traceId": "trc-c90d7a",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "web-portal",
+        "operation": "Select Vehicle",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-c90d7a",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "personalization-svc",
+        "operation": "Extras",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-c90d7a",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "customer-profile-svc",
+        "operation": "Driver Details",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-c90d7a",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-c90d7a",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "booking-svc",
+        "operation": "Reservation Confirmation",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-c90d7a",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-HOT-1012": {
+    "traceId": "trc-4affb79",
+    "spans": [
+      {
+        "traceId": "trc-4affb79",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 125,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-4affb79",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 269,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-4affb79",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Destination",
+        "durationMs": 350,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-4affb79",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-hotels",
+        "operation": "Retrieve Hotel Inventory",
+        "durationMs": 5212,
+        "resultCode": "504",
+        "dependencyTarget": "inventory-hotels"
+      },
+      {
+        "traceId": "trc-4affb79",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "pricing-svc",
+        "operation": "Apply Membership Pricing",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-4affb79",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "personalization-svc",
+        "operation": "Personalize Results",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-4affb79",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "web-portal",
+        "operation": "Select Room",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-4affb79",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "inventory-hotels",
+        "operation": "Validate Availability",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "inventory-hotels"
+      },
+      {
+        "traceId": "trc-4affb79",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-4affb79",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "booking-svc",
+        "operation": "Booking Creation",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-4affb79",
+        "spanId": "span-11",
+        "parentSpanId": "span-10",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-AIR-1013": {
+    "traceId": "trc-4a72cbe",
+    "spans": [
+      {
+        "traceId": "trc-4a72cbe",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 220,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-4a72cbe",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 452,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-4a72cbe",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Origin & Destination",
+        "durationMs": 90,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-4a72cbe",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-air",
+        "operation": "Query Flight Suppliers",
+        "durationMs": 365,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-air"
+      },
+      {
+        "traceId": "trc-4a72cbe",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "personalization-svc",
+        "operation": "Normalize Itineraries",
+        "durationMs": 458,
+        "resultCode": "200",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-4a72cbe",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "pricing-svc",
+        "operation": "Apply Pricing Rules",
+        "durationMs": 467,
+        "resultCode": "200",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-4a72cbe",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "web-portal",
+        "operation": "Select Itinerary",
+        "durationMs": 190,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-4a72cbe",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "customer-profile-svc",
+        "operation": "Traveler Details",
+        "durationMs": 310,
+        "resultCode": "200",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-4a72cbe",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 7604,
+        "resultCode": "504",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-4a72cbe",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "booking-svc",
+        "operation": "Ticket / Booking Confirmation",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-4a72cbe",
+        "spanId": "span-11",
+        "parentSpanId": "span-10",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-CRU-1014": {
+    "traceId": "trc-53c658f",
+    "spans": [
+      {
+        "traceId": "trc-53c658f",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 296,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-53c658f",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 241,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-53c658f",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Sailing",
+        "durationMs": 155,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-53c658f",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-cruises",
+        "operation": "Retrieve Cruise Inventory",
+        "durationMs": 305,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-cruises"
+      },
+      {
+        "traceId": "trc-53c658f",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "web-portal",
+        "operation": "Select Cabin",
+        "durationMs": 284,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-53c658f",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "customer-profile-svc",
+        "operation": "Traveler Details",
+        "durationMs": 473,
+        "resultCode": "200",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-53c658f",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "pricing-svc",
+        "operation": "Pricing",
+        "durationMs": 405,
+        "resultCode": "200",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-53c658f",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 6988,
+        "resultCode": "504",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-53c658f",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "booking-svc",
+        "operation": "Reservation Confirmation",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-53c658f",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-CAR-1015": {
+    "traceId": "trc-31453b3",
+    "spans": [
+      {
+        "traceId": "trc-31453b3",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 316,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-31453b3",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "search-svc",
+        "operation": "Search Pickup Location",
+        "durationMs": 435,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-31453b3",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "inventory-cars",
+        "operation": "Retrieve Supplier Inventory",
+        "durationMs": 351,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-cars"
+      },
+      {
+        "traceId": "trc-31453b3",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "web-portal",
+        "operation": "Select Vehicle",
+        "durationMs": 466,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-31453b3",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "personalization-svc",
+        "operation": "Extras",
+        "durationMs": 427,
+        "resultCode": "200",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-31453b3",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "customer-profile-svc",
+        "operation": "Driver Details",
+        "durationMs": 235,
+        "resultCode": "200",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-31453b3",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 7572,
+        "resultCode": "504",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-31453b3",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "booking-svc",
+        "operation": "Reservation Confirmation",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-31453b3",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-HOT-1016": {
+    "traceId": "trc-4bd5d88",
+    "spans": [
+      {
+        "traceId": "trc-4bd5d88",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 113,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-4bd5d88",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 333,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-4bd5d88",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Destination",
+        "durationMs": 127,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-4bd5d88",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-hotels",
+        "operation": "Retrieve Hotel Inventory",
+        "durationMs": 302,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-hotels"
+      },
+      {
+        "traceId": "trc-4bd5d88",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "pricing-svc",
+        "operation": "Apply Membership Pricing",
+        "durationMs": 384,
+        "resultCode": "200",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-4bd5d88",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "personalization-svc",
+        "operation": "Personalize Results",
+        "durationMs": 457,
+        "resultCode": "200",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-4bd5d88",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "web-portal",
+        "operation": "Select Room",
+        "durationMs": 286,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-4bd5d88",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "inventory-hotels",
+        "operation": "Validate Availability",
+        "durationMs": 294,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-hotels"
+      },
+      {
+        "traceId": "trc-4bd5d88",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 165,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-4bd5d88",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "booking-svc",
+        "operation": "Booking Creation",
+        "durationMs": 3373,
+        "resultCode": "504",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-4bd5d88",
+        "spanId": "span-11",
+        "parentSpanId": "span-10",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-AIR-1017": {
+    "traceId": "trc-5b284bd",
+    "spans": [
+      {
+        "traceId": "trc-5b284bd",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 152,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-5b284bd",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 158,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-5b284bd",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Origin & Destination",
+        "durationMs": 431,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-5b284bd",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-air",
+        "operation": "Query Flight Suppliers",
+        "durationMs": 376,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-air"
+      },
+      {
+        "traceId": "trc-5b284bd",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "personalization-svc",
+        "operation": "Normalize Itineraries",
+        "durationMs": 252,
+        "resultCode": "200",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-5b284bd",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "pricing-svc",
+        "operation": "Apply Pricing Rules",
+        "durationMs": 403,
+        "resultCode": "200",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-5b284bd",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "web-portal",
+        "operation": "Select Itinerary",
+        "durationMs": 348,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-5b284bd",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "customer-profile-svc",
+        "operation": "Traveler Details",
+        "durationMs": 370,
+        "resultCode": "200",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-5b284bd",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 171,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-5b284bd",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "booking-svc",
+        "operation": "Ticket / Booking Confirmation",
+        "durationMs": 4623,
+        "resultCode": "504",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-5b284bd",
+        "spanId": "span-11",
+        "parentSpanId": "span-10",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 0,
+        "resultCode": "n/a",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-CRU-1018": {
+    "traceId": "trc-33e3ba4",
+    "spans": [
+      {
+        "traceId": "trc-33e3ba4",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 230,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-33e3ba4",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "auth-svc",
+        "operation": "Authentication / Guest Session",
+        "durationMs": 129,
+        "resultCode": "200",
+        "dependencyTarget": "auth-svc"
+      },
+      {
+        "traceId": "trc-33e3ba4",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "search-svc",
+        "operation": "Search Sailing",
+        "durationMs": 236,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-33e3ba4",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "inventory-cruises",
+        "operation": "Retrieve Cruise Inventory",
+        "durationMs": 1854,
+        "resultCode": "429",
+        "dependencyTarget": "inventory-cruises"
+      },
+      {
+        "traceId": "trc-33e3ba4",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "web-portal",
+        "operation": "Select Cabin",
+        "durationMs": 366,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-33e3ba4",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "customer-profile-svc",
+        "operation": "Traveler Details",
+        "durationMs": 160,
+        "resultCode": "200",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-33e3ba4",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "pricing-svc",
+        "operation": "Pricing",
+        "durationMs": 208,
+        "resultCode": "200",
+        "dependencyTarget": "pricing-svc"
+      },
+      {
+        "traceId": "trc-33e3ba4",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 445,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-33e3ba4",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "booking-svc",
+        "operation": "Reservation Confirmation",
+        "durationMs": 451,
+        "resultCode": "200",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-33e3ba4",
+        "spanId": "span-10",
+        "parentSpanId": "span-09",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 122,
+        "resultCode": "200",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  },
+  "JNY-CAR-1019": {
+    "traceId": "trc-4807b5b",
+    "spans": [
+      {
+        "traceId": "trc-4807b5b",
+        "spanId": "span-01",
+        "parentSpanId": null,
+        "service": "web-portal",
+        "operation": "Customer Entry",
+        "durationMs": 305,
+        "resultCode": "200",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-4807b5b",
+        "spanId": "span-02",
+        "parentSpanId": "span-01",
+        "service": "search-svc",
+        "operation": "Search Pickup Location",
+        "durationMs": 389,
+        "resultCode": "200",
+        "dependencyTarget": "search-svc"
+      },
+      {
+        "traceId": "trc-4807b5b",
+        "spanId": "span-03",
+        "parentSpanId": "span-02",
+        "service": "inventory-cars",
+        "operation": "Retrieve Supplier Inventory",
+        "durationMs": 100,
+        "resultCode": "200",
+        "dependencyTarget": "inventory-cars"
+      },
+      {
+        "traceId": "trc-4807b5b",
+        "spanId": "span-04",
+        "parentSpanId": "span-03",
+        "service": "web-portal",
+        "operation": "Select Vehicle",
+        "durationMs": 1212,
+        "resultCode": "429",
+        "dependencyTarget": "web-portal"
+      },
+      {
+        "traceId": "trc-4807b5b",
+        "spanId": "span-05",
+        "parentSpanId": "span-04",
+        "service": "personalization-svc",
+        "operation": "Extras",
+        "durationMs": 270,
+        "resultCode": "200",
+        "dependencyTarget": "personalization-svc"
+      },
+      {
+        "traceId": "trc-4807b5b",
+        "spanId": "span-06",
+        "parentSpanId": "span-05",
+        "service": "customer-profile-svc",
+        "operation": "Driver Details",
+        "durationMs": 475,
+        "resultCode": "200",
+        "dependencyTarget": "customer-profile-svc"
+      },
+      {
+        "traceId": "trc-4807b5b",
+        "spanId": "span-07",
+        "parentSpanId": "span-06",
+        "service": "payments-svc",
+        "operation": "Payment Authorization",
+        "durationMs": 304,
+        "resultCode": "200",
+        "dependencyTarget": "payments-svc"
+      },
+      {
+        "traceId": "trc-4807b5b",
+        "spanId": "span-08",
+        "parentSpanId": "span-07",
+        "service": "booking-svc",
+        "operation": "Reservation Confirmation",
+        "durationMs": 472,
+        "resultCode": "200",
+        "dependencyTarget": "booking-svc"
+      },
+      {
+        "traceId": "trc-4807b5b",
+        "spanId": "span-09",
+        "parentSpanId": "span-08",
+        "service": "notifications-svc",
+        "operation": "Notification",
+        "durationMs": 369,
+        "resultCode": "200",
+        "dependencyTarget": "notifications-svc"
+      }
+    ]
+  }
+}

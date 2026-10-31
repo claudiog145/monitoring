@@ -1,0 +1,60 @@
+// Inspector Monkey / LogsAgent - client breakdown (browser / OS / country / city) for one
+// packaged window.
+//
+// Exists because of a real case: on T-Mobile the stack trace was masked by the browser's
+// same-origin policy, so there was nothing to read in the exception itself. 99.3% of the events
+// (2336 of 2352) were "Mobile Safari UI/WKWebView" on "iOS 18.7" - with the stack gone, the
+// client distribution was the only remaining lead. Measured coverage on that case: ~85% of rows
+// carry browser/OS, 100% carry country/city.
+//
+// Unknown values are projected as "[unknown]" rather than left blank, so a gap in coverage is a
+// visible row instead of an empty cell a reader can mistake for a real client.
+//
+// Scoped by club, NOT by the operation ids in the package: the board caps the ids it captures,
+// so a breakdown built from them would report the distribution of a sample as the distribution
+// of the window.
+//
+// Placeholders are substituted by ClientBreakdownTool. {{ENTITY_KEY_B64}} is base64 so no club or
+// host name can ever terminate a KQL string literal. The resource list mirrors
+// scout-drilldown/scout-*-priorities; keep them in sync.
+let entityKey = base64_decode_tostring('{{ENTITY_KEY_B64}}');
+let entityValue = substring(entityKey, indexof(entityKey, ":") + 1);
+let tStart = {{TIME_START}};
+let tEnd = {{TIME_END}};
+let maxRows = {{MAX_ROWS}};
+let entityRefs = materialize(union
+(app("{{SOURCE:sor-frontend}}").requests | where timestamp >= tStart and timestamp < tEnd | project timestamp, operation_Id, url, customDimensions | extend Source="SOR"),
+(app("{{SOURCE:cruise-core}}").requests | where timestamp >= tStart and timestamp < tEnd | project timestamp, operation_Id, url, customDimensions | extend Source="Cruise Core"),
+(app("{{SOURCE:cruise-api}}").requests | where timestamp >= tStart and timestamp < tEnd | project timestamp, operation_Id, url, customDimensions | extend Source="Cruise API")
+| where isnotempty(operation_Id)
+| where url contains entityValue or tostring(customDimensions) contains entityValue
+// Mirrors the company profile chain, and lowercases Host for the same reason inspector-club-
+// baseline does: the entity key this is compared against was produced by the profile, which
+// lowercases the host, and == would otherwise miss every mixed-case url. customDimensions.CobrandId
+// is gone along with it - zero occurrences in 23,802 sampled rows.
+| extend Host=tolower(tostring(parse_url(url).Host)),
+         Club=coalesce(tostring(customDimensions.VacationClubId),tostring(customDimensions.VacationClubID),tostring(customDimensions.ClubId),tostring(customDimensions.club_id),tostring(parse_url(url)["Query Parameters"]["cobrand"]),tostring(parse_url(url)["Query Parameters"]["cobrandId"]))
+| extend Entity=iff(isnotempty(Club),strcat("club:",Club),iff(isnotempty(Host),strcat("host:",Host),"[host/club unavailable]"))
+| where Entity == entityKey
+| summarize by Ref=strcat(Source,":",operation_Id));
+let entityExceptions = materialize(union
+(app("{{SOURCE:sor-frontend}}").exceptions | where timestamp >= tStart and timestamp < tEnd | extend Source="SOR"),
+(app("{{SOURCE:cruise-core}}").exceptions | where timestamp >= tStart and timestamp < tEnd | extend Source="Cruise Core"),
+(app("{{SOURCE:cruise-api}}").exceptions | where timestamp >= tStart and timestamp < tEnd | extend Source="Cruise API")
+| where isnotempty(operation_Id)
+| extend Ref=strcat(Source,":",operation_Id)
+| join hint.shufflekey=Ref kind=inner (entityRefs) on Ref
+| project timestamp, Source, operation_Id, ExceptionType=tostring(type),
+          Browser=iff(isempty(tostring(client_Browser)), "[unknown]", tostring(client_Browser)),
+          OperatingSystem=iff(isempty(tostring(client_OS)), "[unknown]", tostring(client_OS)),
+          Country=iff(isempty(tostring(client_CountryOrRegion)), "[unknown]", tostring(client_CountryOrRegion)),
+          City=iff(isempty(tostring(client_City)), "[unknown]", tostring(client_City)));
+let totalExceptions = toscalar(entityExceptions | count);
+entityExceptions
+| summarize Count=count(), FirstSeen=min(timestamp), LastSeen=max(timestamp),
+            ExceptionTypes=make_set(ExceptionType, 3), ExampleOperationIds=make_set(operation_Id, 3)
+         by Browser, OperatingSystem, Country, City
+| extend TotalExceptions=totalExceptions,
+         PercentOfTotal=iff(totalExceptions > 0, round(100.0 * Count / totalExceptions, 1), real(null))
+| order by Count desc
+| take maxRows

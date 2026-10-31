@@ -1,0 +1,81 @@
+// Exception Management ingestion (WI 238073). One row per exception event.
+// let win is replaced with the sync window. Browser ErrorEvent noise is dropped here
+// and again by IncidentIngestionPlanner. Keep this file one contiguous block.
+// Hotels and cars share the hotel App Insights app, so this query runs once for both.
+// IncidentIngestionPlanner.IsCarException then keeps CarSearch, CarBooking, /cars/, and the
+// other car journey URLs as cars. Every other row from that app is a hotel exception.
+// Cruises have their own app. They have no VacationClubId; the partner id is the club.
+// Hotels are later filtered by brand.Information ClubId. Cruises are filtered by IcePartnerId.
+// A numeric vacation club id wins, then a numeric partner id, so a code such as SOR does not
+// hide 15639 or 308. A non-numeric token is kept only when no numeric id is present. Member and
+// session use the cruise names (memberid, user_id, customerId, session_id) after the hotel names.
+let win = 15m;
+let requestUrls =
+    requests
+    | where timestamp > ago(win)
+    | extend RequestUrl = tostring(url)
+    | summarize RequestUrl = coalesce(
+        take_anyif(RequestUrl, RequestUrl has "CarSearch" or RequestUrl has "CarBooking"
+            or RequestUrl has "CarLocationSearch" or RequestUrl has "searchlocations"
+            or RequestUrl has "/cars/"),
+        take_anyif(RequestUrl, isnotempty(RequestUrl))) by operation_Id;
+exceptions
+| where timestamp > ago(win)
+| where type !startswith "ErrorEvent"
+| join kind=leftouter requestUrls on operation_Id
+| extend ClubId = case(
+        tostring(customDimensions.VacationClubId) matches regex "^[0-9]{1,12}$" and tostring(customDimensions.VacationClubId) != "0", tostring(customDimensions.VacationClubId),
+        tostring(customDimensions.VacationClubID) matches regex "^[0-9]{1,12}$" and tostring(customDimensions.VacationClubID) != "0", tostring(customDimensions.VacationClubID),
+        tostring(customDimensions.ClubId) matches regex "^[0-9]{1,12}$" and tostring(customDimensions.ClubId) != "0", tostring(customDimensions.ClubId),
+        tostring(customDimensions.club_id) matches regex "^[0-9]{1,12}$" and tostring(customDimensions.club_id) != "0", tostring(customDimensions.club_id),
+        tostring(customDimensions.partnerId) matches regex "^[0-9]{1,12}$" and tostring(customDimensions.partnerId) != "0", tostring(customDimensions.partnerId),
+        tostring(customDimensions.PartnerId) matches regex "^[0-9]{1,12}$" and tostring(customDimensions.PartnerId) != "0", tostring(customDimensions.PartnerId),
+        tostring(customDimensions.partner_id) matches regex "^[0-9]{1,12}$" and tostring(customDimensions.partner_id) != "0", tostring(customDimensions.partner_id),
+        isnotempty(tostring(customDimensions.VacationClubId)) and tostring(customDimensions.VacationClubId) !in ("0", "-"), tostring(customDimensions.VacationClubId),
+        isnotempty(tostring(customDimensions.VacationClubID)) and tostring(customDimensions.VacationClubID) !in ("0", "-"), tostring(customDimensions.VacationClubID),
+        isnotempty(tostring(customDimensions.ClubId)) and tostring(customDimensions.ClubId) !in ("0", "-"), tostring(customDimensions.ClubId),
+        isnotempty(tostring(customDimensions.club_id)) and tostring(customDimensions.club_id) !in ("0", "-"), tostring(customDimensions.club_id),
+        isnotempty(tostring(customDimensions.partnerId)) and tostring(customDimensions.partnerId) !in ("0", "-"), tostring(customDimensions.partnerId),
+        isnotempty(tostring(customDimensions.PartnerId)) and tostring(customDimensions.PartnerId) !in ("0", "-"), tostring(customDimensions.PartnerId),
+        isnotempty(tostring(customDimensions.partner_id)) and tostring(customDimensions.partner_id) !in ("0", "-"), tostring(customDimensions.partner_id),
+        ""),
+    PartnerId = case(
+        tostring(customDimensions.partnerId) matches regex "^[0-9]{1,12}$" and tostring(customDimensions.partnerId) != "0", tostring(customDimensions.partnerId),
+        tostring(customDimensions.PartnerId) matches regex "^[0-9]{1,12}$" and tostring(customDimensions.PartnerId) != "0", tostring(customDimensions.PartnerId),
+        tostring(customDimensions.partner_id) matches regex "^[0-9]{1,12}$" and tostring(customDimensions.partner_id) != "0", tostring(customDimensions.partner_id),
+        ""),
+    MemberId = case(
+        isnotempty(tostring(customDimensions.UserId)) and tostring(customDimensions.UserId) != "0", tostring(customDimensions.UserId),
+        isnotempty(tostring(customDimensions.UserID)) and tostring(customDimensions.UserID) != "0", tostring(customDimensions.UserID),
+        isnotempty(tostring(customDimensions.MemberId)) and tostring(customDimensions.MemberId) != "0", tostring(customDimensions.MemberId),
+        isnotempty(tostring(customDimensions.travel_platform_user_id)) and tostring(customDimensions.travel_platform_user_id) != "0", tostring(customDimensions.travel_platform_user_id),
+        isnotempty(tostring(customDimensions.memberid)) and tostring(customDimensions.memberid) != "0", tostring(customDimensions.memberid),
+        isnotempty(tostring(customDimensions.user_id)) and tostring(customDimensions.user_id) != "0", tostring(customDimensions.user_id),
+        isnotempty(tostring(customDimensions.customerId)) and tostring(customDimensions.customerId) != "0", tostring(customDimensions.customerId),
+        ""),
+    SessionId = case(
+        isnotempty(tostring(customDimensions.SessionId)), tostring(customDimensions.SessionId),
+        isnotempty(tostring(customDimensions.session_id)), tostring(customDimensions.session_id),
+        ""),
+    CorrelationId = case(
+        isnotempty(tostring(customDimensions.CorrelationId)) and tostring(customDimensions.CorrelationId) != "00000000-0000-0000-0000-000000000000", tostring(customDimensions.CorrelationId),
+        isnotempty(tostring(customDimensions.correlationId)) and tostring(customDimensions.correlationId) != "00000000-0000-0000-0000-000000000000", tostring(customDimensions.correlationId),
+        isnotempty(tostring(customDimensions.correlation_id)) and tostring(customDimensions.correlation_id) != "00000000-0000-0000-0000-000000000000", tostring(customDimensions.correlation_id),
+        isnotempty(tostring(customDimensions.session_id)), tostring(customDimensions.session_id),
+        ""),
+    Url = coalesce(tostring(customDimensions.url), tostring(customDimensions.Url), RequestUrl, "")
+| project OccurredAt = timestamp,
+          ExceptionType = tostring(type),
+          ItemId = tostring(itemId),
+          OperationId = tostring(operation_Id),
+          Component = coalesce(tostring(cloud_RoleName), "unknown"),
+          Operation = coalesce(tostring(operation_Name), "unknown"),
+          Message = coalesce(tostring(outerMessage), tostring(innermostMessage), ""),
+          StackTrace = substring(tostring(details), 0, 8000),
+          MemberId,
+          SessionId,
+          CorrelationId,
+          Url,
+          RequestUrl,
+          ClubId,
+          PartnerId

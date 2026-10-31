@@ -1,0 +1,15 @@
+{
+  "profiles": {
+    "JourneyMonitor.Functions": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7071"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker",
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
+      "containerRunArguments": "--init",
+      "httpPort": 30078,
+      "useSSL": false
+    }
+  }
+}

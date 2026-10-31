@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/JourneyMonitor.Core/JourneyMonitor.Core.csproj" />
+    <Project Path="src/JourneyMonitor.Functions/JourneyMonitor.Functions.csproj" />
+    <Project Path="src/JourneyMonitor.Infrastructure/JourneyMonitor.Infrastructure.csproj" />
+    <Project Path="src/JourneyMonitor.Web/JourneyMonitor.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/JourneyMonitor.Tests/JourneyMonitor.Tests.csproj" />
+  </Folder>
+</Solution>

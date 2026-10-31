@@ -1,0 +1,65 @@
+// Scout Monkey - per-package drill-down. Pulls the individual requests and exceptions behind ONE
+// board row so the handoff package carries the raw evidence, not only the aggregate, and so the
+// L3 team can re-run this exact query in Azure without reconstructing it.
+//
+// Unlike the board queries this is a plain filter, not an aggregation pipeline: it is scoped to a
+// single 5-minute bucket and to the operation ids the board already captured, which is what keeps
+// it cheap enough to run once per package. {{MAX_ROWS}} caps the result on purpose - a single
+// bucket of a busy club can hold hundreds of rows and the package must stay a package.
+//
+// Host is projected because it is the entity for most of this estate: measured over 3h on the
+// Hotels/SOR resource, 100% of requests and 87% of exceptions carry a url while the stamped club
+// dimensions cover under 5%, so the company profile resolves the affected club from the host and
+// brand.ClubInventory.Site. Without this column the package header names a club that no single
+// row of its own evidence can corroborate, and a reader cannot tell a one-club incident from a
+// cross-club one. Derived exactly as the board derives it - tolower(parse_url(url).Host) - because
+// the Inspector queries compare Host-derived entity keys with == and a casing difference between
+// the two would read as "this club has no history".
+//
+// No club column here on purpose: the identity chain lives in the company profile, this file is
+// not profile-rendered (ScoutEvidenceCollector substitutes four placeholders and nothing else),
+// and a second hand-maintained copy of that chain is exactly the double source of truth the
+// profile exists to remove.
+//
+// Placeholders are substituted by ScoutEvidenceCollector before the text reaches Application
+// Insights. The resource list mirrors the board queries; keep them in sync.
+let opIds = dynamic({{OPERATION_IDS}});
+let tStart = {{TIME_START}};
+let tEnd = {{TIME_END}};
+let maxRows = {{MAX_ROWS}};
+let reqs = union
+(app("{{SOURCE:sor-frontend}}").requests | extend Source="SOR"),
+(app("{{SOURCE:cruise-core}}").requests | extend Source="Cruise Core"),
+(app("{{SOURCE:cruise-api}}").requests | extend Source="Cruise API")
+| where timestamp >= tStart and timestamp < tEnd
+| where operation_Id in (opIds)
+| project Kind="request", Timestamp=timestamp, Source, OperationId=operation_Id,
+          Name=tostring(name), Url=tostring(url), Host=tolower(tostring(parse_url(url).Host)),
+          Path=tostring(parse_url(url).Path),
+          DurationMs=todouble(duration), ResultCode=tostring(resultCode), Success=success,
+          Component=tostring(cloud_RoleName), Instance=tostring(cloud_RoleInstance),
+          ExceptionType="", Message="", StackTrace="",
+          CorrelationId=tostring(coalesce(customDimensions.CorrelationId, customDimensions.correlationId, customDimensions.correlation_id)),
+          UserKey=tostring(coalesce(column_ifexists("user_AuthenticatedId",""), customDimensions.UserId, customDimensions.UserID, customDimensions.MemberId, customDimensions.travel_platform_user_id, customDimensions.memberid, customDimensions.user_id, customDimensions.customerId));
+let excs = union
+(app("{{SOURCE:sor-frontend}}").exceptions | extend Source="SOR"),
+(app("{{SOURCE:cruise-core}}").exceptions | extend Source="Cruise Core"),
+(app("{{SOURCE:cruise-api}}").exceptions | extend Source="Cruise API")
+| where timestamp >= tStart and timestamp < tEnd
+| where operation_Id in (opIds)
+// An exception row has no url column of its own, only the dimension the browser SDK stamps.
+// Extended before the project because a project cannot read a column it is defining, and Host has
+// to come from the same text that lands in Url or the two would describe different requests.
+| extend EventUrl = tostring(coalesce(customDimensions.url, customDimensions.Url, ""))
+| project Kind="exception", Timestamp=timestamp, Source, OperationId=operation_Id,
+          Name=tostring(operation_Name), Url=EventUrl, Host=tolower(tostring(parse_url(EventUrl).Host)),
+          Path="",
+          DurationMs=real(null), ResultCode="", Success=false,
+          Component=tostring(cloud_RoleName), Instance=tostring(cloud_RoleInstance),
+          ExceptionType=tostring(type), Message=substring(tostring(coalesce(outerMessage, innermostMessage, "")), 0, 600),
+          StackTrace=substring(tostring(details), 0, 2000),
+          CorrelationId=tostring(coalesce(customDimensions.CorrelationId, customDimensions.correlationId, customDimensions.correlation_id)),
+          UserKey=tostring(coalesce(column_ifexists("user_AuthenticatedId",""), customDimensions.UserId, customDimensions.UserID, customDimensions.MemberId, customDimensions.travel_platform_user_id, customDimensions.memberid, customDimensions.user_id, customDimensions.customerId));
+union reqs, excs
+| order by Timestamp asc
+| take maxRows

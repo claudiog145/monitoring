@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AppInsights Token Management</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        h1 {
+            margin-bottom: 10px;
+            color: #222;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+        
+        .section {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .section h2 {
+            margin-bottom: 15px;
+            color: #222;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 10px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #333;
+        }
+        
+        input[type="text"],
+        input[type="email"],
+        select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        
+        input[type="text"]:focus,
+        input[type="email"]:focus,
+        select:focus {
+            outline: none;
+            border-color: #0078d4;
+            box-shadow: 0 0 0 3px rgba(0, 120, 212, 0.1);
+        }
+        
+        textarea {
+            width: 100%;
+            min-height: 150px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: 'Courier New', monospace;
+            resize: vertical;
+        }
+        
+        button {
+            padding: 10px 20px;
+            background: #0078d4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        button:hover {
+            background: #106ebe;
+        }
+        
+        button:active {
+            background: #004b8b;
+        }
+        
+        .message {
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            display: none;
+        }
+        
+        .message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .tokens-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        
+        .tokens-table th,
+        .tokens-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .tokens-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .tokens-table tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .delete-btn {
+            padding: 6px 12px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        .delete-btn:hover {
+            background: #c82333;
+        }
+        
+        .instructions {
+            background: #f0f4ff;
+            padding: 15px;
+            border-left: 4px solid #0078d4;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        
+        .instructions ol {
+            margin-left: 20px;
+            color: #555;
+        }
+        
+        .instructions li {
+            margin-bottom: 8px;
+        }
+        
+        pre {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        
+        .small-text {
+            font-size: 13px;
+            color: #666;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AppInsights Access Tokens</h1>
+        <p class="subtitle">Manage Azure AppInsights tokens for multi-tenant access</p>
+        
+        <!-- Instructions -->
+        <div class="section">
+            <h2>How to Generate a Token</h2>
+            <div class="instructions">
+                <ol>
+                    <li>Open Terminal or PowerShell</li>
+                    <li>Login to your Azure account:
+                        <pre>az login --tenant YOUR-TENANT-ID</pre>
+                    </li>
+                    <li>Get access token:
+                        <pre>az account get-access-token --scope https://management.azure.com/</pre>
+                    </li>
+                    <li>Copy the entire <strong>accessToken</strong> value (the long JWT string)</li>
+                    <li>Paste it in the form below</li>
+                </ol>
+            </div>
+        </div>
+        
+        <!-- Add Token Form -->
+        <div class="section">
+            <h2>Add New Token</h2>
+            <form id="addTokenForm">
+                <div class="form-group">
+                    <label for="tenantKey">Tenant *</label>
+                    <select id="tenantKey" required>
+                        <option value="">-- Select Tenant --</option>
+                        <option value="arrivia">Arrivia</option>
+                        <option value="ice">Ice Enterprise</option>
+                        <option value="acme">Acme Corp</option>
+                    </select>
+                    <p class="small-text">Select which company this token is for</p>
+                </div>
+                
+                <div class="form-group">
+                    <label for="userEmail">Email Address *</label>
+                    <input type="email" id="userEmail" required placeholder="user@company.com">
+                    <p class="small-text">Your email address in this tenant</p>
+                </div>
+                
+                <div class="form-group">
+                    <label for="token">Access Token *</label>
+                    <textarea id="token" required placeholder="Paste the accessToken value here (long JWT string)"></textarea>
+                    <p class="small-text">Paste only the accessToken value, not the entire JSON output</p>
+                </div>
+                
+                <button type="submit">Save Token</button>
+                <div id="addMessage" class="message"></div>
+            </form>
+        </div>
+        
+        <!-- Stored Tokens -->
+        <div class="section">
+            <h2>Stored Tokens</h2>
+            <table class="tokens-table" id="tokensTable">
+                <thead>
+                    <tr>
+                        <th>Tenant</th>
+                        <th>Email</th>
+                        <th>Added</th>
+                        <th>Expires</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="tokensBody">
+                    <tr>
+                        <td colspan="6" style="text-align: center; color: #999;">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <script>
+        const API_URL = '/api/appinsights';
+        
+        // Load tokens on page load
+        loadTokens();
+        
+        // Handle form submission
+        document.getElementById('addTokenForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const tenantKey = document.getElementById('tenantKey').value;
+            const userEmail = document.getElementById('userEmail').value;
+            const token = document.getElementById('token').value;
+            
+            try {
+                const response = await fetch(`${API_URL}/tokens`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        tenantKey: tenantKey,
+                        userEmail: userEmail,
+                        token: token
+                    })
+                });
+                
+                const messageEl = document.getElementById('addMessage');
+                
+                if (response.ok) {
+                    messageEl.className = 'message success';
+                    messageEl.textContent = 'Token saved successfully!';
+                    messageEl.style.display = 'block';
+                    
+                    // Clear form
+                    document.getElementById('addTokenForm').reset();
+                    
+                    // Reload tokens
+                    setTimeout(loadTokens, 1000);
+                } else {
+                    const error = await response.text();
+                    messageEl.className = 'message error';
+                    messageEl.textContent = `Error: ${error}`;
+                    messageEl.style.display = 'block';
+                }
+            } catch (error) {
+                const messageEl = document.getElementById('addMessage');
+                messageEl.className = 'message error';
+                messageEl.textContent = `Error: ${error.message}`;
+                messageEl.style.display = 'block';
+            }
+        });
+        
+        async function loadTokens() {
+            try {
+                const response = await fetch(`${API_URL}/tokens`);
+                const data = await response.json();
+                
+                const tbody = document.getElementById('tokensBody');
+                
+                // Handle both array and object with tokens property
+                const tokensList = Array.isArray(data) ? data : (data.tokens || []);
+                
+                if (!tokensList || tokensList.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #999;">No tokens stored yet</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = tokensList.map(token => `
+                    <tr>
+                        <td><strong>${token.tenantKey}</strong></td>
+                        <td>${token.email}</td>
+                        <td>${formatDate(token.createdAt)}</td>
+                        <td>${formatDate(token.expiresAt)}</td>
+                        <td>${token.isExpired ? '<span style="color: #dc3545;">Expired</span>' : '<span style="color: #28a745;">Active</span>'}</td>
+                        <td><button class="delete-btn" onclick="deleteToken('${token.tenantKey}')">Delete</button></td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                console.error('Error loading tokens:', error);
+                const tbody = document.getElementById('tokensBody');
+                tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: #dc3545;">Error loading tokens: ${error.message}</td></tr>`;
+            }
+        }
+        
+        async function deleteToken(tenantKey) {
+            if (!confirm(`Delete token for ${tenantKey}?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/tokens/${tenantKey}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    loadTokens();
+                } else {
+                    alert('Error deleting token');
+                }
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+        
+        function formatDate(dateString) {
+            if (!dateString) return '-';
+            return new Date(dateString).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+        
+        function isExpired(dateString) {
+            if (!dateString) return false;
+            return new Date(dateString) < new Date();
+        }
+    </script>
+</body>
+</html>

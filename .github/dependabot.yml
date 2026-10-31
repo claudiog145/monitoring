@@ -1,0 +1,23 @@
+version: 2
+updates:
+  - package-ecosystem: "nuget"
+    directories:
+      - "/Portal/src/JourneyMonitor.Core"
+      - "/Portal/src/JourneyMonitor.Functions"
+      - "/Portal/src/JourneyMonitor.Infrastructure"
+      - "/Portal/src/JourneyMonitor.Web"
+      - "/Portal/tests/JourneyMonitor.Tests"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directories:
+      - "/Portal/src/JourneyMonitor.Functions"
+      - "/Portal/src/JourneyMonitor.Web"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

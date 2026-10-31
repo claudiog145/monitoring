@@ -1,0 +1,59 @@
+// Inspector Monkey / LogsAgent - exception signature breakdown for one packaged window.
+//
+// Answers "is this one failure repeating, or many different ones at once?" - the difference
+// between a single broken dependency and a general degradation, which the board's aggregate
+// count cannot tell apart.
+//
+// Scoped by club, NOT by the operation ids in the package: the board caps the ids it captures
+// (ExceptionOps <= 20, RequestOps <= 10), so counting signatures from them would report the
+// distribution of a sample as the distribution of the window.
+//
+// Placeholders are substituted by SignatureBreakdownTool. {{ENTITY_KEY_B64}} is base64 so no club
+// or host name can ever terminate a KQL string literal. The resource list mirrors
+// scout-drilldown/scout-*-priorities; keep them in sync.
+let entityKey = base64_decode_tostring('{{ENTITY_KEY_B64}}');
+let entityValue = substring(entityKey, indexof(entityKey, ":") + 1);
+let tStart = {{TIME_START}};
+let tEnd = {{TIME_END}};
+let maxRows = {{MAX_ROWS}};
+// Same club attribution the board uses: an exception row has no club id of its own, it inherits
+// the one from the request sharing its operation_Id.
+let entityRefs = materialize(union
+(app("{{SOURCE:sor-frontend}}").requests | where timestamp >= tStart and timestamp < tEnd | project timestamp, operation_Id, url, customDimensions | extend Source="SOR"),
+(app("{{SOURCE:cruise-core}}").requests | where timestamp >= tStart and timestamp < tEnd | project timestamp, operation_Id, url, customDimensions | extend Source="Cruise Core"),
+(app("{{SOURCE:cruise-api}}").requests | where timestamp >= tStart and timestamp < tEnd | project timestamp, operation_Id, url, customDimensions | extend Source="Cruise API")
+| where isnotempty(operation_Id)
+| where url contains entityValue or tostring(customDimensions) contains entityValue
+// Mirrors the company profile chain, and lowercases Host for the same reason inspector-club-
+// baseline does: the entity key this is compared against was produced by the profile, which
+// lowercases the host, and == would otherwise miss every mixed-case url. customDimensions.CobrandId
+// is gone along with it - zero occurrences in 23,802 sampled rows.
+| extend Host=tolower(tostring(parse_url(url).Host)),
+         Club=coalesce(tostring(customDimensions.VacationClubId),tostring(customDimensions.VacationClubID),tostring(customDimensions.ClubId),tostring(customDimensions.club_id),tostring(parse_url(url)["Query Parameters"]["cobrand"]),tostring(parse_url(url)["Query Parameters"]["cobrandId"]))
+| extend Entity=iff(isnotempty(Club),strcat("club:",Club),iff(isnotempty(Host),strcat("host:",Host),"[host/club unavailable]"))
+| where Entity == entityKey
+| summarize by Ref=strcat(Source,":",operation_Id));
+let entityExceptions = materialize(union
+(app("{{SOURCE:sor-frontend}}").exceptions | where timestamp >= tStart and timestamp < tEnd | extend Source="SOR"),
+(app("{{SOURCE:cruise-core}}").exceptions | where timestamp >= tStart and timestamp < tEnd | extend Source="Cruise Core"),
+(app("{{SOURCE:cruise-api}}").exceptions | where timestamp >= tStart and timestamp < tEnd | extend Source="Cruise API")
+| where isnotempty(operation_Id)
+| extend Ref=strcat(Source,":",operation_Id)
+| join hint.shufflekey=Ref kind=inner (entityRefs) on Ref
+| project timestamp, Source, operation_Id,
+          ExceptionType=tostring(type),
+          ProblemId=tostring(problemId),
+          // Capped: a single message can be kilobytes, and the grouping only needs enough of it
+          // to tell two signatures apart.
+          Message=substring(tostring(coalesce(outerMessage, innermostMessage, "")), 0, 300));
+// The denominator is the whole window for this club, so PercentOfTotal still means "share of all
+// exceptions" even after the top-N take below drops the tail.
+let totalExceptions = toscalar(entityExceptions | count);
+entityExceptions
+| summarize Count=count(), FirstSeen=min(timestamp), LastSeen=max(timestamp),
+            Sources=make_set(Source, 5), ExampleOperationIds=make_set(operation_Id, 3)
+         by ExceptionType, ProblemId, Message
+| extend TotalExceptions=totalExceptions,
+         PercentOfTotal=iff(totalExceptions > 0, round(100.0 * Count / totalExceptions, 1), real(null))
+| order by Count desc
+| take maxRows

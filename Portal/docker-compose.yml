@@ -1,0 +1,309 @@
+# Local end-to-end run of JourneyMonitor.Web + JourneyMonitor.Functions.
+#
+# Flow: browser -> web (:5080) -> [server-side proxy] -> functions (:80 on the shared network)
+#
+# functions keeps writing production App Insights into platformDB. functions-qa (:8082 on
+# localhost only) writes staging/UAT App Insights into platformDBQA. The web app still calls
+# functions. Both containers mount the azure-cli volume, so the az login below covers both.
+#
+# Live Application Insights queries use DefaultAzureCredential. Inside Docker that is NOT your
+# host `az login`. After the stack is up, sign in once in the Functions container (device code):
+#   docker compose exec functions az login --use-device-code --tenant 60396ff5-e90f-4bc5-aced-a4f462f2636e
+# Air (optional second tenant):
+#   docker compose exec functions az login --use-device-code --tenant b0298d22-1db0-4550-8fa6-a116a5ab4208
+#
+# Alternative: copy Portal/.env.example to Portal/.env and set AZURE_TENANT_ID / AZURE_CLIENT_ID /
+# AZURE_CLIENT_SECRET for a service principal with Monitoring Reader on the Insights resources.
+#
+# Latency Spike Monkey (Ai:GitHubToken, Monitoring:*): also configured via Portal/.env - see
+# .env.example. Ai__GitHubToken is only a fallback though - once SQL persistence is up, the
+# Settings tab's "LLM Client" section (PUT /api/settings/llm-client) is the preferred way to set
+# the Doctor Monkey's token, since it does not need an environment-specific value here or in any
+# other deployment target (see LlmClientSettingsResolver). Demo tip: production thresholds
+# (5000ms / 5 occurrences / 60min) rarely fire within a short demo session; set
+# Monitoring__SpikeThresholdMs=100 / SpikeOccurrenceThreshold=1
+# in your own .env (gitignored) to see real findings from real production data quickly. Do not
+# hardcode lowered thresholds in this file - anyone who runs `docker compose up` without reading
+# this comment would otherwise get noisy findings and unnecessary LLM calls by default.
+#
+# SQL-journey-store-based detector (Monitoring__SqlDetectorDomains, gradual KQL->DB rollout - see
+# docs/product/latency-spike-doctor-monkey-db-migration-plan-2026-09-21.md): unset by default, so
+# every domain still uses the KQL detector. Set e.g. Monitoring__SqlDetectorDomains=cars in your
+# own .env to opt one domain into the SQL-based detector once SyncJourneys has populated it.
+# Monitoring__ShadowDomains=cars (also via .env) runs the other detector as a side-by-side dry
+# run for that domain and logs a comparison, without creating a second Finding - use it while
+# validating the SQL detector before fully cutting a domain over.
+#
+# From this folder (Portal/):
+#   docker compose up --build
+#   docker compose down
+#
+# SQL: compose starts SQL Server, creates platformDB and platformDBQA, and applies
+# Sql/*/Create*Schema.sql to both. Override the SA password in Portal/.env (MSSQL_SA_PASSWORD).
+# Host port 1433 is published so Visual Studio / sqlcmd can use the same server:
+#   Server=localhost,1433;Database=platformDB;User Id=sa;Password=...;TrustServerCertificate=True;
+#   Server=localhost,1433;Database=platformDBQA;User Id=sa;Password=...;TrustServerCertificate=True;
+#
+# sql-init bakes the Sql/**/*.sql scripts INTO its own image (docker/sql-init.Dockerfile) instead
+# of a bind mount, so `docker compose up --build` alone reruns it whenever a script changes - no
+# manual --force-recreate needed. All scripts are idempotent (IF NOT EXISTS / CREATE OR ALTER).
+services:
+  sql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: jm-sql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-Jm_LocalDev_1!}"
+    ports:
+      - "127.0.0.1:1433:1433"
+    volumes:
+      - sql-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q \"SELECT 1\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 25s
+
+  sql-init:
+    image: journeymonitor-sql-init:local
+    build:
+      context: .
+      dockerfile: docker/sql-init.Dockerfile
+    container_name: jm-sql-init
+    depends_on:
+      sql:
+        condition: service_healthy
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-Jm_LocalDev_1!}"
+      MSSQL_HOST: sql
+      MSSQL_DATABASE: platformDB
+      MSSQL_DATABASE_QA: platformDBQA
+      SQL_SCRIPTS_DIR: /scripts
+    user: root
+    restart: "no"
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0
+    container_name: jm-azurite
+    command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0
+    healthcheck:
+      test: ["CMD", "sh", "-c", "nc -z 127.0.0.1 10000 && nc -z 127.0.0.1 10001 && nc -z 127.0.0.1 10002"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  functions:
+    image: journeymonitor-functions:local
+    build:
+      context: .
+      dockerfile: src/JourneyMonitor.Functions/Dockerfile
+      target: with-azure-cli
+      secrets:
+        - corporate_ca
+    container_name: jm-functions
+    ports:
+      # Bound to localhost only (same mitigation as the sql service's 127.0.0.1:1433) - the local
+      # dev X-Settings-Write-Secret/X-Internal-Api-Secret defaults below are committed, known
+      # values, so this Function must not be reachable from the network, only this machine.
+      - "127.0.0.1:8081:80"
+    depends_on:
+      azurite:
+        condition: service_healthy
+      sql-init:
+        condition: service_completed_successfully
+    env_file:
+      - path: .env
+        required: false
+    environment: &functions-env
+      AzureWebJobsStorage: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;TableEndpoint=http://azurite:10002/devstoreaccount1;"
+      platform_reliability_database_connectionString: "Server=sql,1433;Database=platformDB;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Jm_LocalDev_1!};TrustServerCertificate=True;Encrypt=True;"
+      JourneyStore__ConnectionString: "Server=sql,1433;Database=platformDB;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Jm_LocalDev_1!};TrustServerCertificate=True;Encrypt=True;"
+      ConnectionStrings__DefaultConnection: "Server=sql,1433;Database=platformDB;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Jm_LocalDev_1!};TrustServerCertificate=True;Encrypt=True;"
+      FUNCTIONS_WORKER_RUNTIME: dotnet-isolated
+      # Both token paths (App Insights and Azure DevOps) use this flag to drop Managed Identity
+      # from the credential chain, because there is no IMDS at 169.254.169.254 here and the
+      # attempt burns its whole retry budget before any other credential is tried. The base image
+      # already sets it; pinned explicitly so a base-image change cannot silently bring the hang
+      # back. Azure Container Apps also sets IDENTITY_ENDPOINT, which re-enables Managed Identity.
+      DOTNET_RUNNING_IN_CONTAINER: "true"
+      # Both vertical timers read this schedule. A missing value fails indexing for every function.
+      platform_reliability_cron_setting: "0 */5 * * * *"
+      JourneySync__Domains: "hotels,cruises"
+      JourneySync__InitialRowCap: "50"
+      JourneySync__FilteredRowCap: "200"
+      # Which company the agents classify for when nobody has picked one. Blank is a hard failure
+      # by design (a board on which nothing classifies looks exactly like a healthy one), so the
+      # seeded incumbent is the local default. An operator overrides it at runtime from the portal
+      # - that pointer lives in monitoring.ActiveCompanyProfile and wins over this value.
+      Company__DefaultProfileKey: "${Company__DefaultProfileKey:-arrivia}"
+      AZURE_CONFIG_DIR: /home/.azure
+      Insights__Hotels__TenantId: "60396ff5-e90f-4bc5-aced-a4f462f2636e"
+      Insights__Hotels__AppInsightsAppId: "8644ddf0-29b2-4283-87c0-7a9a514aefb5"
+      Insights__Hotels__Staging__AppInsightsAppId: "f08f6072-4d42-4bcf-a8e9-aeb4a331757e"
+      Insights__Air__TenantId: "b0298d22-1db0-4550-8fa6-a116a5ab4208"
+      Insights__Air__AppInsightsAppId: "5adb0994-d6cf-4dc5-9e5f-ff0fc002d5ba"
+      Insights__Air__Staging__AppInsightsAppId: "6a6471e4-0b3d-4a23-b08f-264eb49f4ab7"
+      Insights__Cruises__TenantId: "60396ff5-e90f-4bc5-aced-a4f462f2636e"
+      Insights__Cruises__AppInsightsAppId: "f5f675bd-4148-4a12-bc76-1e9ed1aa1156"
+      Insights__Cruises__Staging__AppInsightsAppId: "8fcb7243-12cf-4517-82de-c647a0777cc7"
+      # Fails closed when unset (see UpsertLatencySpikeSettingFunction) - this local-only default
+      # keeps `docker compose up` working without extra setup; override in Portal/.env for a real
+      # deployment. Must match web's JourneyMonitorApi__SettingsWriteSecret below.
+      Monitoring__SettingsWriteSecret: "${Monitoring__SettingsWriteSecret:-Jm_LocalDev_SettingsSecret_1!}"
+      # Same fail-closed pairing as above, for GetFindingDoctorReport/ListLlmClientModels (see
+      # MonitoringOptions.InternalApiSecret) - must match web's JourneyMonitorApi__InternalApiSecret.
+      Monitoring__InternalApiSecret: "${Monitoring__InternalApiSecret:-Jm_LocalDev_InternalApiSecret_1!}"
+      # Backs the DocsAgent with the wiki and work-item indexes Azure DevOps already maintains, so
+      # there is no local copy to build or keep fresh. Disabled by default: reading another team's
+      # wiki is opt-in, not something a fresh clone starts doing. Set AzureDevOpsSearch__Enabled=true
+      # in Portal/.env to turn it on - it needs an `az login` that can reach the DevOps tenant.
+      # While it is off the DocsAgent reports "no source", which is the honest state, never "found nothing".
+      AzureDevOpsSearch__Enabled: "${AzureDevOpsSearch__Enabled:-}"
+      AzureDevOpsSearch__Organization: "${AzureDevOpsSearch__Organization:-arrivia}"
+      AzureDevOpsSearch__Project: "${AzureDevOpsSearch__Project:-SoftEng}"
+      # Azure DevOps lives in a different tenant from the Application Insights resources above; a
+      # token from the wrong one answers with a login redirect rather than an error anyone notices.
+      AzureDevOpsSearch__TenantId: "${AzureDevOpsSearch__TenantId:-ea4d58b6-6980-4312-be9a-ab68edfa574c}"
+      # Escape hatch for a machine with no usable `az login` inside the container: a token pasted
+      # here is used before the credential chain is tried at all. It MUST be minted for the Azure
+      # DevOps resource - `az account get-access-token --tenant $AzureDevOpsSearch__TenantId
+      # --scope 499b84ac-1321-427f-aa17-267ca6975798/.default --query accessToken -o tsv`. A token
+      # for ARM or for Application Insights is a valid token, so Azure DevOps answers it with a
+      # sign-in page rather than an auth error. It expires in ~1h; the durable way is to paste one
+      # under tenant key "azure-devops" in Settings -> AppInsights Tokens, which wins over this.
+      AzureDevOpsSearch__AccessToken: "${AzureDevOpsSearch__AccessToken:-}"
+      # Empty = every repository, which is the decision on record. The cost is that legacy and
+      # proof-of-concept repositories are searchable too, so a result can be real code that no
+      # longer runs; results carry their repository so a reader can tell.
+      AzureDevOpsSearch__Repositories: "${AzureDevOpsSearch__Repositories:-}"
+      # The two detection agents (latency scout, exception scout). Unset = the documented defaults
+      # (enabled, 4h window, 5-minute buckets, 3 rows per club, only rank 3 escalates, 25 packages
+      # per cycle) - applied PER SCOUT, so each one gets its own budget.
+      # Set ScoutLatency__Enabled=false / ScoutException__Enabled=false in Portal/.env to stop one
+      # of them without rebuilding - they query PRODUCTION Application Insights on every tick.
+      # InvestigationMinPriorityRank stays 3 everywhere, production included: rank 2 is ~350
+      # candidates per cycle and must not be turned on before the real cost is measured.
+      ScoutLatency__Enabled: "${ScoutLatency__Enabled:-}"
+      ScoutLatency__WindowHours: "${ScoutLatency__WindowHours:-}"
+      ScoutLatency__TakePerClub: "${ScoutLatency__TakePerClub:-}"
+      ScoutLatency__InvestigationMinPriorityRank: "${ScoutLatency__InvestigationMinPriorityRank:-}"
+      ScoutLatency__MaxNewCasesPerRun: "${ScoutLatency__MaxNewCasesPerRun:-}"
+      ScoutLatency__UseLlmAssessment: "${ScoutLatency__UseLlmAssessment:-}"
+      ScoutLatency__AllowScoutVeto: "${ScoutLatency__AllowScoutVeto:-}"
+      ScoutException__Enabled: "${ScoutException__Enabled:-}"
+      ScoutException__WindowHours: "${ScoutException__WindowHours:-}"
+      ScoutException__TakePerClub: "${ScoutException__TakePerClub:-}"
+      ScoutException__InvestigationMinPriorityRank: "${ScoutException__InvestigationMinPriorityRank:-}"
+      ScoutException__MaxNewCasesPerRun: "${ScoutException__MaxNewCasesPerRun:-}"
+      ScoutException__UseLlmAssessment: "${ScoutException__UseLlmAssessment:-}"
+      ScoutException__AllowScoutVeto: "${ScoutException__AllowScoutVeto:-}"
+      # Where the Doctor Monkey's encrypted GitHub token (monitoring.LlmClientSetting) is
+      # decryptable from - see SqlLlmClientSettingsStore. Mounted on the dataprotection-keys
+      # volume below so a token saved via the Settings tab survives `docker compose up --build`;
+      # a fresh volume (or a real deployment without a durable, shared key store) means any
+      # previously saved token becomes unrecoverable and must be re-entered - this is a known gap
+      # for QA/production, not silently swallowed (see SqlLlmClientSettingsStore's doc comment).
+      DataProtection__KeysDirectory: /home/dataprotection-keys
+      # Converted RCA/incident corpus (docs/RCAS-md), imported into the knowledge base by
+      # POST /api/knowledge/import. Read-only: this container indexes the documents, never edits
+      # them, and the corpus is regenerated from the originals with markitdown when needed.
+      KnowledgeImport__CorpusPath: /corpus
+    volumes:
+      - azure-cli:/home/.azure
+      - dataprotection-keys:/home/dataprotection-keys
+      - ../docs/RCAS-md:/corpus:ro
+
+  # Same image and timers as functions. Writes staging App Insights into platformDBQA only.
+  # Its own host id keeps the timer blob lease from colliding with functions on shared Azurite.
+  functions-qa:
+    image: journeymonitor-functions:local
+    build:
+      context: .
+      dockerfile: src/JourneyMonitor.Functions/Dockerfile
+      target: with-azure-cli
+      secrets:
+        - corporate_ca
+    container_name: jm-functions-qa
+    ports:
+      - "127.0.0.1:8082:80"
+    depends_on:
+      azurite:
+        condition: service_healthy
+      sql-init:
+        condition: service_completed_successfully
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *functions-env
+      platform_reliability_database_connectionString: "Server=sql,1433;Database=platformDBQA;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Jm_LocalDev_1!};TrustServerCertificate=True;Encrypt=True;"
+      JourneyStore__ConnectionString: "Server=sql,1433;Database=platformDBQA;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Jm_LocalDev_1!};TrustServerCertificate=True;Encrypt=True;"
+      JourneySync__Environment: staging
+      AzureFunctionsWebHost__hostid: jmfunctionsqa
+      AzureWebJobs.LatencySpikeMonkey.Disabled: "true"
+    volumes:
+      - azure-cli:/home/.azure
+      - dataprotection-keys-qa:/home/dataprotection-keys
+
+  web:
+    image: journeymonitor-web:latest
+    build:
+      context: .
+      dockerfile: src/JourneyMonitor.Web/Dockerfile
+    container_name: jm-web
+    # functions runs as root and DataProtection writes its key files with mode 0600, so a
+    # non-root web (the image's default USER $APP_UID) cannot read the shared key ring and token
+    # encryption fails with "Access to the path '/home/dataprotection-keys/key-....xml' is denied".
+    # Running both containers under the same uid is the local-dev way to share the ring; a real
+    # deployment should back DataProtection with a shared key store (Key Vault / blob) instead.
+    user: root
+    ports:
+      - "5080:8080"
+    depends_on:
+      sql:
+        condition: service_healthy
+      functions:
+        condition: service_started
+      functions-qa:
+        condition: service_started
+    environment:
+      ConnectionStrings__DefaultConnection: "Server=sql,1433;Database=platformDB;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Jm_LocalDev_1!};TrustServerCertificate=True;Encrypt=True;"
+      JourneyMonitorApi__BaseUrl: "http://functions:80"
+      # Staging dropdown calls functions-qa. Production calls functions. Each host uses its own connection string.
+      JourneyMonitorApi__StagingBaseUrl: "http://functions-qa:80"
+      # ${...} substitution reads Portal/.env directly (docker compose always does this for the
+      # compose file itself) WITHOUT injecting the whole file via env_file: - unlike `functions`,
+      # web has no reason to see MSSQL_SA_PASSWORD/AZURE_CLIENT_SECRET/Ai__GitHubToken/etc., so it
+      # only gets these two settings. Must match functions' Monitoring__SettingsWriteSecret/
+      # Monitoring__InternalApiSecret above - each endpoint fails closed if either side doesn't
+      # have its matching secret configured.
+      JourneyMonitorApi__SettingsWriteSecret: "${JourneyMonitorApi__SettingsWriteSecret:-Jm_LocalDev_SettingsSecret_1!}"
+      JourneyMonitorApi__InternalApiSecret: "${JourneyMonitorApi__InternalApiSecret:-Jm_LocalDev_InternalApiSecret_1!}"
+      # Must match functions' DataProtection__KeysDirectory and share the same volume below.
+      # An App Insights token saved through this container's /api/appinsights/tokens endpoint is
+      # encrypted with these keys and later decrypted by functions when a scout queries App
+      # Insights; without the shared key ring functions fails with "Error accessing token for
+      # tenant ..." and silently falls back to DefaultAzureCredential.
+      DataProtection__KeysDirectory: /home/dataprotection-keys
+    volumes:
+      - dataprotection-keys:/home/dataprotection-keys
+
+volumes:
+  azure-cli:
+  sql-data:
+  dataprotection-keys:
+  dataprotection-keys-qa:
+
+# Build secret for the functions "with-azure-cli" target - see the Dockerfile comment. The file
+# is a public corporate root CA, safe to keep committed; it's mounted transiently during the
+# az-cli install RUN step and never copied into an image layer.
+secrets:
+  corporate_ca:
+    file: ./src/JourneyMonitor.Functions/phx-ca-root.crt
+
+networks:
+  default:
+    name: jm-net
+

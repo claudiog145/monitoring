@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>arrivia | Agentic Operations Portal</title>
+<link rel="icon" href="assets/logo-placeholder.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to main content</a>
+
+<!-- ============================== HEADER ============================== -->
+<header class="app-header" role="banner">
+  <div class="app-header__brand">
+    <img src="assets/logo-placeholder.svg" alt="arrivia" class="app-header__logo" />
+    <div class="app-header__title">
+      <span class="app-header__product">Agentic Operations Portal</span>
+      <span class="app-header__subtitle">Travel Platform Command Center</span>
+    </div>
+  </div>
+
+  <div class="app-header__controls">
+    <!-- Which company's telemetry the whole platform is classifying. Server-held pointer, not a
+         browser preference: two operators on this portal must see the same answer. -->
+    <label class="control-group control-group--company" for="company-select">
+      <span class="control-group__label">Company</span>
+      <select id="company-select" class="control-select" disabled>
+        <option value="">Loading…</option>
+      </select>
+      <span class="company-note" id="company-select-note" role="status" aria-live="polite"></span>
+    </label>
+
+    <label class="control-group" for="env-select">
+      <span class="control-group__label">Environment</span>
+      <select id="env-select" class="control-select">
+        <option value="production" selected>Production</option>
+        <option value="staging">Staging</option>
+      </select>
+    </label>
+
+    <label class="control-group" for="time-range-select">
+      <span class="control-group__label">Time range</span>
+      <select id="time-range-select" class="control-select">
+        <option value="15m" selected>Last 15 minutes</option>
+        <option value="1h">Last hour</option>
+        <option value="6h">Last 6 hours</option>
+        <option value="24h">Last 24 hours</option>
+        <option value="7d">Last 7 days</option>
+      </select>
+    </label>
+
+    <div class="control-group control-group--refresh">
+      <span class="control-group__label">Last refresh</span>
+      <span id="last-refresh" class="last-refresh-time">--:--:--</span>
+    </div>
+
+    <label class="control-group control-group--toggle" for="auto-refresh-toggle" hidden>
+      <span class="control-group__label">Auto refresh</span>
+      <input type="checkbox" id="auto-refresh-toggle" class="toggle-switch" />
+    </label>
+
+    <button id="refresh-btn" class="btn btn--icon" type="button" aria-label="Refresh data now">
+      <span aria-hidden="true">&#8635;</span> Refresh
+    </button>
+
+    <button id="global-health" class="health-pill health-pill--healthy" type="button" aria-live="polite" hidden>
+      <span class="status-dot" aria-hidden="true"></span>
+      <span id="global-health-label">Platform Healthy</span>
+    </button>
+  </div>
+</header>
+
+<!-- ============================== NAV TABS ============================== -->
+<nav class="tab-nav" role="tablist" aria-label="Portal sections">
+  <button class="tab-nav__item is-active" role="tab" aria-selected="true" id="tab-btn-overview" data-tab="overview" aria-controls="tab-overview">Overview</button>
+  <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-journeys" data-tab="journeys" aria-controls="tab-journeys">Customer Journeys</button>
+  <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-health" data-tab="health" aria-controls="tab-health">Platform Health</button>
+  <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-analytics" data-tab="analytics" aria-controls="tab-analytics">Analytics</button>
+  <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-monkeys" data-tab="monkeys" aria-controls="tab-monkeys">Simian Army</button>
+  <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-memory" data-tab="memory" aria-controls="tab-memory">Memory Bank</button>
+  <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-club-map" data-tab="club-map" aria-controls="tab-club-map">Club Map</button>
+  <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-exceptions" data-tab="exceptions" aria-controls="tab-exceptions">Exceptions</button>
+  <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-settings" data-tab="settings" aria-controls="tab-settings">Settings</button>
+
+  <button id="run-demo-scenario" class="btn btn--demo" type="button" hidden>▶ Run Demo Scenario</button>
+</nav>
+
+<!-- ============================== GLOBAL FILTER BAR ============================== -->
+<section class="filter-bar" aria-label="Global filters">
+  <label class="filter-item">
+    <span class="filter-item__label">Domain</span>
+    <select id="filter-domain" class="control-select control-select--sm">
+      <option value="all">All</option>
+      <option value="hotels">Hotels</option>
+      <option value="cruises">Cruises</option>
+    </select>
+  </label>
+  <label class="filter-item" hidden>
+    <span class="filter-item__label">Status</span>
+    <select id="filter-status" class="control-select control-select--sm">
+      <option value="all">All</option>
+      <option value="healthy">Healthy</option>
+      <option value="degraded">Degraded</option>
+      <option value="critical">Critical</option>
+      <option value="unknown">Unknown</option>
+    </select>
+  </label>
+  <label class="filter-item">
+    <span class="filter-item__label">Club</span>
+    <select id="filter-club" class="control-select control-select--sm" disabled>
+      <option value="">Select a domain first</option>
+    </select>
+  </label>
+  <label class="filter-item" hidden>
+    <span class="filter-item__label">Region</span>
+    <select id="filter-region" class="control-select control-select--sm">
+      <option value="all">All regions</option>
+      <option value="North America">North America</option>
+      <option value="EMEA">EMEA</option>
+      <option value="APAC">APAC</option>
+      <option value="LATAM">LATAM</option>
+    </select>
+  </label>
+  <label class="filter-item filter-item--grow">
+    <span class="filter-item__label">Journey (Correlation ID) / Booking</span>
+    <input id="filter-id" class="control-input" type="search" placeholder="e.g. JNY-AIR-1004, BKG-A40004, corr-…" />
+  </label>
+  <button id="filter-clear" class="btn btn--ghost btn--sm" type="button">Clear filters</button>
+</section>
+
+<!-- ============================== MAIN CONTENT ============================== -->
+<main id="main-content" role="main">
+
+  <!-- OVERVIEW ------------------------------------------------------------->
+  <section id="tab-overview" class="tab-panel is-active" role="tabpanel" aria-labelledby="tab-btn-overview">
+    <h1 class="tab-panel__heading">Executive Overview</h1>
+    <div id="overview-kpis" class="kpi-grid" aria-label="Key performance indicators"></div>
+
+    <h2 class="section-heading">What the agents are doing</h2>
+    <div id="overview-pipeline"></div>
+
+    <h2 class="section-heading">Domain Health</h2>
+    <div id="overview-domains" class="domain-grid"></div>
+
+    <h2 class="section-heading">Recent Operational Events <span class="construction-tag">Under construction</span></h2>
+    <ol id="overview-timeline" class="event-timeline"></ol>
+  </section>
+
+  <!-- CUSTOMER JOURNEYS ----------------------------------------------------->
+  <section id="tab-journeys" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-journeys" hidden>
+    <h1 class="tab-panel__heading">Customer Journeys</h1>
+    <p class="tab-panel__desc">End-to-end transaction explorer across Hotels and Cruises.</p>
+    <div class="table-wrap">
+      <table class="data-table" id="journeys-table">
+        <caption class="sr-only">Customer journeys</caption>
+        <thead>
+          <tr>
+            <th data-sort="correlationId">Journey ID</th>
+            <th data-sort="domain">Domain</th>
+            <th data-sort="customer">Customer</th>
+            <th data-sort="club">Brand/Club</th>
+            <th data-sort="startDate">Start Date</th>
+            <th data-sort="status">Status</th>
+            <th data-sort="sessionCount">Session count</th>
+            <th data-sort="totalDurationMs">Duration</th>
+            <th data-sort="bookingId">Booking ID</th>
+            <th data-sort="timestamp">Timestamp</th>
+          </tr>
+        </thead>
+        <tbody id="journeys-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- PLATFORM HEALTH -------------------------------------------------------->
+  <section id="tab-health" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-health" hidden>
+    <h1 class="tab-panel__heading">Platform Health</h1>
+
+    <h2 class="section-heading">Domain Health</h2>
+    <div id="health-domains" class="domain-grid"></div>
+
+    <h2 class="section-heading">Component Health &amp; Service Map <span class="construction-tag">Under construction</span></h2>
+    <p class="tab-panel__desc">Select a component to inspect metrics, dependencies, incidents and suggested actions.</p>
+    <div id="component-grid" class="component-grid" aria-label="Platform components"></div>
+  </section>
+
+  <!-- ANALYTICS ------------------------------------------------------------->
+  <section id="tab-analytics" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-analytics" hidden>
+    <h1 class="tab-panel__heading">Operational Analytics</h1>
+
+    <div class="analytics-grid">
+      <div class="chart-card" data-dashboard-chart="hotels:step_latency_p95">
+        <h2 class="chart-card__title">Hotel T-Mobile — step latency (P95 + Overall)</h2>
+        <svg id="chart-hotel-latency" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+        <div class="chart-legend" id="legend-hotel-latency"></div>
+      </div>
+      <div class="chart-card" data-dashboard-chart="hotels:exceptions_by_step">
+        <h2 class="chart-card__title">Hotel T-Mobile — exceptions by step</h2>
+        <svg id="chart-hotel-exceptions" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+        <div class="chart-legend" id="legend-hotel-exceptions"></div>
+      </div>
+      <div class="chart-card" data-dashboard-chart="cruises:step_latency_p95">
+        <h2 class="chart-card__title">Cruise T-Mobile — P95 latency by step</h2>
+        <svg id="chart-cruise-latency" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+        <div class="chart-legend" id="legend-cruise-latency"></div>
+      </div>
+      <div class="chart-card" data-dashboard-chart="cruises:exceptions_by_step">
+        <h2 class="chart-card__title">Cruise T-Mobile — exceptions by step</h2>
+        <svg id="chart-cruise-exceptions" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+        <div class="chart-legend" id="legend-cruise-exceptions"></div>
+      </div>
+      <div class="chart-card chart-card--under-construction" data-dashboard-chart="air:step_latency_p95">
+        <h2 class="chart-card__title">Air T-Mobile — step latency (P95 + Overall) <span class="construction-tag">Under construction</span></h2>
+        <svg id="chart-air-latency" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+        <div class="chart-legend" id="legend-air-latency"></div>
+      </div>
+      <div class="chart-card chart-card--under-construction" data-dashboard-chart="air:exceptions_by_step">
+        <h2 class="chart-card__title">Air T-Mobile — exceptions by step <span class="construction-tag">Under construction</span></h2>
+        <svg id="chart-air-exceptions" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+        <div class="chart-legend" id="legend-air-exceptions"></div>
+      </div>
+      <div class="chart-card chart-card--under-construction" data-dashboard-chart="cars:step_latency_p95">
+        <h2 class="chart-card__title">Car T-Mobile — step latency (P95 + Overall) <span class="construction-tag">Under construction</span></h2>
+        <svg id="chart-car-latency" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+        <div class="chart-legend" id="legend-car-latency"></div>
+      </div>
+      <div class="chart-card chart-card--under-construction" data-dashboard-chart="cars:exceptions_by_step">
+        <h2 class="chart-card__title">Car T-Mobile — exceptions by step <span class="construction-tag">Under construction</span></h2>
+        <svg id="chart-car-exceptions" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+        <div class="chart-legend" id="legend-car-exceptions"></div>
+      </div>
+    </div>
+
+    <h2 class="section-heading">Domain Comparison</h2>
+    <div class="table-wrap">
+      <table class="data-table" id="domain-comparison-table">
+        <thead><tr><th>Domain</th><th>Journeys</th><th>Conversion Rate</th><th>P95 Latency</th><th>Exceptions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="analytics-two-col">
+      <div>
+        <h2 class="section-heading">Exceptions by Domain <span class="construction-tag">Under construction</span></h2>
+        <div id="chart-exceptions-domain" class="bar-list"></div>
+        <h2 class="section-heading">Exceptions by Component <span class="construction-tag">Under construction</span></h2>
+        <div id="chart-exceptions-component" class="bar-list"></div>
+      </div>
+      <div>
+        <h2 class="section-heading">Supplier Performance <span class="construction-tag">Under construction</span></h2>
+        <div class="table-wrap">
+          <table class="data-table data-table--compact" id="supplier-table">
+            <thead><tr><th>Supplier</th><th>Domain</th><th>Availability</th><th>P95</th><th>Error Rate</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="analytics-two-col">
+      <div>
+        <h2 class="section-heading">Top Failing Operations <span class="construction-tag">Under construction</span></h2>
+        <div id="top-failing-ops" class="bar-list"></div>
+      </div>
+      <div>
+        <h2 class="section-heading">Top Latency Contributors <span class="construction-tag">Under construction</span></h2>
+        <div id="top-latency-contributors" class="bar-list"></div>
+      </div>
+    </div>
+
+    <div class="analytics-two-col">
+      <div>
+        <h2 class="section-heading">Most Affected Regions <span class="construction-tag">Under construction</span></h2>
+        <div id="most-affected-regions" class="bar-list"></div>
+      </div>
+      <div>
+        <h2 class="section-heading">Most Affected Customer Journeys <span class="construction-tag">Under construction</span></h2>
+        <ul id="most-affected-journeys" class="simple-list"></ul>
+      </div>
+    </div>
+
+    <h2 class="section-heading">Operational Insights <span class="construction-tag">Under construction</span></h2>
+    <ul id="operational-insights" class="insight-list"></ul>
+  </section>
+
+  <!-- MONKEYS ---------------------------------------------------------------->
+  <section id="tab-monkeys" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-monkeys" hidden>
+    <h1 class="tab-panel__heading">Simian Army — Autonomous Operations Agents</h1>
+    <p class="tab-panel__desc">“Monkeys” are autonomous or semi-autonomous agents inspired by the Netflix Simian Army concept. They observe, recommend, and — within guardrails — act.</p>
+    <div id="monkeys-grid" class="monkeys-grid"></div>
+  </section>
+
+  <!-- MEMORY BANK ------------------------------------------------------------>
+  <section id="tab-memory" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-memory" hidden>
+    <h1 class="tab-panel__heading">Memory Bank — What the agents have read</h1>
+    <p class="tab-panel__desc">Past incidents imported into the knowledge base. This is the text the RCA Agent retrieves precedents from — shown exactly as it was indexed, not as the original file.</p>
+    <div id="memory-bank"></div>
+  </section>
+
+  <!-- CLUB MAP -------------------------------------------------------------->
+  <section id="tab-club-map" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-club-map" hidden>
+    <h1 class="tab-panel__heading">Club and Fusion application map</h1>
+    <p class="tab-panel__desc">Source of truth for which clubs we observe. Read-only. Data from <code>brand.ClubInventory</code>.</p>
+    <p class="tab-panel__note" id="club-map-note">Loading club inventory…</p>
+    <div class="filter-bar filter-bar--inline" aria-label="Club map filters">
+      <label class="filter-item">
+        <span class="filter-item__label">Brand</span>
+        <select id="club-map-filter-brand" class="control-select control-select--sm">
+          <option value="">All brands</option>
+        </select>
+      </label>
+      <label class="filter-item">
+        <span class="filter-item__label">Product</span>
+        <select id="club-map-filter-product" class="control-select control-select--sm">
+          <option value="">All</option>
+        </select>
+      </label>
+      <label class="filter-item">
+        <span class="filter-item__label">Product status</span>
+        <select id="club-map-filter-status" class="control-select control-select--sm">
+          <option value="">All</option>
+          <option value="0">0 · Not Observed</option>
+          <option value="1">1 · Observed</option>
+          <option value="2">2 · Agentically Observed</option>
+          <option value="3">3 · Alerting &amp; Self-Healing</option>
+        </select>
+      </label>
+      <label class="filter-item">
+        <span class="filter-item__label">Platform</span>
+        <select id="club-map-filter-platform" class="control-select control-select--sm">
+          <option value="">All</option>
+          <option value="Fusion">Fusion</option>
+          <option value="Hybrid">Hybrid</option>
+        </select>
+      </label>
+      <label class="filter-item">
+        <span class="filter-item__label">Search</span>
+        <input id="club-map-filter-q" class="control-input control-input--sm" type="search" placeholder="Club id, name, site…">
+      </label>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table" id="club-map-table">
+        <colgroup>
+          <col class="club-map-col--product" />
+          <col class="club-map-col--product" />
+          <col class="club-map-col--product" />
+          <col class="club-map-col--product" />
+          <col class="club-map-col--brand" />
+          <col class="club-map-col--clubid" />
+          <col class="club-map-col--clubname" />
+          <col class="club-map-col--clientid" />
+          <col class="club-map-col--site" />
+          <col class="club-map-col--platform" />
+          <col class="club-map-col--telemetry" />
+          <col class="club-map-col--environment" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th colspan="4" class="club-map-th--products-group">Products</th>
+            <th rowspan="2" data-sort="brandName">Brand</th>
+            <th rowspan="2" data-sort="clubId">Club ID</th>
+            <th rowspan="2" data-sort="clubName">Club name</th>
+            <th rowspan="2" data-sort="clientId">Client ID</th>
+            <th rowspan="2" data-sort="site">Site</th>
+            <th rowspan="2" data-sort="fusionPlatform">Platform</th>
+            <th rowspan="2" data-sort="telemetryLocation">Telemetry</th>
+            <th rowspan="2" data-sort="environment">Environment</th>
+          </tr>
+          <tr>
+            <th data-sort="productCars" class="club-map-th--product">Cars</th>
+            <th data-sort="productCruises" class="club-map-th--product">Cruises</th>
+            <th data-sort="productHotels" class="club-map-th--product">Hotels</th>
+            <th data-sort="productFlights" class="club-map-th--product">Flights</th>
+          </tr>
+        </thead>
+        <tbody id="club-map-tbody">
+          <tr>
+            <td colspan="12">
+              <div class="state-block" role="status">No inventory loaded yet. The API will fill this table next.</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- SETTINGS --------------------------------------------------------------->
+  <section id="tab-settings" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-settings" hidden>
+    <h1 class="tab-panel__heading">Settings</h1>
+    <p class="tab-panel__desc">Configure Latency Spike Monkey thresholds, the Doctor Monkey's LLM client, SLO definitions and outbound alert channels.</p>
+
+    <div class="settings-layout">
+      <nav class="settings-subnav" aria-label="Settings sections">
+        <button class="settings-subnav__item" type="button" data-settings-section="latency" hidden>Latency Thresholds</button>
+        <button class="settings-subnav__item is-active" type="button" data-settings-section="llm">LLM Client</button>
+        <button class="settings-subnav__item" type="button" data-settings-section="slo" hidden>SLO Definitions</button>
+        <button class="settings-subnav__item" type="button" data-settings-section="notifications">Notifications</button>
+        <button class="settings-subnav__item" type="button" data-settings-section="kql" hidden>KQL Queries</button>
+        <button class="settings-subnav__item" type="button" data-settings-section="sources" hidden>Telemetry Sources</button>
+        <button class="settings-subnav__item" type="button" data-settings-section="budgets" hidden>Agent Budgets</button>
+        <button class="settings-subnav__item" type="button" data-settings-section="company">Company Profiles</button>
+      </nav>
+
+      <div class="settings-content">
+        <section class="settings-section" data-settings-section="latency" hidden>
+          <h2 class="settings-section__title">Latency Spike Monkey Thresholds</h2>
+          <p class="tab-panel__desc">Per-domain thresholds deciding when a slow stage is reported to the Doctor Monkey. Leave a field blank to fall back to the global default. Every change is audited below.</p>
+          <div class="table-wrap">
+            <table class="data-table" id="latency-settings-table">
+              <thead>
+                <tr>
+                  <th>Domain</th>
+                  <th>Spike threshold (ms)</th>
+                  <th>Occurrence threshold</th>
+                  <th>Window (minutes)</th>
+                  <th>Last updated</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="latency-settings-tbody"></tbody>
+            </table>
+          </div>
+          <h3 class="settings-section__subtitle">Change History</h3>
+          <div class="table-wrap">
+            <table class="data-table" id="latency-settings-audit-table">
+              <thead>
+                <tr>
+                  <th>Domain</th>
+                  <th>Spike threshold (ms)</th>
+                  <th>Occurrence threshold</th>
+                  <th>Window (minutes)</th>
+                  <th>Changed at</th>
+                  <th>Changed by</th>
+                </tr>
+              </thead>
+              <tbody id="latency-settings-audit-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="settings-section is-active" data-settings-section="llm">
+          <h2 class="settings-section__title">LLM Client</h2>
+          <p class="tab-panel__desc">Which provider each agent talks to, and the credentials for both. Stored here instead of an environment-specific value so a new deployment does not need it configured by hand. Credentials are never shown again once saved — only a masked hint.</p>
+          <div class="settings-card" id="llm-client-settings">
+            <div class="llm-client-settings__status" id="llm-client-status" aria-live="polite"></div>
+            <div id="llm-client-warnings"></div>
+
+            <h3 class="settings-section__subtitle">Provider</h3>
+            <p class="tab-panel__desc">Each agent can override the default so a migration can move one at a time — the Scout costs a fraction of what the Inspector does, so they do not carry the same risk.</p>
+            <div class="form-grid">
+              <div class="form-field">
+                <label for="llm-client-provider">Default provider</label>
+                <select id="llm-client-provider" class="settings-input">
+                  <option value="github-copilot">GitHub Copilot</option>
+                  <option value="foundry">Microsoft Foundry</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label for="llm-client-provider-doctor" data-tooltip="Single-prompt diagnoses plus the knowledge-base embeddings.">Doctor Monkey</label>
+                <select id="llm-client-provider-doctor" class="settings-input" data-agent-provider="doctor">
+                  <option value="">Inherit default</option>
+                  <option value="github-copilot">GitHub Copilot</option>
+                  <option value="foundry">Microsoft Foundry</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label for="llm-client-provider-scout" data-tooltip="One cheap assessment per detected package — the lowest-risk agent to migrate first.">Scout Monkeys</label>
+                <select id="llm-client-provider-scout" class="settings-input" data-agent-provider="scout">
+                  <option value="">Inherit default</option>
+                  <option value="github-copilot">GitHub Copilot</option>
+                  <option value="foundry">Microsoft Foundry</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label for="llm-client-provider-inspector" data-tooltip="Runs a roster of models in debate. On Foundry, Inspector:DebateModels and Inspector:PlannerModel must name deployments, not model ids.">Inspector Monkey</label>
+                <select id="llm-client-provider-inspector" class="settings-input" data-agent-provider="inspector">
+                  <option value="">Inherit default</option>
+                  <option value="github-copilot">GitHub Copilot</option>
+                  <option value="foundry">Microsoft Foundry</option>
+                </select>
+              </div>
+            </div>
+
+            <h3 class="settings-section__subtitle">GitHub Copilot</h3>
+            <div class="form-grid">
+              <div class="form-field form-field--wide">
+                <label for="llm-client-token">New GitHub token (gho_...)</label>
+                <input type="password" id="llm-client-token" class="settings-input" placeholder="Leave blank to keep the current token" autocomplete="off">
+              </div>
+              <div class="form-field form-field--checkbox">
+                <label><input type="checkbox" id="llm-client-clear-token"> Remove the stored token</label>
+              </div>
+              <div class="form-field form-field--span2">
+                <label for="llm-client-model">Model</label>
+                <div class="form-field__inline-group">
+                  <select id="llm-client-model" class="settings-input"><option value="">(keep current)</option></select>
+                  <button class="btn btn--sm" id="llm-client-fetch-models" type="button">Fetch available models</button>
+                </div>
+              </div>
+            </div>
+
+            <h3 class="settings-section__subtitle">Microsoft Foundry</h3>
+            <div class="form-grid">
+              <div class="form-field form-field--wide">
+                <label for="llm-client-foundry-endpoint" data-tooltip="Either form the portal shows works; the /openai/v1 route is appended automatically.">Endpoint</label>
+                <input type="text" id="llm-client-foundry-endpoint" class="settings-input" placeholder="https://my-resource.openai.azure.com" autocomplete="off">
+              </div>
+              <div class="form-field">
+                <label for="llm-client-foundry-auth" data-tooltip="Managed identity stores no secret at all and needs an inference role on the resource (scope https://ai.azure.com/.default).">Authentication</label>
+                <select id="llm-client-foundry-auth" class="settings-input">
+                  <option value="api-key">API key</option>
+                  <option value="managed-identity">Managed identity (keyless)</option>
+                </select>
+              </div>
+              <div class="form-field form-field--wide">
+                <label for="llm-client-foundry-key">New API key</label>
+                <input type="password" id="llm-client-foundry-key" class="settings-input" placeholder="Leave blank to keep the current key" autocomplete="off">
+              </div>
+              <div class="form-field form-field--checkbox">
+                <label><input type="checkbox" id="llm-client-clear-foundry-key"> Remove the stored API key</label>
+              </div>
+              <div class="form-field form-field--span2">
+                <label for="llm-client-foundry-chat" data-tooltip="A DEPLOYMENT name, not a model id — the two are different namespaces.">Chat deployment</label>
+                <div class="form-field__inline-group">
+                  <select id="llm-client-foundry-chat" class="settings-input"><option value="">(keep current)</option></select>
+                  <button class="btn btn--sm" id="llm-client-fetch-deployments" type="button">Fetch deployments</button>
+                </div>
+              </div>
+              <div class="form-field">
+                <label for="llm-client-foundry-embedding" data-tooltip="Changing this invalidates every vector already in the knowledge base — they can only be compared against others from the same model.">Embedding deployment</label>
+                <input type="text" id="llm-client-foundry-embedding" class="settings-input" placeholder="text-embedding-3-small" autocomplete="off">
+              </div>
+            </div>
+
+            <div class="llm-client-settings__actions">
+              <button class="btn btn--sm" id="llm-client-save" type="button">Save</button>
+            </div>
+          </div>
+          <h3 class="settings-section__subtitle">Change History</h3>
+          <div class="table-wrap">
+            <table class="data-table" id="llm-client-audit-table">
+              <thead>
+                <tr>
+                  <th>Token changed</th>
+                  <th>Foundry key changed</th>
+                  <th>Provider</th>
+                  <th>Model</th>
+                  <th>Changed at</th>
+                  <th>Changed by</th>
+                </tr>
+              </thead>
+              <tbody id="llm-client-audit-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="settings-section" data-settings-section="slo" hidden>
+          <h2 class="settings-section__title">SLO Definitions</h2>
+          <p class="tab-panel__desc">Per-(domain, stage) latency targets and per-domain exception-rate targets used by the SLO Burn-Rate Monkey (Google SRE multiwindow multi-burn-rate method) instead of a single flat threshold. Leave Stage blank for the domain-level exception_rate signal.</p>
+          <div class="settings-help" id="slo-definitions-help">
+            <button class="btn btn--icon btn--sm" type="button" id="slo-help-toggle" aria-expanded="false">How SLO definitions work <span class="evidence-item__chevron">▾</span></button>
+            <div id="slo-help-body" hidden>
+              <ul class="simple-list">
+                <li><strong>Signal</strong> — <em>Latency</em> measures one journey stage's duration against a threshold; <em>Exception rate</em> measures a domain's exception occurrences against its recent traffic (no Stage).</li>
+                <li><strong>Target threshold (ms)</strong> — only for Latency: a single sample "passes" when it's at or below this value. Not used for Exception rate (that signal's pass/fail line comes from the raw occurrence count instead).</li>
+                <li><strong>Target %</strong> — the SLO objective itself, e.g. <code>99</code> means "99% of samples must pass over the Window". The remaining 1% is the error budget the Burn-Rate Monkey watches.</li>
+                <li><strong>Window (days)</strong> — how many days of history the error budget is calculated over. Fixed to 28-31 days: the alert thresholds (14.4x/6x/1x) are calibrated for a ~30-day error-budget period and do not scale with this value.</li>
+                <li><strong>Enabled</strong> — disabled definitions are ignored by the Golden Signal Collector and the Burn-Rate Monkey (no samples collected, no alert possible) without deleting the row.</li>
+                <li><strong>Alerting</strong> — a finding only fires when BOTH a short window and its matching long window burn through the error budget fast enough (page: ~5 min / ~30 min detection; ticket: slower, dashboard-only, no Teams/Email notification).</li>
+              </ul>
+            </div>
+          </div>
+          <div class="settings-card" id="slo-definition-add">
+            <h3 class="settings-card__group-title">Add or update a definition</h3>
+            <div class="form-grid">
+              <div class="form-field">
+                <label for="slo-add-domain" data-tooltip="Which vertical this SLO applies to.">Domain</label>
+                <select id="slo-add-domain" class="settings-input">
+                  <option value="hotels">Hotels</option><option value="cars">Cars</option><option value="cruises">Cruises</option><option value="air">Air</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label for="slo-add-signal-type" data-tooltip="Latency = one journey stage's duration. Exception rate = domain-wide error occurrences (no Stage).">Signal</label>
+                <select id="slo-add-signal-type" class="settings-input">
+                  <option value="latency">Latency</option><option value="exception_rate">Exception rate</option>
+                </select>
+              </div>
+              <div class="form-field form-field--wide">
+                <label for="slo-add-stage" data-tooltip="Required for Latency (must match a real journey stage name exactly, e.g. '07 Booking'). Leave blank for Exception rate - that signal is domain-level.">Stage (blank for exception_rate)</label>
+                <input type="text" id="slo-add-stage" class="settings-input" placeholder="e.g. 01 Login">
+              </div>
+              <div class="form-field">
+                <label for="slo-add-threshold" data-tooltip="A single Latency sample above this value (ms) counts as 'bad' for the error budget. Ignored for Exception rate.">Target threshold (ms, latency only)</label>
+                <input type="number" min="1" id="slo-add-threshold" class="settings-input">
+              </div>
+              <div class="form-field">
+                <label for="slo-add-percentage" data-tooltip="The SLO objective: e.g. 99 means 99% of samples must be good over the Window. This is NOT a pass/fail threshold on a single sample - see Target threshold for that. 100 is not accepted (zero error budget can never alert).">Target %</label>
+                <input type="number" min="0.01" max="99.99" step="0.01" id="slo-add-percentage" class="settings-input" value="99">
+              </div>
+              <div class="form-field">
+                <label for="slo-add-window" data-tooltip="Fixed to 28-31 days: the alert thresholds are calibrated for a ~30-day error-budget period and do not scale with this value.">Window (days)</label>
+                <input type="number" min="28" max="31" id="slo-add-window" class="settings-input" value="30">
+              </div>
+            </div>
+            <div class="llm-client-settings__actions">
+              <button class="btn btn--sm" id="slo-add-save" type="button">Add / Update</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" id="slo-definitions-table">
+              <thead>
+                <tr>
+                  <th data-tooltip="Vertical this SLO applies to.">Domain</th>
+                  <th data-tooltip="Journey stage for a Latency SLO; blank for the domain-level Exception rate signal.">Stage</th>
+                  <th data-tooltip="Latency (per-stage duration) or Exception rate (domain-wide error occurrences).">Signal</th>
+                  <th data-tooltip="A single sample above this value (ms) counts as 'bad'. Latency only.">Target threshold (ms)</th>
+                  <th data-tooltip="The SLO objective - % of samples that must be good over the Window.">Target %</th>
+                  <th data-tooltip="Days of history the error budget is calculated over.">Window (days)</th>
+                  <th data-tooltip="Disabled definitions stop collecting samples and never alert, without deleting the row.">Enabled</th>
+                  <th>Last updated</th><th></th>
+                </tr>
+              </thead>
+              <tbody id="slo-definitions-tbody"></tbody>
+            </table>
+          </div>
+          <h3 class="settings-section__subtitle">Change History</h3>
+          <div class="table-wrap">
+            <table class="data-table" id="slo-definitions-audit-table">
+              <thead>
+                <tr>
+                  <th>Domain</th><th>Stage</th><th>Signal</th><th>Target threshold (ms)</th>
+                  <th>Target %</th><th>Window (days)</th><th>Enabled</th><th>Changed at</th><th>Changed by</th>
+                </tr>
+              </thead>
+              <tbody id="slo-definitions-audit-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="settings-section" data-settings-section="notifications" hidden>
+          <h2 class="settings-section__title">Notifications</h2>
+          <p class="tab-panel__desc">Outbound alerts for "page"-severity SLO burn-rate findings (fast-burn errors). "Ticket"-severity findings stay dashboard-only. More than one channel/provider can be enabled at once.</p>
+
+          <div class="settings-card" id="notifications-settings">
+            <div class="llm-client-settings__status" id="notifications-status" aria-live="polite"></div>
+
+            <label class="control-group control-group--toggle" for="notif-email-enabled">
+              <span>Email notifications</span>
+              <input type="checkbox" id="notif-email-enabled" class="toggle-switch">
+            </label>
+            <div class="form-field form-field--wide">
+              <label for="notif-email-recipients">Recipients (comma-separated)</label>
+              <input type="text" id="notif-email-recipients" class="settings-input" placeholder="alice@arrivia.com, bob@arrivia.com">
+            </div>
+
+            <h3 class="settings-card__group-title">Email provider — SMTP</h3>
+            <div class="form-grid">
+              <div class="form-field form-field--checkbox"><label><input type="checkbox" id="notif-smtp-enabled"> Enable SMTP</label></div>
+              <div class="form-field"><label for="notif-smtp-host">Host</label><input type="text" id="notif-smtp-host" class="settings-input" placeholder="smtp.office365.com"></div>
+              <div class="form-field"><label for="notif-smtp-port">Port</label><input type="number" id="notif-smtp-port" class="settings-input" placeholder="587"></div>
+              <div class="form-field form-field--checkbox"><label><input type="checkbox" id="notif-smtp-ssl" checked> Use SSL</label></div>
+              <div class="form-field"><label for="notif-smtp-username">Username</label><input type="text" id="notif-smtp-username" class="settings-input" placeholder="username"></div>
+              <div class="form-field"><label for="notif-smtp-password">Password</label><input type="password" id="notif-smtp-password" class="settings-input" placeholder="Leave blank to keep the current password" autocomplete="off"></div>
+              <div class="form-field form-field--checkbox"><label><input type="checkbox" id="notif-smtp-clear-password"> Remove stored password</label></div>
+              <div class="form-field"><label for="notif-smtp-from">From address</label><input type="text" id="notif-smtp-from" class="settings-input" placeholder="from address"></div>
+            </div>
+
+            <h3 class="settings-card__group-title">Email provider — Azure Communication Services</h3>
+            <div class="form-grid">
+              <div class="form-field form-field--checkbox"><label><input type="checkbox" id="notif-acs-enabled"> Enable ACS Email</label></div>
+              <div class="form-field form-field--wide"><label for="notif-acs-connection-string">Connection string</label><input type="password" id="notif-acs-connection-string" class="settings-input" placeholder="Leave blank to keep the current connection string" autocomplete="off"></div>
+              <div class="form-field form-field--checkbox"><label><input type="checkbox" id="notif-acs-clear-connection-string"> Remove stored connection string</label></div>
+              <div class="form-field"><label for="notif-acs-from">From address</label><input type="text" id="notif-acs-from" class="settings-input" placeholder="from address"></div>
+            </div>
+
+            <div hidden>
+              <h3 class="settings-card__group-title">Email provider — SendGrid</h3>
+              <div class="form-grid">
+                <div class="form-field form-field--checkbox"><label><input type="checkbox" id="notif-sendgrid-enabled"> Enable SendGrid</label></div>
+                <div class="form-field form-field--wide"><label for="notif-sendgrid-api-key">API key</label><input type="password" id="notif-sendgrid-api-key" class="settings-input" placeholder="Leave blank to keep the current API key" autocomplete="off"></div>
+                <div class="form-field form-field--checkbox"><label><input type="checkbox" id="notif-sendgrid-clear-api-key"> Remove stored API key</label></div>
+                <div class="form-field"><label for="notif-sendgrid-from">From address</label><input type="text" id="notif-sendgrid-from" class="settings-input" placeholder="from address"></div>
+              </div>
+            </div>
+
+            <div hidden>
+              <h3 class="settings-card__group-title">Microsoft Teams</h3>
+              <label class="control-group control-group--toggle" for="notif-teams-enabled">
+                <span>Teams notification</span>
+                <input type="checkbox" id="notif-teams-enabled" class="toggle-switch">
+              </label>
+              <div class="form-grid">
+                <div class="form-field form-field--wide"><label for="notif-teams-webhook">Incoming Webhook URL</label><input type="password" id="notif-teams-webhook" class="settings-input" placeholder="Leave blank to keep the current webhook URL" autocomplete="off"></div>
+                <div class="form-field form-field--checkbox"><label><input type="checkbox" id="notif-teams-clear-webhook"> Remove stored webhook URL</label></div>
+              </div>
+            </div>
+
+            <div class="llm-client-settings__actions">
+              <button class="btn btn--sm" id="notifications-save" type="button">Save</button>
+            </div>
+          </div>
+          <h3 class="settings-section__subtitle">Change History</h3>
+          <div class="table-wrap">
+            <table class="data-table" id="notifications-audit-table">
+              <thead>
+                <tr><th>Email</th><th>SMTP</th><th>ACS</th><th>SendGrid</th><th>Teams</th><th>Changed at</th><th>Changed by</th></tr>
+              </thead>
+              <tbody id="notifications-audit-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="settings-section" data-settings-section="kql" hidden>
+          <h2 class="settings-section__title">KQL Queries</h2>
+          <p class="tab-panel__desc">The queries every agent and dashboard runs. A saved query overrides the one built into this release; reverting drops the override and goes back to the shipped text. Each save is a new version and the full text of every version is kept, so any of them can be restored.</p>
+
+          <div class="settings-help">
+            <strong>Queries reference telemetry by alias, never by subscription.</strong>
+            Write <code>app('{{SOURCE:cruise-core}}')</code> and register the resource under
+            <em>Telemetry Sources</em>. A literal <code>/subscriptions/...</code> path is rejected on save —
+            that is what keeps the source catalog an allow-list of everything a stored query can read.
+          </div>
+
+          <div class="llm-client-settings__actions">
+            <button class="btn btn--sm" id="kql-import-builtins" type="button">Import built-ins</button>
+            <span class="llm-client-settings__status" id="kql-status" aria-live="polite"></span>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table" id="kql-queries-table">
+              <thead>
+                <tr><th>Query</th><th>Used by</th><th>Telemetry sources</th><th>Source</th><th>Version</th><th>Updated</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="kql-queries-tbody"></tbody>
+            </table>
+          </div>
+
+          <div class="settings-card" id="kql-editor" hidden>
+            <h3 class="settings-card__group-title" id="kql-editor-title">Edit query</h3>
+            <div class="llm-client-settings__status" id="kql-editor-status" aria-live="polite"></div>
+            <p class="tab-panel__note" id="kql-editor-hint"></p>
+            <div class="form-field form-field--wide">
+              <label for="kql-editor-text">KQL</label>
+              <textarea id="kql-editor-text" class="settings-input" rows="18" spellcheck="false" style="font-family:var(--font-mono,monospace);white-space:pre;overflow-wrap:normal;overflow-x:auto"></textarea>
+            </div>
+            <div class="form-grid">
+              <div class="form-field form-field--wide"><label for="kql-editor-description">Why this change</label><input type="text" id="kql-editor-description" class="settings-input" placeholder="e.g. widened the bucket to 10m after the 2026-10-09 false positive"></div>
+              <div class="form-field"><label for="kql-editor-changed-by">Changed by</label><input type="text" id="kql-editor-changed-by" class="settings-input" placeholder="your name"></div>
+            </div>
+            <div class="llm-client-settings__actions">
+              <button class="btn btn--sm" id="kql-editor-save" type="button">Save new version</button>
+              <button class="btn btn--sm" id="kql-editor-revert" type="button">Revert to built-in</button>
+              <button class="btn btn--sm" id="kql-editor-close" type="button">Close</button>
+            </div>
+          </div>
+
+          <h3 class="settings-section__subtitle">Change History</h3>
+          <div class="table-wrap">
+            <table class="data-table" id="kql-audit-table">
+              <thead>
+                <tr><th>Query</th><th>Version</th><th>Why</th><th>Size</th><th>Changed at</th><th>Changed by</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="kql-audit-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="settings-section" data-settings-section="sources" hidden>
+          <h2 class="settings-section__title">Telemetry Sources</h2>
+          <p class="tab-panel__desc">Where telemetry is read from, by alias and environment. This is what makes pointing the platform at another subscription a row change instead of a redeploy — and it is the allow-list: a stored query can only reach a resource registered here.</p>
+
+          <div class="settings-help">
+            <strong>To move an agent to a different subscription, edit the row here — not the query.</strong>
+            Queries name a source by alias, so changing <code>cruise-core</code> once repoints every query that uses it.
+            The <em>Used by</em> column shows exactly which ones that is.
+          </div>
+
+          <div class="settings-card" id="source-add">
+            <h3 class="settings-card__group-title">Add or update a source</h3>
+            <div class="llm-client-settings__status" id="sources-status" aria-live="polite"></div>
+            <div class="form-grid">
+              <div class="form-field"><label for="source-alias">Alias</label><input type="text" id="source-alias" class="settings-input" placeholder="cruise-core"></div>
+              <div class="form-field">
+                <label for="source-environment">Environment</label>
+                <select id="source-environment" class="settings-input">
+                  <option value="production">production</option>
+                  <option value="staging">staging</option>
+                  <option value="development">development</option>
+                </select>
+              </div>
+              <div class="form-field form-field--wide"><label for="source-resource-id">ARM resource id</label><input type="text" id="source-resource-id" class="settings-input" placeholder="/subscriptions/{guid}/resourceGroups/{rg}/providers/microsoft.insights/components/{name}"></div>
+              <div class="form-field"><label for="source-app-id">App id (optional)</label><input type="text" id="source-app-id" class="settings-input"></div>
+              <div class="form-field"><label for="source-tenant-id">Tenant id (optional)</label><input type="text" id="source-tenant-id" class="settings-input"></div>
+              <div class="form-field form-field--wide"><label for="source-notes">Notes</label><input type="text" id="source-notes" class="settings-input"></div>
+              <div class="form-field"><label for="source-changed-by">Changed by</label><input type="text" id="source-changed-by" class="settings-input" placeholder="your name"></div>
+              <div class="form-field form-field--checkbox"><label><input type="checkbox" id="source-enabled" checked> Enabled</label></div>
+            </div>
+            <div class="llm-client-settings__actions">
+              <button class="btn btn--sm" id="source-save" type="button">Save</button>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table" id="sources-table">
+              <thead>
+                <tr><th>Alias</th><th>Environment</th><th>Resource</th><th>Used by</th><th>Enabled</th><th>Updated</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="sources-tbody"></tbody>
+            </table>
+          </div>
+
+          <h3 class="settings-section__subtitle">Change History</h3>
+          <div class="table-wrap">
+            <table class="data-table" id="sources-audit-table">
+              <thead>
+                <tr><th>Alias</th><th>Environment</th><th>Resource</th><th>Removed</th><th>Changed at</th><th>Changed by</th></tr>
+              </thead>
+              <tbody id="sources-audit-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="settings-section" data-settings-section="budgets" hidden>
+          <h2 class="settings-section__title">Agent Budgets</h2>
+          <p class="tab-panel__desc">What each agent is allowed to spend. Measured over 32 real investigations, the Inspector's debate is 64% of every token this platform burns, and the rounds after the independent round 0 are 43% on their own.</p>
+
+          <div class="settings-help">
+            <strong>An empty field inherits the configured default.</strong>
+            Clearing a box is how a dial is reverted — it does not set it to zero.
+            The model and provider are not here: those live under <em>LLM Client</em>. Turning an agent off is the
+            <em>Pause</em> button on its card in the Simian Army.
+          </div>
+
+          <div class="settings-card">
+            <h3 class="settings-card__group-title">Inspector Monkey</h3>
+            <div class="llm-client-settings__status" id="budgets-status" aria-live="polite"></div>
+            <div class="form-grid">
+              <div class="form-field form-field--wide">
+                <label for="budget-debate-models">Debate roster</label>
+                <input type="text" id="budget-debate-models" class="settings-input" placeholder="inherits the configured roster">
+                <small class="form-field__hint">Comma separated. Every model is one completion per round.</small>
+              </div>
+              <div class="form-field">
+                <label for="budget-debate-rounds">Debate rounds</label>
+                <input type="number" id="budget-debate-rounds" class="settings-input" min="0" max="5" placeholder="inherit">
+                <small class="form-field__hint">Rounds after round 0, where the models read each other. 0 keeps only the independent readings.</small>
+              </div>
+              <div class="form-field">
+                <label for="budget-skip-below">Skip the debate below</label>
+                <input type="number" id="budget-skip-below" class="settings-input" min="0" max="10" placeholder="inherit">
+                <small class="form-field__hint">Drops the peer rounds when fewer than this many specialists found evidence. 0 never skips.</small>
+              </div>
+              <div class="form-field">
+                <label for="budget-help-hops">Max help hops</label>
+                <input type="number" id="budget-help-hops" class="settings-input" min="0" max="5" placeholder="inherit">
+                <small class="form-field__hint">Peer questions one model may ask. This is what bounds “A asks B, B asks A”.</small>
+              </div>
+              <div class="form-field">
+                <label for="budget-max-runs">Investigations per day</label>
+                <input type="number" id="budget-max-runs" class="settings-input" min="1" max="500" placeholder="inherit">
+                <small class="form-field__hint">The only hard ceiling. Once reached, the queue keeps filling and nothing is leased.</small>
+              </div>
+              <div class="form-field"><label for="budget-changed-by">Changed by</label><input type="text" id="budget-changed-by" class="settings-input" placeholder="your name"></div>
+            </div>
+
+            <p class="settings-help" id="budget-cost-preview">—</p>
+
+            <div class="llm-client-settings__actions">
+              <button class="btn btn--sm" id="budget-save" type="button">Save</button>
+              <button class="btn btn--sm btn--ghost" id="budget-reset" type="button">Clear all (back to defaults)</button>
+            </div>
+          </div>
+
+          <h3 class="settings-section__subtitle">Change History</h3>
+          <div class="table-wrap">
+            <table class="data-table" id="budgets-audit-table">
+              <thead>
+                <tr><th>Roster</th><th>Rounds</th><th>Skip below</th><th>Hops</th><th>Per day</th><th>Changed at</th><th>Changed by</th></tr>
+              </thead>
+              <tbody id="budgets-audit-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="settings-section" data-settings-section="company" hidden>
+          <h2 class="settings-section__title">Company Profiles</h2>
+          <p class="tab-panel__desc">The vocabulary each customer is classified with: their services, flows, steps and the fields that identify an entity. One profile is active at a time, and that choice is a row in this deployment's database — not a build setting — so switching customer needs no redeploy.</p>
+
+          <div class="settings-help">
+            <strong>The active company is held by the server, not by your browser.</strong>
+            Switching it here or from the header changes what every agent classifies, for everyone
+            looking at this portal. A profile must be <em>enabled</em> before it can be made active.
+          </div>
+
+          <div class="llm-client-settings__actions">
+            <span class="llm-client-settings__status" id="company-status" aria-live="polite"></span>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table" id="company-profiles-table">
+              <thead>
+                <tr><th>Company</th><th>Key</th><th>Active</th><th>Services</th><th>Version</th><th>Enabled</th><th>Updated</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="company-profiles-tbody"></tbody>
+            </table>
+          </div>
+
+          <div class="settings-card" id="company-editor" hidden>
+            <h3 class="settings-card__group-title" id="company-editor-title">Edit profile</h3>
+            <div class="llm-client-settings__status" id="company-editor-status" aria-live="polite"></div>
+            <div id="company-editor-problems"></div>
+            <p class="tab-panel__note" id="company-editor-hint"></p>
+            <div class="form-field form-field--wide">
+              <label for="company-editor-text">Profile document (JSON)</label>
+              <textarea id="company-editor-text" class="settings-input" rows="22" spellcheck="false" style="font-family:var(--font-mono,monospace);white-space:pre;overflow-wrap:normal;overflow-x:auto"></textarea>
+            </div>
+            <div class="form-grid">
+              <div class="form-field"><label for="company-editor-changed-by">Changed by</label><input type="text" id="company-editor-changed-by" class="settings-input" placeholder="your name"></div>
+            </div>
+            <div class="llm-client-settings__actions">
+              <button class="btn btn--sm" id="company-editor-save" type="button">Save</button>
+              <button class="btn btn--sm" id="company-editor-format" type="button">Check &amp; format JSON</button>
+              <button class="btn btn--sm" id="company-editor-activate" type="button">Make active</button>
+              <button class="btn btn--sm" id="company-editor-close" type="button">Close</button>
+            </div>
+          </div>
+
+          <h3 class="settings-section__subtitle">Change History</h3>
+          <div class="table-wrap">
+            <table class="data-table" id="company-audit-table">
+              <thead>
+                <tr><th>Company</th><th>Version</th><th>Size</th><th>Changed at</th><th>Changed by</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="company-audit-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <!-- EXCEPTIONS ------------------------------------------------------------->
+  <section id="tab-exceptions" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-exceptions" hidden>
+    <h1 class="tab-panel__heading">Exception Management</h1>
+    <p class="tab-panel__note" id="exceptions-note"></p>
+    <div class="table-wrap">
+      <table class="data-table" id="exceptions-table">
+        <thead>
+          <tr>
+            <th data-sort="id">Exception ID</th>
+            <th data-sort="timestamp">Timestamp</th>
+            <th data-sort="severity">Severity</th>
+            <th data-sort="domain">Domain</th>
+            <th data-sort="clubName">Club</th>
+            <th data-sort="component">Stage</th>
+            <th data-sort="type">Type</th>
+            <th data-sort="occurrenceCount">Occurrences</th>
+            <th data-sort="usersAffected">Users Affected</th>
+            <th data-sort="status">Status</th>
+          </tr>
+        </thead>
+        <tbody id="exceptions-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============================== SIDE PANEL ============================== -->
+<div id="side-panel-overlay" class="overlay" hidden></div>
+<aside id="side-panel" class="side-panel" aria-hidden="true" aria-label="Details panel">
+  <div class="side-panel__header">
+    <h2 id="side-panel-title">Details</h2>
+    <button id="side-panel-close" class="btn btn--icon-only" type="button" aria-label="Close panel">✕</button>
+  </div>
+  <div id="side-panel-body" class="side-panel__body"></div>
+</aside>
+
+<!-- ============================== MODAL ============================== -->
+<div id="modal-overlay" class="overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal__header">
+      <h2 id="modal-title">Modal</h2>
+      <button id="modal-close" class="btn btn--icon-only" type="button" aria-label="Close dialog">✕</button>
+    </div>
+    <div id="modal-body" class="modal__body"></div>
+  </div>
+</div>
+
+<!-- ============================== TOASTS ============================== -->
+<div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+<script src="map-v6.js"></script>
+<script src="map-air.js"></script>
+<script src="domain-health.js"></script>
+<script src="domain-comparison.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

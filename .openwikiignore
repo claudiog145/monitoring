@@ -1,0 +1,13 @@
+# Standard .NET build output and IDE state. Not source, adds no documentation value.
+**/bin/
+**/obj/
+.vs/
+*.user
+*.suo
+
+# Portal/docker-compose.yml and Portal/.env.example both hardcode a local SQL Server
+# SA password as the default for MSSQL_SA_PASSWORD. It only guards an ephemeral local
+# dev container, but it is a concrete credential literal, not a placeholder, so it is
+# excluded.
+Portal/docker-compose.yml
+Portal/.env.example

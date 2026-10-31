@@ -1,0 +1,378 @@
+// LOCAL PORTAL PREVIEW — not the production v6 file. Do not commit as the default until signed off.
+// T-Mobile HOTEL v6d — v6c with a single CorrelationId per member.
+// Run in PROD only: sor-frontend-ai-prod-usw. Host: stays.tmobiletravel.com.
+// Portal Time range injects let win (15m, 1h, 2h, 6h, 24h or 7d). Default file is 2h.
+// Single query. Keep this file as one contiguous block: Azure Logs treats blank lines as query separators.
+// Grouping is UNCHANGED: one row per UserId. CorrelationId is reported, not used to group.
+// What v6d changes vs v6c:
+//   1. One CorrelationId column: the session of the member's LAST call, so the login-only
+//      session that usually comes first is not the one reported.
+//   2. Sessions[] is gone. SessionCount still says how many browser sessions existed.
+//   3. Journey.calls[] no longer carries correlationId, so a call seen in two sessions
+//      is one row again (same grouping as v6) instead of one row per session.
+// Everything else is v6c: Corr-based attachment of TMO requests and background ZH calls.
+// IsBookSuccessful is true when BookOk > 0. PassedSearch is true when SearchAt is set
+// (stage 02 Hotel Search). Exceptions is FailedCalls for that member
+// (the per-journey sum of first-party failures). Keep Exceptions as a long.
+// Set userFilter to a member id to inspect one journey; leave "" for the full window.
+let win = 15m;
+let userFilter = "";
+// Replaced from the Club dropdown (host, ICE partner id, club id) before this query runs.
+let tmoHost = "stays.tmobiletravel.com";
+let tmoPartner = "308";
+let tmoClub = "15639";
+let ev =
+    customEvents
+    | where timestamp > ago(win)
+    | extend PartnerId = coalesce(tostring(customDimensions.PartnerId), tostring(customDimensions.partner_id)),
+             Club = coalesce(tostring(customDimensions.VacationClubId), tostring(customDimensions.VacationClubID), tostring(customDimensions.ClubId), tostring(customDimensions.club_id)),
+             UserId = coalesce(tostring(customDimensions.UserId), tostring(customDimensions.UserID), tostring(customDimensions.MemberId), tostring(customDimensions.travel_platform_user_id)),
+             Corr = coalesce(tostring(customDimensions.CorrelationId), tostring(customDimensions.correlationId), tostring(customDimensions.correlation_id));
+let tr =
+    traces
+    | where timestamp > ago(win)
+    | extend PartnerId = coalesce(tostring(customDimensions.PartnerId), tostring(customDimensions.partner_id)),
+             Club = coalesce(tostring(customDimensions.VacationClubID), tostring(customDimensions.VacationClubId), tostring(customDimensions.ClubId), tostring(customDimensions.club_id)),
+             UserId = coalesce(tostring(customDimensions.UserId), tostring(customDimensions.UserID), tostring(customDimensions.MemberId), tostring(customDimensions.travel_platform_user_id)),
+             Corr = coalesce(tostring(customDimensions.CorrelationId), tostring(customDimensions.correlationId), tostring(customDimensions.correlation_id));
+let idmap =
+    union (ev | project operation_Id, UserId), (tr | project operation_Id, UserId)
+    | where isnotempty(UserId) and UserId != "0" and isnotempty(operation_Id)
+    | summarize UserId = take_any(UserId) by operation_Id;
+// CorrelationId -> UserId. A session shared by two members would be ambiguous, so drop it.
+let userByCorr =
+    union (ev | project Corr, UserId), (tr | project Corr, UserId)
+    | where isnotempty(UserId) and UserId != "0"
+    | where isnotempty(Corr) and Corr != "00000000-0000-0000-0000-000000000000"
+    | summarize Users = make_set(UserId, 3), DistinctUsers = dcount(UserId) by Corr
+    | where DistinctUsers == 1
+    | project Corr, UserId = tostring(Users[0]);
+let excByOp =
+    exceptions
+    | where timestamp > ago(win)
+    | where type !startswith "ErrorEvent"
+    | extend ExcMsg = substring(replace_regex(coalesce(outerMessage, ""), @"\s+", " "), 0, 140)
+    | summarize ExcText = take_any(strcat(type, ": ", ExcMsg)) by operation_Id;
+let httpCalls =
+    requests
+    | where timestamp > ago(win)
+    | where url has tmoHost
+    | extend Corr = coalesce(tostring(customDimensions.CorrelationId), tostring(customDimensions.correlationId), tostring(customDimensions.correlation_id))
+    | extend StageNo = case(
+        url has "login.json" or url has "logincheck", 1,
+        url has "search.json", 2,
+        url has "BackgroundHotelSearch", 3,
+        url has "searchrooms" or url has "getcancelpolicy" or url has "HotelDetails"
+            or url has "ZentrumHubHotelDetailsContent" or url has "GetReviews", 4,
+        url has "book.json", 5,
+        url has "/reservations/Purchase" and url !has "PurchaseComplete"
+            and url !has "CompletePurchase", 6,
+        url has "userpeople_read" or url has "AddRemoveInsurance"
+            or url has "TravelerProfile", 6,
+        url has "CompletePurchase" or url has "determine3dseligibility", 7,
+        url has "PurchaseComplete", 8,
+        url has "/reservations/Cancel", 9,
+        0)
+    | where StageNo > 0
+    | extend Stage = case(
+        StageNo == 1, "01 Login",
+        StageNo == 2, "02 Hotel Search",
+        StageNo == 3, "03 Hotel Results",
+        StageNo == 4, "04 Hotel Details",
+        StageNo == 5, "05 PreBook",
+        StageNo == 6, "06 Checkout",
+        StageNo == 7, "07 Booking",
+        StageNo == 8, "08 Confirmation",
+        "09 Cancellation")
+    | extend Service = tostring(parse_url(url).Path)
+    | join kind=leftouter idmap on operation_Id
+    | project-rename UserByOp = UserId
+    | join kind=leftouter userByCorr on Corr
+    | project-rename UserByCorr = UserId
+    | extend Attach = iff(isnotempty(UserByOp), "op", "corr")
+    | extend UserId = coalesce(UserByOp, UserByCorr)
+    | where isnotempty(UserId) and UserId != "0"
+    | join kind=leftouter excByOp on operation_Id
+    | extend Detail = case(
+        success != false, "",
+        isnotempty(ExcText), strcat("HTTP ", tostring(resultCode), " - ", ExcText),
+        strcat("HTTP ", tostring(resultCode)))
+    | project UserId, StageNo, Stage, Kind = "api", Service,
+              Ms = todouble(duration), Failed = (success == false), Detail,
+              Ts = timestamp, operation_Id, Corr, Attach;
+let opStage =
+    httpCalls
+    | summarize UserId = take_any(UserId), StageNo = take_any(StageNo), Stage = take_any(Stage) by operation_Id;
+let vendorBase =
+    dependencies
+    | where timestamp > ago(win)
+    | where target has "ean.com" or target has "rezserver.com" or target has "hotelbeds.com"
+         or target has "dotwconnect.com" or target has "bonotel.com" or target has "derbysoft"
+         or target has "zentrumhub" or target has "payments.arrivia.com"
+         or target has "nexus.prod.zentrumhub.com"
+    | extend Corr = coalesce(tostring(customDimensions.CorrelationId), tostring(customDimensions.correlationId), tostring(customDimensions.correlation_id))
+    | extend Supplier = case(
+        target has "ean.com", "Expedia",
+        target has "rezserver.com", "Priceline",
+        target has "hotelbeds.com", "HotelBeds",
+        target has "dotwconnect.com", "DOTW",
+        target has "bonotel.com", "Bonotel",
+        target has "derbysoft", "DerbySoft",
+        target has "payments.arrivia.com", "PayGate",
+        "ZentrumHub")
+    | extend ZhCallType = case(
+        data has "availability/init", "ZH-Init",
+        data has "availability/async", "ZH-Polling",
+        data has "roomsandrates", "ZH-RoomsRates",
+        data has "/price/", "ZH-Price",
+        data has "getBookingDetails", "ZH-BookingDetails",
+        data has "/cancel", "ZH-Cancel",
+        data has "/book" and data !has "/booking", "ZH-Book",
+        data has "hotelcontent" or data has "getHotelContent", "ZH-Content",
+        "")
+    | extend Service = iff(Supplier == "ZentrumHub" and isnotempty(ZhCallType), ZhCallType, Supplier)
+    | extend ZhStage = case(
+        ZhCallType == "ZH-Init", 2,
+        ZhCallType == "ZH-Polling", 3,
+        ZhCallType == "ZH-RoomsRates", 4,
+        ZhCallType == "ZH-Content", 4,
+        ZhCallType == "ZH-Price", 5,
+        ZhCallType == "ZH-Book", 7,
+        ZhCallType == "ZH-BookingDetails", 7,
+        ZhCallType == "ZH-Cancel", 9,
+        0)
+    | extend ZhStageName = case(
+        ZhStage == 2, "02 Hotel Search",
+        ZhStage == 3, "03 Hotel Results",
+        ZhStage == 4, "04 Hotel Details",
+        ZhStage == 5, "05 PreBook",
+        ZhStage == 7, "07 Booking",
+        ZhStage == 9, "09 Cancellation",
+        "");
+// Same as v6: vendor call shares operation_Id with the parent TMO request.
+let vendorViaOp =
+    vendorBase
+    | join kind=inner opStage on operation_Id
+    | extend FinalStageNo = iff(ZhStage > 0, ZhStage, StageNo),
+             FinalStage = iff(ZhStage > 0, ZhStageName, Stage)
+    | extend Detail = iff(success == false, strcat("HTTP ", tostring(resultCode)), "")
+    | project UserId, StageNo = FinalStageNo, Stage = FinalStage, Kind = "vendor", Service,
+              Ms = todouble(duration), Failed = (success == false), Detail,
+              Ts = timestamp, operation_Id, Corr, Attach = "op";
+// From v6c: background ZH work runs on its own operation_Id, so v6 lost it.
+// Only ZH call types are attached this way, because the call type already carries the stage.
+let vendorViaCorr =
+    vendorBase
+    | where ZhStage > 0
+    | join kind=leftanti opStage on operation_Id
+    | join kind=inner userByCorr on Corr
+    | extend Detail = iff(success == false, strcat("HTTP ", tostring(resultCode)), "")
+    | project UserId, StageNo = ZhStage, Stage = ZhStageName, Kind = "vendor", Service,
+              Ms = todouble(duration), Failed = (success == false), Detail,
+              Ts = timestamp, operation_Id, Corr, Attach = "corr";
+let vendorCalls = union vendorViaOp, vendorViaCorr;
+let cpHotel =
+    traces
+    | where timestamp > ago(win)
+    | where message == "CompletePurchase result"
+    | extend PartnerId = coalesce(tostring(customDimensions.PartnerId), tostring(customDimensions.partner_id)),
+             Club = coalesce(tostring(customDimensions.VacationClubID), tostring(customDimensions.VacationClubId), tostring(customDimensions.ClubId), tostring(customDimensions.club_id)),
+             UserId = coalesce(tostring(customDimensions.UserId), tostring(customDimensions.UserID)),
+             Corr = coalesce(tostring(customDimensions.CorrelationId), tostring(customDimensions.correlationId), tostring(customDimensions.correlation_id)),
+             Sess = tostring(customDimensions.ProviderSession),
+             Res = tostring(customDimensions.Reservation),
+             Ok = tostring(customDimensions.IsSuccessful),
+             FailingStep = tostring(customDimensions.FailingStep),
+             PgMessage = tostring(customDimensions.["PG-ErrorMessage"]),
+             ErrorMessage = tostring(customDimensions.ErrorMessage),
+             Supplier = coalesce(tostring(customDimensions.SupplierName), tostring(customDimensions.Supplier))
+    | where PartnerId == tmoPartner or Club == tmoClub
+    | where tostring(customDimensions.Verticals) has "Hotels"
+    | where isnotempty(UserId)
+    | extend FailureDetail = case(
+        Ok =~ "True", Supplier,
+        isnotempty(PgMessage), PgMessage,
+        substring(replace_regex(replace_regex(ErrorMessage, @"<[^>]*>", " "), @"\s+", " "), 0, 180));
+let cpNumbered =
+    cpHotel
+    | sort by UserId asc, timestamp asc
+    | extend AttemptNo = row_number(1, prev(UserId) != UserId);
+let purchaseResultCalls =
+    cpNumbered
+    | project UserId, StageNo = 7, Stage = "07 Booking", Kind = "result",
+              Service = strcat("CompletePurchase #", tostring(AttemptNo), " ",
+                               iff(Ok =~ "True", "OK", strcat("FAIL ", FailingStep))),
+              Ms = real(null), Failed = (Ok !~ "True"),
+              Detail = iff(Ok =~ "True", Supplier, FailureDetail),
+              Ts = timestamp, operation_Id, Corr, Attach = "op", Seq = AttemptNo;
+let cpFails =
+    cpNumbered
+    | where Ok !~ "True" and isnotempty(FailureDetail)
+    | summarize arg_max(timestamp, FailureDetail) by UserId
+    | project UserId, FailReason = FailureDetail;
+let cpSummary =
+    cpHotel
+    | summarize BookOk = countif(Ok =~ "True"),
+                BookFail = countif(Ok !~ "True"),
+                DistinctOkRes = dcountif(Res, Ok =~ "True"),
+                BookedReservations = make_set_if(Res, Ok =~ "True", 8)
+      by UserId
+    | join kind=leftouter cpFails on UserId
+    | project-away UserId1;
+let cpSessions = cpHotel | where isnotempty(Sess) | summarize PUser = take_any(UserId) by Sess;
+let phaseCalls =
+    traces
+    | where timestamp > ago(win)
+    | where message in ("latency_check_booking", "latency_check")
+    | extend Sess = tostring(customDimensions.ProviderSession),
+             Corr = coalesce(tostring(customDimensions.CorrelationId), tostring(customDimensions.correlationId), tostring(customDimensions.correlation_id))
+    | where isnotempty(Sess)
+    | join kind=inner cpSessions on Sess
+    | mv-expand kv = customDimensions
+    | extend K = tostring(bag_keys(kv)[0])
+    | where K startswith "latency_" and K endswith "_ms"
+    | extend Ms = todouble(customDimensions[K])
+    | where isnotnull(Ms) and Ms > 0
+    | project UserId = PUser, StageNo = 7, Stage = "07 Booking", Kind = "phase",
+              Service = replace_string(replace_string(K, "latency_", ""), "_ms", ""),
+              Ms, Failed = false, Detail = "", Ts = timestamp, operation_Id, Corr, Attach = "op";
+let allCalls = union httpCalls, vendorCalls, phaseCalls, purchaseResultCalls;
+let hotelUsers =
+    union
+      (allCalls
+       | where Service has "/rentals/" or Service has "HotelDetails"
+            or Service has "BackgroundHotelSearch" or Service startswith "ZH-"
+       | distinct UserId),
+      (cpHotel | distinct UserId)
+    | distinct UserId
+    | where userFilter == "" or UserId == userFilter;
+let scopedCalls = allCalls | where UserId in (hotelUsers);
+// The reported session: the one carrying the member's last call. Login-only sessions
+// come first in time, so taking the last call avoids reporting them.
+let lastCorr =
+    scopedCalls
+    | where isnotempty(Corr)
+    | summarize arg_max(Ts, Corr) by UserId
+    | project UserId, CorrelationId = Corr;
+// SessionCount > 1 means other sessions exist even though only one id is reported.
+// CallsNoCorrelation > 0 means the id was missing on those rows and only UserId + operation_Id held them.
+let corrByUser =
+    scopedCalls
+    | summarize SessionCount = dcountif(Corr, isnotempty(Corr)),
+                CallsNoCorrelation = countif(isempty(Corr)),
+                CallsViaCorrelation = countif(Attach == "corr")
+      by UserId
+    | join kind=leftouter lastCorr on UserId
+    | project-away UserId1;
+// Seq: purchase uses AttemptNo already on result rows. API/vendor/phase are numbered
+// per user + stage + kind + call name so errors[].n is the execution that failed.
+let sequenced =
+    union
+      (scopedCalls
+       | where Kind != "result"
+       | sort by UserId asc, StageNo asc, Kind asc, Service asc, Ts asc
+       | extend Seq = row_number(1, prev(UserId) != UserId or prev(StageNo) != StageNo
+                                    or prev(Kind) != Kind or prev(Service) != Service)),
+      (scopedCalls | where Kind == "result");
+let callMetrics =
+    sequenced
+    | sort by UserId asc, StageNo asc, Kind asc, Service asc, Seq asc
+    | summarize N = count(),
+                CallTotalMs = round(sum(Ms)),
+                P50Ms = round(percentile(Ms, 50)),
+                P90Ms = round(percentile(Ms, 90)),
+                P95Ms = round(percentile(Ms, 95)),
+                P99Ms = round(percentile(Ms, 99)),
+                MaxMs = round(max(Ms)),
+                Fails = countif(Failed),
+                Detail = take_anyif(Detail, isnotempty(Detail) and Failed == false),
+                Errors = make_list_if(bag_pack("n", Seq, "t", Ts, "message", Detail),
+                                      Failed and isnotempty(Detail), 8),
+                Ts = min(Ts)
+      by UserId, StageNo, Stage, Kind, Service
+    | extend FailureRatePct = round(todouble(Fails) / N * 100.0, 2),
+             Status = case(
+                isnull(P95Ms), "N/A",
+                P95Ms < 2000, "GREEN",
+                P95Ms < 5000, "YELLOW",
+                "RED");
+let stageApiMetrics =
+    scopedCalls
+    | where Kind == "api" and isnotnull(Ms)
+    | summarize StageTotalMs = round(sum(Ms)),
+                StepP50 = round(percentile(Ms, 50)),
+                StepP90 = round(percentile(Ms, 90)),
+                StepP95 = round(percentile(Ms, 95)),
+                StepP99 = round(percentile(Ms, 99)),
+                StepMax = round(max(Ms))
+      by UserId, StageNo, Stage;
+let stageRows =
+    callMetrics
+    | sort by UserId asc, StageNo asc, Kind asc, P95Ms desc, Service asc
+    | summarize Calls = make_list(bag_pack(
+            "kind", Kind, "call", Service, "t", Ts, "n", N,
+            "callTotalMs", CallTotalMs, "p50Ms", P50Ms, "p90Ms", P90Ms,
+            "p95Ms", P95Ms, "p99Ms", P99Ms, "maxMs", MaxMs,
+            "failureRatePct", FailureRatePct, "status", Status,
+            "detail", Detail, "errors", Errors), 80),
+        StepStart = min(Ts),
+        CallCount = sum(N),
+        StepFails = sumif(Fails, Kind != "result"),
+        StepTotal = sumif(N, Kind != "result")
+      by UserId, StageNo, Stage
+    | join kind=leftouter stageApiMetrics on UserId, StageNo, Stage
+    | extend StepFailPct = iff(StepTotal > 0, round(todouble(StepFails) / StepTotal * 100.0, 2), real(null)),
+             StepStatus = case(
+                isnull(StepP95), "N/A",
+                StepP95 < 2000, "GREEN",
+                StepP95 < 5000, "YELLOW",
+                "RED");
+stageRows
+| sort by UserId asc, StageNo asc
+| summarize Journey = make_list(bag_pack(
+        "stageNo", StageNo, "stage", Stage, "t", StepStart,
+        "callCount", CallCount, "stageTotalMs", StageTotalMs,
+        "p50Ms", StepP50, "p90Ms", StepP90, "p95Ms", StepP95,
+        "p99Ms", StepP99, "maxMs", StepMax,
+        "failureRatePct", StepFailPct, "status", StepStatus, "calls", Calls), 14),
+    Steps = make_set(Stage, 14),
+    LastStep = max(StageNo),
+    FailedCalls = sum(StepFails),
+    JourneyTotalMs = round(sum(todouble(coalesce(StageTotalMs, 0.0)))),
+    SlowestCallMs = max(StepMax),
+    OverallP95 = max(StepP95),
+    SearchAt = minif(StepStart, StageNo == 2),
+    PurchaseAt = minif(StepStart, StageNo == 7),
+    ConfirmAt = minif(StepStart, StageNo == 8),
+    CancelAt = minif(StepStart, StageNo == 9),
+    FirstSeen = min(StepStart),
+    LastSeen = max(StepStart)
+  by UserId
+| join kind=leftouter cpSummary on UserId
+| project-away UserId1
+| join kind=leftouter corrByUser on UserId
+| project-away UserId1
+| extend BookOk = coalesce(BookOk, 0),
+         BookFail = coalesce(BookFail, 0),
+         DistinctOkRes = coalesce(DistinctOkRes, 0)
+| extend IsBookSuccessful = BookOk > 0,
+         PassedSearch = isnotnull(SearchAt)
+| extend MultiNote = iff(DistinctOkRes > 1, strcat(" x", tostring(DistinctOkRes)), "")
+| extend RetryNote = iff(BookOk > 0 and BookFail > 0,
+                         strcat(" after ", tostring(BookFail), " failed attempt", iff(BookFail > 1, "s", "")),
+                         "")
+| extend Outcome = case(
+    BookOk > 0 and isnotnull(CancelAt), strcat("Booked", MultiNote, RetryNote, "; cancellation activity"),
+    BookOk > 0 and isnotnull(ConfirmAt), strcat("Booked", MultiNote, RetryNote),
+    BookOk > 0, strcat("Booked", MultiNote, RetryNote, ", no confirmation page"),
+    BookFail > 0, strcat("Purchase failed x", tostring(BookFail)),
+    isnotnull(CancelAt), "Cancellation activity",
+    isnotnull(PurchaseAt), "Purchase attempted, no result",
+    strcat("Dropped at step ", tostring(LastStep)))
+| extend SearchToConfirm_s = datetime_diff("second", ConfirmAt, SearchAt)
+| project UserId, Outcome, LastStep, Steps, FailReason,
+          CorrelationId, SessionCount, CallsViaCorrelation, CallsNoCorrelation,
+          BookOk, BookFail, DistinctOkRes, BookedReservations, FailedCalls, IsBookSuccessful, PassedSearch, Exceptions = FailedCalls, JourneyTotalMs,
+          SlowestCallMs, OverallP95, SearchToConfirm_s,
+          FirstSeen, LastSeen, Journey
+| top 50 by LastSeen desc

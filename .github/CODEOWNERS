@@ -1,0 +1,5 @@
+# Required by the org Default Branch Ruleset (require_code_owner_review).
+# Any of these Write collaborators can review and approve PRs into the default branch.
+* @arriviainc-softeng/product-reliability-approvers
+
+/.github/    @arriviainc-softeng/builderops-repos-dev-approvers

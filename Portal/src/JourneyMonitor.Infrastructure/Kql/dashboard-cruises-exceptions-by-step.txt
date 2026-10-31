@@ -1,0 +1,43 @@
+// Copied from Azure dashboard 6b35d70f tile "Cruise T-Mobile — exceptions by step".
+let win = 12h;
+let tmoHost = "cruise.tmobiletravel.com";
+let tmoPartner = "308";
+let binSize = 1h;
+let webSessions =
+    pageViews
+    | where timestamp > ago(win)
+    | extend UserId = coalesce(tostring(customDimensions.memberid), tostring(customDimensions.user_id), tostring(customDimensions.customerId)),
+             SessionId = tostring(customDimensions.session_id),
+             PartnerId = tostring(customDimensions.partnerId),
+             Product = tostring(customDimensions.product)
+    | where isnotempty(UserId) and UserId != "0" and isnotempty(SessionId)
+    | where PartnerId == tmoPartner
+    | where Product == "cruise" or url has tmoHost
+    | summarize SessionStart = min(timestamp), SessionEnd = max(timestamp) by UserId, SessionId;
+let coreCalls =
+    app('{{SOURCE:cruise-core}}').requests
+    | where timestamp > ago(win)
+    | where url has "customerid="
+    | extend Query = parse_urlquery(url), Path = tolower(tostring(parse_url(url).Path))
+    | extend UserId = tostring(Query["Query Parameters"]["customerid"])
+    | where isnotempty(UserId)
+    | extend Operation = case(
+        Path endswith "/cruisesearch", "1 Cruise Search",
+        Path endswith "/cruisecategory", "2 Room Search",
+        Path endswith "/cruisepayment" or Path endswith "/cruisepaymentproc", "3 Cruise Booking",
+        Path endswith "/cruiseconfirm", "4 Cruise Confirmation",
+        "")
+    | where isnotempty(Operation)
+    | project UserId, Operation, CoreTs = timestamp, operation_Id;
+let staged =
+    coreCalls
+    | join kind=inner webSessions on UserId
+    | where CoreTs between ((SessionStart - 2m) .. (SessionEnd + 15m))
+    | extend Distance = abs(datetime_diff("second", CoreTs, SessionStart))
+    | summarize arg_min(Distance, *) by operation_Id
+    | project operation_Id, Operation;
+app('{{SOURCE:cruise-core}}').exceptions
+| where timestamp > ago(win)
+| where type !startswith "ErrorEvent"
+| join kind=inner staged on operation_Id
+| summarize ExceptionCount = count() by bin(timestamp, 1h), Operation

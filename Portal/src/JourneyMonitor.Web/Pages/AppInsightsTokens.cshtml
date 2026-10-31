@@ -1,0 +1,576 @@
+<!-- AppInsights Token Management UI -->
+<!-- Add this to: Portal/src/JourneyMonitor.Web/Pages/Settings.cshtml or create a new page -->
+
+<div class="appinsights-settings-container">
+    <h2>AppInsights Access Tokens</h2>
+    <p class="description">
+        Manage Azure AppInsights tokens for each tenant. Each user generates their own token 
+        using Azure CLI and pastes it here.
+    </p>
+
+    <!-- Instructions Section -->
+    <div class="instructions-card">
+        <h3>How to Generate a Token</h3>
+        <ol>
+            <li>Open Terminal or PowerShell</li>
+            <li>Login to your Azure account:
+                <code>az login --tenant YOUR-TENANT-ID</code>
+            </li>
+            <li>Get access token:
+                <code>az account get-access-token --scope https://api.applicationinsights.io/.default</code>
+            </li>
+            <li>Copy the entire <strong>accessToken</strong> value (the long JWT string)</li>
+            <li>Paste it below in the form</li>
+        </ol>
+        <div class="example">
+            <strong>Example command output:</strong>
+            <pre>{
+  "accessToken": "eyJ0eXAiOiJKV1QiLCJhbGc...(very long string)...kDw",
+  "expires_on": 1730280000,
+  "expiresOn": "2024-10-30 08:00:00.000000",
+  "subscription": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "tenant": "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy",
+  "tokenType": "Bearer"
+}</pre>
+        </div>
+    </div>
+
+    <!-- Add Token Form -->
+    <div class="form-card">
+        <h3>Add New Token</h3>
+        <form id="addTokenForm">
+            <div class="form-group">
+                <label for="tenantKey">Tenant *</label>
+                <select id="tenantKey" name="tenantKey" required>
+                    <option value="">-- Select Tenant --</option>
+                    <option value="arrivia">Arrivia</option>
+                    <option value="ice">Ice Enterprise</option>
+                    <option value="acme">Acme Corp</option>
+                </select>
+                <small>Select which company this token is for</small>
+            </div>
+
+            <div class="form-group">
+                <label for="email">Email Address *</label>
+                <input 
+                    type="email" 
+                    id="email" 
+                    name="email" 
+                    placeholder="cgareca@arrivia.com" 
+                    required />
+                <small>Your Azure account email (for audit trail)</small>
+            </div>
+
+            <div class="form-group">
+                <label for="token">Azure Access Token *</label>
+                <textarea 
+                    id="token" 
+                    name="token" 
+                    placeholder="eyJ0eXAiOiJKV1QiLCJhbGc..." 
+                    rows="6"
+                    required></textarea>
+                <small>Paste the entire 'accessToken' value from 'az account get-access-token' output</small>
+            </div>
+
+            <div class="form-group">
+                <label for="notes">Notes (optional)</label>
+                <input 
+                    type="text" 
+                    id="notes" 
+                    name="notes" 
+                    placeholder="e.g., 'Generated on 2024-10-30 by Claudio'" />
+                <small>Optional notes for reference</small>
+            </div>
+
+            <button type="submit" class="btn btn-primary">Save Token</button>
+            <button type="button" class="btn btn-secondary" onclick="clearTokenForm()">Clear</button>
+        </form>
+        <div id="addTokenStatus" style="margin-top: 15px;"></div>
+    </div>
+
+    <!-- Stored Tokens List -->
+    <div class="tokens-list-card">
+        <h3>Stored Tokens</h3>
+        <button type="button" class="btn btn-info" onclick="refreshTokensList()">Refresh</button>
+        <div id="tokensList" class="loading">Loading tokens...</div>
+    </div>
+
+    <!-- Sample Queries -->
+    <div class="samples-card">
+        <h3>Sample KQL Queries</h3>
+        <div id="samplesList" class="samples-grid"></div>
+    </div>
+</div>
+
+<style>
+.appinsights-settings-container {
+    max-width: 1200px;
+    margin: 20px auto;
+    padding: 20px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.appinsights-settings-container h2 {
+    color: #333;
+    margin-bottom: 10px;
+    border-bottom: 2px solid #007bff;
+    padding-bottom: 10px;
+}
+
+.appinsights-settings-container .description {
+    color: #666;
+    margin-bottom: 30px;
+    font-size: 14px;
+}
+
+.instructions-card,
+.form-card,
+.tokens-list-card,
+.samples-card {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+    background-color: #f9f9f9;
+}
+
+.instructions-card h3,
+.form-card h3,
+.tokens-list-card h3,
+.samples-card h3 {
+    color: #333;
+    margin-top: 0;
+    margin-bottom: 15px;
+}
+
+.instructions-card ol {
+    margin-left: 20px;
+}
+
+.instructions-card li {
+    margin-bottom: 10px;
+    line-height: 1.5;
+}
+
+.instructions-card code {
+    background-color: #f4f4f4;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: "Courier New", monospace;
+    font-size: 13px;
+}
+
+.instructions-card .example {
+    margin-top: 15px;
+    padding: 15px;
+    background-color: #fff;
+    border-left: 4px solid #007bff;
+}
+
+.instructions-card pre {
+    background-color: #f4f4f4;
+    padding: 10px;
+    border-radius: 3px;
+    overflow-x: auto;
+    font-size: 12px;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: #333;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: inherit;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
+.form-group textarea {
+    resize: vertical;
+}
+
+.form-group small {
+    display: block;
+    margin-top: 3px;
+    color: #666;
+    font-size: 12px;
+}
+
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.btn-primary {
+    background-color: #007bff;
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: #0056b3;
+}
+
+.btn-secondary {
+    background-color: #6c757d;
+    color: white;
+    margin-left: 10px;
+}
+
+.btn-secondary:hover {
+    background-color: #5a6268;
+}
+
+.btn-info {
+    background-color: #17a2b8;
+    color: white;
+}
+
+.btn-info:hover {
+    background-color: #138496;
+}
+
+.btn-danger {
+    background-color: #dc3545;
+    color: white;
+}
+
+.btn-danger:hover {
+    background-color: #c82333;
+}
+
+.status-message {
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin-top: 15px;
+    font-size: 14px;
+}
+
+.status-message.success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.status-message.error {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.status-message.warning {
+    background-color: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeaa7;
+}
+
+.status-message.info {
+    background-color: #d1ecf1;
+    color: #0c5460;
+    border: 1px solid #bee5eb;
+}
+
+.tokens-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+}
+
+.tokens-table th {
+    background-color: #e9ecef;
+    padding: 10px;
+    text-align: left;
+    font-weight: 600;
+    color: #333;
+    border-bottom: 2px solid #dee2e6;
+}
+
+.tokens-table td {
+    padding: 10px;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.tokens-table tr:hover {
+    background-color: #f5f5f5;
+}
+
+.token-status {
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.token-status.valid {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.token-status.expired {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.token-status.inactive {
+    background-color: #e2e3e5;
+    color: #383d41;
+}
+
+.samples-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 15px;
+    margin-top: 15px;
+}
+
+.sample-card {
+    background-color: #fff;
+    padding: 15px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.sample-card:hover {
+    border-color: #007bff;
+    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.2);
+}
+
+.sample-card strong {
+    display: block;
+    margin-bottom: 8px;
+    color: #333;
+}
+
+.sample-card code {
+    display: block;
+    background-color: #f4f4f4;
+    padding: 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.loading {
+    text-align: center;
+    padding: 20px;
+    color: #666;
+}
+
+.spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #007bff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.empty-state {
+    text-align: center;
+    padding: 30px;
+    color: #999;
+}
+
+.empty-state p {
+    margin-bottom: 15px;
+}
+</style>
+
+<script>
+// Add Token Form Handler
+document.getElementById('addTokenForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const tenantKey = document.getElementById('tenantKey').value;
+    const email = document.getElementById('email').value;
+    const token = document.getElementById('token').value;
+    const notes = document.getElementById('notes').value;
+    const statusDiv = document.getElementById('addTokenStatus');
+
+    // Clear previous status
+    statusDiv.innerHTML = '';
+
+    // Validate token format (basic JWT check)
+    if (!token.includes('.') || token.split('.').length !== 3) {
+        showStatus(statusDiv, 'error', 'Invalid token format. Must be a JWT with 3 parts (header.payload.signature)');
+        return;
+    }
+
+    try {
+        showStatus(statusDiv, 'info', 'Validating and saving token...');
+
+        const response = await fetch('/api/appinsights/tokens', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                tenantKey,
+                email,
+                token,
+                notes
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showStatus(statusDiv, 'success', data.message || 'Token saved successfully!');
+            document.getElementById('addTokenForm').reset();
+            setTimeout(() => {
+                refreshTokensList();
+            }, 1000);
+        } else {
+            showStatus(statusDiv, 'error', data.error || 'Failed to save token');
+            if (data.hint) {
+                statusDiv.innerHTML += `<br><small>${data.hint}</small>`;
+            }
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showStatus(statusDiv, 'error', `Error: ${error.message}`);
+    }
+});
+
+function clearTokenForm() {
+    document.getElementById('addTokenForm').reset();
+    document.getElementById('addTokenStatus').innerHTML = '';
+}
+
+async function refreshTokensList() {
+    const tokensList = document.getElementById('tokensList');
+    tokensList.innerHTML = '<div class="loading"><div class="spinner"></div> Loading tokens...</div>';
+
+    try {
+        const response = await fetch('/api/appinsights/tokens');
+        const data = await response.json();
+
+        if (!data.success || data.count === 0) {
+            tokensList.innerHTML = '<div class="empty-state"><p>No tokens configured yet.</p><p>Add a token above to get started.</p></div>';
+            return;
+        }
+
+        let html = '<table class="tokens-table"><thead><tr>' +
+            '<th>Tenant</th>' +
+            '<th>Email</th>' +
+            '<th>Status</th>' +
+            '<th>Added</th>' +
+            '<th>Expires</th>' +
+            '<th>Usage</th>' +
+            '<th>Actions</th>' +
+            '</tr></thead><tbody>';
+
+        for (const token of data.tokens) {
+            const statusClass = token.isValid ? 'valid' : (token.isExpired ? 'expired' : 'inactive');
+            const statusText = token.isValid ? 'Valid' : (token.isExpired ? 'Expired' : 'Inactive');
+
+            html += `<tr>
+                <td><strong>${token.tenantKey}</strong></td>
+                <td>${token.email}</td>
+                <td><span class="token-status ${statusClass}">${statusText}</span></td>
+                <td>${new Date(token.createdAt).toLocaleDateString()}</td>
+                <td>${new Date(token.expiresAt).toLocaleString()}</td>
+                <td>${token.usageCount} times</td>
+                <td>
+                    <button type="button" class="btn btn-danger" onclick="deactivateToken('${token.tenantKey}')">Deactivate</button>
+                </td>
+            </tr>`;
+        }
+
+        html += '</tbody></table>';
+        tokensList.innerHTML = html;
+    } catch (error) {
+        console.error('Error:', error);
+        tokensList.innerHTML = `<div class="status-message error">Error loading tokens: ${error.message}</div>`;
+    }
+}
+
+async function deactivateToken(tenantKey) {
+    if (!confirm(`Deactivate token for ${tenantKey}? You can add a new one anytime.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/appinsights/tokens/${tenantKey}/deactivate`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showStatus(document.getElementById('tokensList'), 'success', data.message);
+            setTimeout(() => refreshTokensList(), 1000);
+        } else {
+            showStatus(document.getElementById('tokensList'), 'error', data.error);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showStatus(document.getElementById('tokensList'), 'error', `Error: ${error.message}`);
+    }
+}
+
+async function loadSampleQueries() {
+    try {
+        const response = await fetch('/api/appinsights/samples');
+        const data = await response.json();
+
+        const samplesList = document.getElementById('samplesList');
+        let html = '';
+
+        for (const sample of data.samples) {
+            html += `<div class="sample-card" title="Click to copy">
+                <strong>${sample.name}</strong>
+                <code>${sample.query}</code>
+            </div>`;
+        }
+
+        samplesList.innerHTML = html;
+    } catch (error) {
+        console.error('Error loading samples:', error);
+    }
+}
+
+function showStatus(container, type, message) {
+    container.innerHTML = `<div class="status-message ${type}">${message}</div>`;
+}
+
+// Load tokens and samples on page load
+window.addEventListener('load', () => {
+    refreshTokensList();
+    loadSampleQueries();
+});
+</script>

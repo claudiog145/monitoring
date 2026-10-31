@@ -1,0 +1,42 @@
+// Cars — latency SPIKE detection (per-transaction rows, NOT aggregated). Derived from the same
+// stage classifier used by TMobile_Cars_Query_KQL_v6.txt's httpCalls block, scoped down to only
+// what LatencySpikeDetectorService needs: individual slow requests with their stage, so the
+// detector can group/count spikes in C# with configurable thresholds (see MonitoringOptions).
+// {{WINDOW_MINUTES}} and {{FLOOR_MS}} are substituted by LatencySpikeDetectorService before this
+// text is sent to Application Insights.
+let win = {{WINDOW_MINUTES}}m;
+let tmoHost = "stays.tmobiletravel.com";
+let floorMs = {{FLOOR_MS}};
+requests
+| where timestamp > ago(win)
+| where url has tmoHost
+| extend ReqCorr = coalesce(tostring(customDimensions.CorrelationId), tostring(customDimensions.correlationId), tostring(customDimensions.correlation_id))
+| extend StageNo = case(
+    url has "login.json" or url has "logincheck", 1,
+    url has "CarLocationSearch" or url has "searchlocations" or url has "CarSearch", 2,
+    url has "BackgroundCarSearch", 3,
+    url has "/cars/", 3,
+    url has "CarBooking", 5,
+    url has "/reservations/Purchase" and url !has "PurchaseComplete"
+        and url !has "CompletePurchase", 6,
+    url has "userpeople_read" or url has "AddRemoveInsurance"
+        or url has "TravelerProfile", 6,
+    url has "CompletePurchase" or url has "determine3dseligibility", 7,
+    url has "PurchaseComplete", 8,
+    url has "/reservations/Cancel", 9,
+    0)
+| where StageNo > 0
+| extend Stage = case(
+    StageNo == 1, "01 Login",
+    StageNo == 2, "02 Car Search",
+    StageNo == 3, "03 Car Results",
+    StageNo == 5, "05 PreBook",
+    StageNo == 6, "06 Checkout",
+    StageNo == 7, "07 Booking",
+    StageNo == 8, "08 Confirmation",
+    "09 Cancellation")
+| extend Ms = todouble(duration)
+| where Ms > floorMs
+| project Ts = timestamp, CorrelationId = ReqCorr, OperationId = operation_Id, Stage, Ms,
+          ResultCode = tostring(resultCode), Success = success
+| order by Ts desc

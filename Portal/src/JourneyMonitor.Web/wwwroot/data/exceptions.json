@@ -1,0 +1,422 @@
+[
+  {
+    "id": "EXC-2000",
+    "timestamp": "2026-07-23T18:32:00Z",
+    "severity": "Critical",
+    "domain": "cars",
+    "component": "inventory-cars",
+    "operation": "Supplier Timeout",
+    "type": "TimeoutException",
+    "message": "Upstream supplier did not respond within 8000ms.",
+    "occurrenceCount": 224,
+    "firstSeen": "2026-07-23T00:32:00Z",
+    "lastSeen": "2026-07-23T18:32:00Z",
+    "usersAffected": 3979,
+    "journeysAffected": [
+      "JNY-CAR-1011"
+    ],
+    "deploymentCorrelation": false,
+    "repository": "arrivia/car-inventory-service",
+    "status": "Open",
+    "assignedAgent": "Booking Recovery Monkey"
+  },
+  {
+    "id": "EXC-2001",
+    "timestamp": "2026-07-23T18:02:00Z",
+    "severity": "Low",
+    "domain": "hotels",
+    "component": "inventory-hotels",
+    "operation": "Inventory Unavailable",
+    "type": "InventoryUnavailableException",
+    "message": "No inventory returned for requested criteria.",
+    "occurrenceCount": 208,
+    "firstSeen": "2026-07-21T22:02:00Z",
+    "lastSeen": "2026-07-23T18:02:00Z",
+    "usersAffected": 1353,
+    "journeysAffected": [
+      "JNY-HOT-1012"
+    ],
+    "deploymentCorrelation": false,
+    "repository": "arrivia/hotel-inventory-service",
+    "status": "Resolved",
+    "assignedAgent": "Dependency Monkey"
+  },
+  {
+    "id": "EXC-2002",
+    "timestamp": "2026-07-23T16:49:00Z",
+    "severity": "Low",
+    "domain": "air",
+    "component": "payments-svc",
+    "operation": "Payment Authorization Failure",
+    "type": "PaymentDeclinedException",
+    "message": "Issuer declined authorization (code 05).",
+    "occurrenceCount": 202,
+    "firstSeen": "2026-07-23T14:49:00Z",
+    "lastSeen": "2026-07-23T16:49:00Z",
+    "usersAffected": 223,
+    "journeysAffected": [
+      "JNY-AIR-1013"
+    ],
+    "deploymentCorrelation": true,
+    "repository": "arrivia/payments-service",
+    "status": "Open",
+    "assignedAgent": "Booking Recovery Monkey"
+  },
+  {
+    "id": "EXC-2003",
+    "timestamp": "2026-07-23T18:54:00Z",
+    "severity": "High",
+    "domain": "cruises",
+    "component": "payments-svc",
+    "operation": "Booking Confirmation Timeout",
+    "type": "BookingTimeoutException",
+    "message": "Supplier confirmation call exceeded retry budget.",
+    "occurrenceCount": 94,
+    "firstSeen": "2026-07-22T12:54:00Z",
+    "lastSeen": "2026-07-23T18:54:00Z",
+    "usersAffected": 412,
+    "journeysAffected": [
+      "JNY-CRU-1014"
+    ],
+    "deploymentCorrelation": true,
+    "repository": "arrivia/payments-service",
+    "status": "Investigating",
+    "assignedAgent": "Booking Recovery Monkey"
+  },
+  {
+    "id": "EXC-2004",
+    "timestamp": "2026-07-23T18:05:00Z",
+    "severity": "High",
+    "domain": "cars",
+    "component": "payments-svc",
+    "operation": "Null Reference",
+    "type": "NullReferenceException",
+    "message": "Object reference not set to an instance of an object.",
+    "occurrenceCount": 168,
+    "firstSeen": "2026-07-22T12:05:00Z",
+    "lastSeen": "2026-07-23T18:05:00Z",
+    "usersAffected": 2765,
+    "journeysAffected": [
+      "JNY-CAR-1015"
+    ],
+    "deploymentCorrelation": true,
+    "repository": "arrivia/payments-service",
+    "status": "Resolved",
+    "assignedAgent": "Deployment Monkey"
+  },
+  {
+    "id": "EXC-2005",
+    "timestamp": "2026-07-23T16:16:00Z",
+    "severity": "Medium",
+    "domain": "hotels",
+    "component": "booking-svc",
+    "operation": "Rate Limit Response",
+    "type": "RateLimitExceededException",
+    "message": "Partner API returned HTTP 429 Too Many Requests.",
+    "occurrenceCount": 42,
+    "firstSeen": "2026-07-22T23:16:00Z",
+    "lastSeen": "2026-07-23T16:16:00Z",
+    "usersAffected": 3853,
+    "journeysAffected": [
+      "JNY-HOT-1016"
+    ],
+    "deploymentCorrelation": true,
+    "repository": "arrivia/booking-service",
+    "status": "Open",
+    "assignedAgent": "Unassigned"
+  },
+  {
+    "id": "EXC-2006",
+    "timestamp": "2026-07-23T19:15:00Z",
+    "severity": "High",
+    "domain": "air",
+    "component": "booking-svc",
+    "operation": "Authentication Token Expiration",
+    "type": "TokenExpiredException",
+    "message": "Session token expired mid-request.",
+    "occurrenceCount": 115,
+    "firstSeen": "2026-07-22T20:15:00Z",
+    "lastSeen": "2026-07-23T19:15:00Z",
+    "usersAffected": 563,
+    "journeysAffected": [
+      "JNY-AIR-1017"
+    ],
+    "deploymentCorrelation": true,
+    "repository": "arrivia/booking-service",
+    "status": "Open",
+    "assignedAgent": "Health Monkey"
+  },
+  {
+    "id": "EXC-2007",
+    "timestamp": "2026-07-23T12:30:00Z",
+    "severity": "Critical",
+    "domain": "cars",
+    "component": "membership-svc",
+    "operation": "Message Processing Failure",
+    "type": "MessageProcessingException",
+    "message": "Event message failed schema validation.",
+    "occurrenceCount": 319,
+    "firstSeen": "2026-07-23T10:30:00Z",
+    "lastSeen": "2026-07-23T12:30:00Z",
+    "usersAffected": 1249,
+    "journeysAffected": [
+      "JNY-CAR-1007"
+    ],
+    "deploymentCorrelation": false,
+    "repository": "arrivia/membership-service",
+    "status": "Open",
+    "assignedAgent": "Booking Recovery Monkey"
+  },
+  {
+    "id": "EXC-2008",
+    "timestamp": "2026-07-23T15:30:00Z",
+    "severity": "Low",
+    "domain": "hotels",
+    "component": "booking-svc",
+    "operation": "Database Connection Timeout",
+    "type": "SqlTimeoutException",
+    "message": "Connection pool exhausted; timeout after 30s.",
+    "occurrenceCount": 239,
+    "firstSeen": "2026-07-23T01:30:00Z",
+    "lastSeen": "2026-07-23T15:30:00Z",
+    "usersAffected": 2100,
+    "journeysAffected": [
+      "JNY-HOT-1011"
+    ],
+    "deploymentCorrelation": true,
+    "repository": "arrivia/booking-service",
+    "status": "Open",
+    "assignedAgent": "Unassigned"
+  },
+  {
+    "id": "EXC-2009",
+    "timestamp": "2026-07-22T19:30:00Z",
+    "severity": "High",
+    "domain": "air",
+    "component": "payments-svc",
+    "operation": "Circuit Breaker Open",
+    "type": "CircuitBreakerOpenException",
+    "message": "Circuit breaker tripped after consecutive failures.",
+    "occurrenceCount": 59,
+    "firstSeen": "2026-07-20T21:30:00Z",
+    "lastSeen": "2026-07-22T19:30:00Z",
+    "usersAffected": 1342,
+    "journeysAffected": [
+      "JNY-AIR-1009"
+    ],
+    "deploymentCorrelation": true,
+    "repository": "arrivia/payments-service",
+    "status": "Open",
+    "assignedAgent": "Unassigned"
+  },
+  {
+    "id": "EXC-2010",
+    "timestamp": "2026-07-22T13:30:00Z",
+    "severity": "Medium",
+    "domain": "cruises",
+    "component": "web-portal",
+    "operation": "Supplier Timeout",
+    "type": "TimeoutException",
+    "message": "Upstream supplier did not respond within 8000ms.",
+    "occurrenceCount": 193,
+    "firstSeen": "2026-07-21T00:30:00Z",
+    "lastSeen": "2026-07-22T13:30:00Z",
+    "usersAffected": 3250,
+    "journeysAffected": [
+      "JNY-CRU-1006"
+    ],
+    "deploymentCorrelation": false,
+    "repository": "arrivia/web-portal",
+    "status": "Open",
+    "assignedAgent": "Unassigned"
+  },
+  {
+    "id": "EXC-2011",
+    "timestamp": "2026-07-22T16:30:00Z",
+    "severity": "Low",
+    "domain": "cars",
+    "component": "notifications-svc",
+    "operation": "Inventory Unavailable",
+    "type": "InventoryUnavailableException",
+    "message": "No inventory returned for requested criteria.",
+    "occurrenceCount": 53,
+    "firstSeen": "2026-07-22T00:30:00Z",
+    "lastSeen": "2026-07-22T16:30:00Z",
+    "usersAffected": 2471,
+    "journeysAffected": [
+      "JNY-CAR-1019"
+    ],
+    "deploymentCorrelation": false,
+    "repository": "arrivia/notifications-service",
+    "status": "Open",
+    "assignedAgent": "Unassigned"
+  },
+  {
+    "id": "EXC-2012",
+    "timestamp": "2026-07-23T17:30:00Z",
+    "severity": "High",
+    "domain": "hotels",
+    "component": "partner-connectors",
+    "operation": "Payment Authorization Failure",
+    "type": "PaymentDeclinedException",
+    "message": "Issuer declined authorization (code 05).",
+    "occurrenceCount": 273,
+    "firstSeen": "2026-07-22T18:30:00Z",
+    "lastSeen": "2026-07-23T17:30:00Z",
+    "usersAffected": 3510,
+    "journeysAffected": [
+      "JNY-HOT-1011"
+    ],
+    "deploymentCorrelation": false,
+    "repository": "arrivia/partner-connectors",
+    "status": "Open",
+    "assignedAgent": "Unassigned"
+  },
+  {
+    "id": "EXC-2013",
+    "timestamp": "2026-07-23T08:30:00Z",
+    "severity": "High",
+    "domain": "air",
+    "component": "booking-svc",
+    "operation": "Booking Confirmation Timeout",
+    "type": "BookingTimeoutException",
+    "message": "Supplier confirmation call exceeded retry budget.",
+    "occurrenceCount": 251,
+    "firstSeen": "2026-07-22T05:30:00Z",
+    "lastSeen": "2026-07-23T08:30:00Z",
+    "usersAffected": 865,
+    "journeysAffected": [
+      "JNY-AIR-1013"
+    ],
+    "deploymentCorrelation": true,
+    "repository": "arrivia/booking-service",
+    "status": "Investigating",
+    "assignedAgent": "Booking Recovery Monkey"
+  },
+  {
+    "id": "EXC-2014",
+    "timestamp": "2026-07-23T14:30:00Z",
+    "severity": "Critical",
+    "domain": "cruises",
+    "component": "notifications-svc",
+    "operation": "Null Reference",
+    "type": "NullReferenceException",
+    "message": "Object reference not set to an instance of an object.",
+    "occurrenceCount": 91,
+    "firstSeen": "2026-07-22T10:30:00Z",
+    "lastSeen": "2026-07-23T14:30:00Z",
+    "usersAffected": 2213,
+    "journeysAffected": [
+      "JNY-CRU-1019"
+    ],
+    "deploymentCorrelation": false,
+    "repository": "arrivia/notifications-service",
+    "status": "Assigned",
+    "assignedAgent": "Booking Recovery Monkey"
+  },
+  {
+    "id": "EXC-2015",
+    "timestamp": "2026-07-23T05:30:00Z",
+    "severity": "High",
+    "domain": "cars",
+    "component": "personalization-svc",
+    "operation": "Rate Limit Response",
+    "type": "RateLimitExceededException",
+    "message": "Partner API returned HTTP 429 Too Many Requests.",
+    "occurrenceCount": 304,
+    "firstSeen": "2026-07-21T06:30:00Z",
+    "lastSeen": "2026-07-23T05:30:00Z",
+    "usersAffected": 2199,
+    "journeysAffected": [
+      "JNY-CAR-1010"
+    ],
+    "deploymentCorrelation": false,
+    "repository": "arrivia/personalization-service",
+    "status": "Open",
+    "assignedAgent": "Health Monkey"
+  },
+  {
+    "id": "EXC-2016",
+    "timestamp": "2026-07-22T14:30:00Z",
+    "severity": "Medium",
+    "domain": "hotels",
+    "component": "auth-svc",
+    "operation": "Authentication Token Expiration",
+    "type": "TokenExpiredException",
+    "message": "Session token expired mid-request.",
+    "occurrenceCount": 238,
+    "firstSeen": "2026-07-21T22:30:00Z",
+    "lastSeen": "2026-07-22T14:30:00Z",
+    "usersAffected": 3105,
+    "journeysAffected": [
+      "JNY-HOT-1010"
+    ],
+    "deploymentCorrelation": false,
+    "repository": "arrivia/auth-service",
+    "status": "Open",
+    "assignedAgent": "Booking Recovery Monkey"
+  },
+  {
+    "id": "EXC-2017",
+    "timestamp": "2026-07-23T08:30:00Z",
+    "severity": "High",
+    "domain": "air",
+    "component": "event-processing",
+    "operation": "Message Processing Failure",
+    "type": "MessageProcessingException",
+    "message": "Event message failed schema validation.",
+    "occurrenceCount": 109,
+    "firstSeen": "2026-07-22T00:30:00Z",
+    "lastSeen": "2026-07-23T08:30:00Z",
+    "usersAffected": 2907,
+    "journeysAffected": [
+      "JNY-AIR-1008"
+    ],
+    "deploymentCorrelation": false,
+    "repository": "arrivia/event-processing",
+    "status": "Investigating",
+    "assignedAgent": "Deployment Monkey"
+  },
+  {
+    "id": "EXC-2018",
+    "timestamp": "2026-07-22T23:30:00Z",
+    "severity": "High",
+    "domain": "cruises",
+    "component": "inventory-cruises",
+    "operation": "Database Connection Timeout",
+    "type": "SqlTimeoutException",
+    "message": "Connection pool exhausted; timeout after 30s.",
+    "occurrenceCount": 142,
+    "firstSeen": "2026-07-21T02:30:00Z",
+    "lastSeen": "2026-07-22T23:30:00Z",
+    "usersAffected": 84,
+    "journeysAffected": [
+      "JNY-CRU-1016"
+    ],
+    "deploymentCorrelation": false,
+    "repository": "arrivia/cruise-inventory-service",
+    "status": "Open",
+    "assignedAgent": "Health Monkey"
+  },
+  {
+    "id": "EXC-2019",
+    "timestamp": "2026-07-22T19:30:00Z",
+    "severity": "Medium",
+    "domain": "cars",
+    "component": "membership-svc",
+    "operation": "Circuit Breaker Open",
+    "type": "CircuitBreakerOpenException",
+    "message": "Circuit breaker tripped after consecutive failures.",
+    "occurrenceCount": 285,
+    "firstSeen": "2026-07-21T11:30:00Z",
+    "lastSeen": "2026-07-22T19:30:00Z",
+    "usersAffected": 1969,
+    "journeysAffected": [
+      "JNY-CAR-1015"
+    ],
+    "deploymentCorrelation": false,
+    "repository": "arrivia/membership-service",
+    "status": "Resolved",
+    "assignedAgent": "Booking Recovery Monkey"
+  }
+]

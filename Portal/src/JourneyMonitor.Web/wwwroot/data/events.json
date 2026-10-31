@@ -1,0 +1,122 @@
+[
+  {
+    "id": "EVT-3000",
+    "title": "Latency degradation detected",
+    "description": "Health Monkey flagged Air Inventory p95 latency at 640ms.",
+    "severity": "warning",
+    "domain": "air",
+    "timestamp": "2026-07-23T19:26:00Z"
+  },
+  {
+    "id": "EVT-3001",
+    "title": "Supplier degradation identified",
+    "description": "Dependency Monkey correlated SkyLink GDS slowdown with Air Inventory.",
+    "severity": "warning",
+    "domain": "air",
+    "timestamp": "2026-07-23T19:27:00Z"
+  },
+  {
+    "id": "EVT-3002",
+    "title": "Traffic re-route recommended",
+    "description": "Dependency Monkey proposed shifting 40% traffic to AeroConnect API.",
+    "severity": "info",
+    "domain": "air",
+    "timestamp": "2026-07-23T19:28:00Z"
+  },
+  {
+    "id": "EVT-3003",
+    "title": "Reboot Monkey restarted an unhealthy worker",
+    "description": "booking-svc-worker-07 restarted after failing health checks.",
+    "severity": "success",
+    "domain": "shared",
+    "timestamp": "2026-07-23T19:24:00Z"
+  },
+  {
+    "id": "EVT-3004",
+    "title": "Payment exception correlated with a deployment",
+    "description": "Deployment Monkey linked payment auth failures to payments-svc v4.2.1.",
+    "severity": "critical",
+    "domain": "shared",
+    "timestamp": "2026-07-23T19:17:00Z"
+  },
+  {
+    "id": "EVT-3005",
+    "title": "Booking success rate returned to normal",
+    "description": "Booking success rate recovered to 98.2% after retry remediation.",
+    "severity": "success",
+    "domain": "shared",
+    "timestamp": "2026-07-23T19:29:00Z"
+  },
+  {
+    "id": "EVT-3006",
+    "title": "Inventory provider recovered",
+    "description": "Hotel Inventory primary supplier recovered after brief outage.",
+    "severity": "success",
+    "domain": "hotels",
+    "timestamp": "2026-07-23T17:30:00Z"
+  },
+  {
+    "id": "EVT-3007",
+    "title": "Cache cleanup completed",
+    "description": "Janitor Monkey purged 1,204 expired cache entries in staging.",
+    "severity": "info",
+    "domain": "shared",
+    "timestamp": "2026-07-23T19:10:00Z"
+  },
+  {
+    "id": "EVT-3008",
+    "title": "Circuit breaker opened",
+    "description": "Partner Integrations circuit breaker opened after 12 consecutive failures.",
+    "severity": "critical",
+    "domain": "shared",
+    "timestamp": "2026-07-23T18:30:00Z"
+  },
+  {
+    "id": "EVT-3009",
+    "title": "Booking recovery executed",
+    "description": "Booking Recovery Monkey retried 3 stalled cruise bookings successfully.",
+    "severity": "success",
+    "domain": "cruises",
+    "timestamp": "2026-07-23T19:27:00Z"
+  },
+  {
+    "id": "EVT-3010",
+    "title": "Deployment completed",
+    "description": "payments-svc v4.2.1 deployed to production.",
+    "severity": "info",
+    "domain": "shared",
+    "timestamp": "2026-07-23T19:05:00Z"
+  },
+  {
+    "id": "EVT-3011",
+    "title": "Search latency spike resolved",
+    "description": "Search service latency returned to baseline after autoscale event.",
+    "severity": "success",
+    "domain": "shared",
+    "timestamp": "2026-07-23T15:30:00Z"
+  },
+  {
+    "id": "EVT-3012",
+    "title": "Car supplier timeout spike",
+    "description": "Elevated timeout rate observed from regional car rental supplier.",
+    "severity": "warning",
+    "domain": "cars",
+    "timestamp": "2026-07-23T13:30:00Z"
+  },
+  {
+    "id": "EVT-3013",
+    "title": "Membership pricing rule updated",
+    "description": "New loyalty tier pricing rules published for hotels domain.",
+    "severity": "info",
+    "domain": "hotels",
+    "timestamp": "2026-07-23T11:30:00Z"
+  },
+  {
+    "id": "EVT-3014",
+    "title": "Notification delivery delay",
+    "description": "SMS notification provider experienced delivery delays for 18 minutes.",
+    "severity": "warning",
+    "domain": "shared",
+    "timestamp": "2026-07-23T09:30:00Z"
+  }
+]

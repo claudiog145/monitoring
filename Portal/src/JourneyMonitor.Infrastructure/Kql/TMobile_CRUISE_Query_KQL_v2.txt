@@ -1,0 +1,399 @@
+// T-Mobile CRUISE v2 — cross-resource portal query.
+// Portal Time range injects let win (15m, 1h, 6h, 24h or 7d). Default file is 2h.
+// Production: run from cruise-web-ai-prod. Staging: run from cruise-web-ai-uat
+// (portal Environment=Staging injects the UAT app() paths).
+// Cross-resource sources:
+//   Production Club  appInsights-ovs-club (ovs-club-dev) — T-Mobile SSO
+//   Staging Club     club-ai-uat-usc (club-rg-uat) — T-Mobile UAT SSO
+//   Production Core  cruise-core-ovs-ai-prod
+//   Staging Core     cruise-core-ovs-ai-uat
+//   Production Web   cruise-web-ai-prod
+//   Staging Web      cruise-web-ai-uat
+// Keep this file as one contiguous query: Azure Logs treats blank lines as separators.
+// Grain: one row per frontend session_id. UserId is the member id.
+// Portal columns (Hotel v6d / Air contract): CorrelationId is that session_id.
+// SessionCount is how many frontend sessions the same member had in the window
+// (this row is still one visit; SessionCount > 1 means other visits exist).
+// Correlation proven in PROD, 2026-08-27:
+//   - operation_Id changes per page/request and is only used inside one telemetry resource.
+//   - frontend session_id is the durable visit id, but it is not propagated to Club or Core.
+//   - MemberId/customerid + nearest timestamp attaches Club/Core calls to a frontend session.
+//   - SSO must occur from 10m before through 1m after the frontend session starts.
+//   - Core calls must start from 2m before through 15m after the last frontend event.
+// Stage time sums only kind=api: SSO plus timed frontend pageViews.
+// Core calls are kind=backend, explaining latency without double-counting frontend waits.
+// tmoHost, tmoPartner and tmoClub are replaced from the Club dropdown. Cruise telemetry is
+// filtered by partner id (the dropdown value). The host must not be an alternative match:
+// several brands share one cruise host, so "url has tmoHost" would show one partner's visits
+// under every brand on that host.
+// Outcome names the stage a failed journey stopped at ("Rooms & Rates Failed") instead of the
+// step number, which LastStep still carries; an unmapped LastStep falls back to Failed at step N.
+// Booked, "Payment attempted, no confirmation" and Dropped at step N keep their previous wording.
+let win = 15m;
+let tmoHost = "cruise.tmobiletravel.com";
+let tmoPartner = "308";
+let tmoClub = "15639";
+let webBase =
+    pageViews
+    | where timestamp > ago(win)
+    | extend UserId = coalesce(
+        tostring(customDimensions.memberid),
+        tostring(customDimensions.user_id),
+        tostring(customDimensions.customerId)),
+        SessionId = tostring(customDimensions.session_id),
+        NameId = tostring(customDimensions.nameId),
+        PartnerId = tostring(customDimensions.partnerId),
+        Product = tostring(customDimensions.product),
+        PageName = tostring(customDimensions.pageName),
+        Err = tostring(customDimensions.errorMessage)
+    | where isnotempty(UserId) and UserId != "0" and isnotempty(SessionId)
+    | where PartnerId == tmoPartner
+    | where Product == "cruise" or url has tmoHost
+    | project UserId, SessionId, NameId, PageName, Err, Name = name, Url = url,
+              Ms = todouble(duration), Ts = timestamp, operation_Id;
+let webSessions =
+    webBase
+    | summarize SessionStart = min(Ts),
+                SessionEnd = max(Ts),
+                NameId = take_anyif(NameId, isnotempty(NameId))
+      by UserId, SessionId;
+let webCalls =
+    webBase
+    | extend StageNo = case(
+        Url has "cruise-listing" or Name == "DestinationSearch" or Url == "/search"
+            or PageName == "DestinationSearch", 2,
+        Url has "cruise-detail" or Name == "ProductDetails" or Url == "/itinerary"
+            or PageName == "ProductDetails", 3,
+        Url has "rooms-rates" or Name == "RoomsandRates" or Url == "/category"
+            or PageName == "RoomsandRates", 4,
+        Url has "total-price" or Name == "PriceReview" or Url == "/pricing"
+            or PageName == "PriceReview", 5,
+        Url has "cabin-selection" or Name == "SelectaRoom" or Url == "/cabin"
+            or PageName == "SelectaRoom", 6,
+        Url has "/passenger" or PageName has "Passenger" or Name has "Passenger", 7,
+        Url has "/options" or PageName has "Options", 8,
+        Url has "/payment" or PageName has "Payment" or Name has "Payment", 9,
+        Url has "/review" or PageName == "Review" or Name has "BookingReview", 10,
+        Url has "confirm" or PageName has "Confirm" or Name has "Confirm", 11,
+        0)
+    | where StageNo > 0
+    | extend Stage = case(
+        StageNo == 2, "02 Cruise Listing",
+        StageNo == 3, "03 Cruise Detail",
+        StageNo == 4, "04 Rooms & Rates",
+        StageNo == 5, "05 Total Price",
+        StageNo == 6, "06 Cabin Selection",
+        StageNo == 7, "07 Passenger",
+        StageNo == 8, "08 Options",
+        StageNo == 9, "09 Payment",
+        StageNo == 10, "10 Review",
+        "11 Confirmation")
+    | extend Kind = iff(
+        Url startswith "/"
+            or Name in ("DestinationSearch", "ProductDetails", "RoomsandRates", "PriceReview", "SelectaRoom"),
+        "api",
+        "page")
+    | extend Failed = isnotempty(Err) and Err != "None",
+             Detail = iff(isnotempty(Err) and Err != "None", Err, "")
+    | project UserId, SessionId, StageNo, Stage, Kind,
+              Service = iff(isnotempty(Name), Name, Url),
+              Ms, Failed, Detail, Ts, operation_Id, Source = "Cruise Web";
+let webErrorRaw =
+    customEvents
+    | where timestamp > ago(win)
+    | where name == "Error"
+    | extend UserId = coalesce(
+        tostring(customDimensions.memberid),
+        tostring(customDimensions.user_id),
+        tostring(customDimensions.customerId)),
+        SessionId = coalesce(
+            tostring(customDimensions.session_id),
+            tostring(customDimensions.sessionId)),
+        PartnerId = tostring(customDimensions.partnerId),
+        Product = tostring(customDimensions.product),
+        PageName = tostring(customDimensions.page),
+        Err = tostring(customDimensions.error)
+    | where isnotempty(UserId) and isnotempty(SessionId)
+    | where PartnerId == tmoPartner
+    | extend StageNo = case(
+        PageName == "DestinationSearch", 2,
+        PageName == "ProductDetails", 3,
+        PageName == "RoomsandRates", 4,
+        PageName == "PriceReview", 5,
+        PageName == "SelectaRoom", 6,
+        PageName has "Passenger", 7,
+        PageName has "Options", 8,
+        PageName has "Payment", 9,
+        PageName has "Review", 10,
+        PageName has "Confirm", 11,
+        0)
+    | where StageNo > 0
+    | extend Stage = case(
+        StageNo == 2, "02 Cruise Listing",
+        StageNo == 3, "03 Cruise Detail",
+        StageNo == 4, "04 Rooms & Rates",
+        StageNo == 5, "05 Total Price",
+        StageNo == 6, "06 Cabin Selection",
+        StageNo == 7, "07 Passenger",
+        StageNo == 8, "08 Options",
+        StageNo == 9, "09 Payment",
+        StageNo == 10, "10 Review",
+        "11 Confirmation")
+    | project UserId, SessionId, StageNo, Stage, Kind = "result",
+              Service = strcat("Error ", coalesce(tostring(customDimensions.eventType), "unknown")),
+              Ms = real(null), Failed = true, Detail = Err, Ts = timestamp,
+              operation_Id, Source = "Cruise Web";
+let clubSsoRaw =
+    app('{{SOURCE:club}}').requests
+    | where timestamp > ago(win)
+    | where name == "GET Redirect/AuthenticateTmo"
+    | extend UserId = coalesce(
+        tostring(customDimensions.MemberId),
+        tostring(customDimensions.MemberID)),
+        NameId = tostring(customDimensions.NameId),
+        PartnerId = tostring(customDimensions.PartnerId),
+        CorrelationId = tostring(customDimensions.CorrelationId),
+        BusinessSuccess = tostring(customDimensions.Success),
+        AuthenticationStatus = tostring(customDimensions.AuthenticationStatus)
+    | where isnotempty(UserId) and PartnerId == tmoPartner
+    | project UserId, NameId, CorrelationId, BusinessSuccess, AuthenticationStatus,
+              SsoMs = todouble(duration), SsoFailed = success == false or BusinessSuccess !~ "true",
+              SsoResultCode = tostring(resultCode), SsoTs = timestamp, operation_Id;
+let clubSsoCalls =
+    clubSsoRaw
+    | join kind=inner webSessions on UserId
+    | where SsoTs between ((SessionStart - 10m) .. (SessionStart + 1m))
+    | extend NameMatches = isempty(NameId1) or isempty(NameId) or NameId == NameId1
+    | where NameMatches
+    | summarize arg_max(SsoTs, *) by UserId, SessionId
+    | project UserId, SessionId, StageNo = 1, Stage = "01 T-Mobile SSO",
+              Kind = "api", Service = "AuthenticateTmo", Ms = SsoMs,
+              Failed = SsoFailed,
+              Detail = iff(
+                  SsoFailed,
+                  strcat("HTTP ", SsoResultCode, " · ", AuthenticationStatus),
+                  strcat("CorrelationId ", CorrelationId)),
+              Ts = SsoTs, operation_Id, Source = "OVS Club";
+let coreRequestRaw =
+    app('{{SOURCE:cruise-core}}').requests
+    | where timestamp > ago(win)
+    | where url has "customerid="
+    | extend Query = parse_urlquery(url),
+             Path = tostring(parse_url(url).Path)
+    | extend UserId = tostring(Query["Query Parameters"]["customerid"])
+    | where isnotempty(UserId)
+    | extend StageNo = case(
+        Path endswith "/getcustomerid" or Path endswith "/cruisesearch", 2,
+        Path endswith "/cruiseitinerary", 3,
+        Path endswith "/cruisecategory", 4,
+        Path endswith "/cruisecabin", 5,
+        Path endswith "/cruisecabinonhold", 6,
+        Path has "passenger", 7,
+        Path has "option", 8,
+        Path has "payment", 9,
+        Path has "review", 10,
+        Path has "confirm" or Path has "booking", 11,
+        0)
+    | where StageNo > 0
+    | project UserId, StageNo, CoreService = Path, CoreMs = todouble(duration),
+              CoreFailed = success == false, CoreResultCode = tostring(resultCode),
+              CoreTs = timestamp, operation_Id;
+let coreCalls =
+    coreRequestRaw
+    | join kind=inner webSessions on UserId
+    | where CoreTs between ((SessionStart - 2m) .. (SessionEnd + 15m))
+    | extend Distance = abs(datetime_diff("second", CoreTs, SessionStart))
+    | summarize arg_min(Distance, *) by operation_Id
+    | extend Stage = case(
+        StageNo == 2, "02 Cruise Listing",
+        StageNo == 3, "03 Cruise Detail",
+        StageNo == 4, "04 Rooms & Rates",
+        StageNo == 5, "05 Total Price",
+        StageNo == 6, "06 Cabin Selection",
+        StageNo == 7, "07 Passenger",
+        StageNo == 8, "08 Options",
+        StageNo == 9, "09 Payment",
+        StageNo == 10, "10 Review",
+        "11 Confirmation")
+    | project UserId, SessionId, StageNo, Stage, Kind = "backend",
+              Service = CoreService, Ms = CoreMs, Failed = CoreFailed,
+              Detail = iff(CoreFailed, strcat("HTTP ", CoreResultCode), ""),
+              Ts = CoreTs, operation_Id, Source = "Cruise Core";
+let coreErrorRaw =
+    app('{{SOURCE:cruise-core}}').customEvents
+    | where timestamp > ago(win)
+    | where name == "BookingFunnelError"
+    | extend RequestUrl = tostring(customDimensions.["Request URL"]),
+             Query = parse_urlquery(tostring(customDimensions.["Request URL"])),
+             Path = tostring(parse_url(tostring(customDimensions.["Request URL"])).Path)
+    | extend UserId = tostring(Query["Query Parameters"]["customerid"])
+    | where isnotempty(UserId)
+    | extend StageNo = case(
+        Path endswith "/cruisesearch", 2,
+        Path endswith "/cruiseitinerary", 3,
+        Path endswith "/cruisecategory", 4,
+        Path endswith "/cruisecabin", 5,
+        Path endswith "/cruisecabinonhold", 6,
+        Path has "passenger", 7,
+        Path has "option", 8,
+        Path has "payment", 9,
+        Path has "review", 10,
+        Path has "confirm" or Path has "booking", 11,
+        0)
+    | where StageNo > 0
+    | extend ErrorMessage = coalesce(
+        tostring(customDimensions.ErrorMessage),
+        tostring(customDimensions.ErrorDescription),
+        tostring(customDimensions.ErrorType))
+    | project UserId, StageNo, ErrorMessage, ErrorType = tostring(customDimensions.ErrorType),
+              ErrorTs = timestamp, operation_Id;
+let coreErrorCalls =
+    coreErrorRaw
+    | join kind=inner webSessions on UserId
+    | where ErrorTs between ((SessionStart - 2m) .. (SessionEnd + 15m))
+    | extend Distance = abs(datetime_diff("second", ErrorTs, SessionStart))
+    | summarize arg_min(Distance, *) by operation_Id
+    | extend Stage = case(
+        StageNo == 2, "02 Cruise Listing",
+        StageNo == 3, "03 Cruise Detail",
+        StageNo == 4, "04 Rooms & Rates",
+        StageNo == 5, "05 Total Price",
+        StageNo == 6, "06 Cabin Selection",
+        StageNo == 7, "07 Passenger",
+        StageNo == 8, "08 Options",
+        StageNo == 9, "09 Payment",
+        StageNo == 10, "10 Review",
+        "11 Confirmation")
+    | project UserId, SessionId, StageNo, Stage, Kind = "result",
+              Service = strcat("Core error ", ErrorType), Ms = real(null),
+              Failed = true, Detail = ErrorMessage, Ts = ErrorTs,
+              operation_Id, Source = "Cruise Core";
+let allCalls = union webCalls, webErrorRaw, clubSsoCalls, coreCalls, coreErrorCalls;
+let sequenced =
+    allCalls
+    | sort by UserId asc, SessionId asc, StageNo asc, Kind asc, Service asc, Ts asc
+    | extend Seq = row_number(
+        1,
+        prev(UserId) != UserId or prev(SessionId) != SessionId
+            or prev(StageNo) != StageNo or prev(Kind) != Kind or prev(Service) != Service);
+let callMetrics =
+    sequenced
+    | summarize N = count(),
+                CallTotalMs = round(sum(Ms)),
+                P50Ms = round(percentile(Ms, 50)),
+                P90Ms = round(percentile(Ms, 90)),
+                P95Ms = round(percentile(Ms, 95)),
+                P99Ms = round(percentile(Ms, 99)),
+                MaxMs = round(max(Ms)),
+                Fails = countif(Failed),
+                Detail = take_anyif(Detail, isnotempty(Detail)),
+                Errors = make_list_if(
+                    bag_pack("n", Seq, "t", Ts, "message", Detail),
+                    Failed and isnotempty(Detail),
+                    8),
+                Ts = min(Ts)
+      by UserId, SessionId, StageNo, Stage, Kind, Service, Source
+    | extend FailureRatePct = round(todouble(Fails) / N * 100.0, 2),
+             Status = case(
+                isnull(P95Ms), "N/A",
+                P95Ms < 2000, "GREEN",
+                P95Ms < 5000, "YELLOW",
+                "RED");
+let stageApiMetrics =
+    allCalls
+    | where Kind == "api" and isnotnull(Ms)
+    | summarize StageTotalMs = round(sum(Ms)),
+                StepP50 = round(percentile(Ms, 50)),
+                StepP90 = round(percentile(Ms, 90)),
+                StepP95 = round(percentile(Ms, 95)),
+                StepP99 = round(percentile(Ms, 99)),
+                StepMax = round(max(Ms))
+      by UserId, SessionId, StageNo, Stage;
+let failBySession =
+    union webErrorRaw, coreErrorCalls
+    | summarize arg_max(Ts, Detail) by UserId, SessionId
+    | project UserId, SessionId, FailReason = Detail;
+let stageRows =
+    callMetrics
+    | sort by UserId asc, SessionId asc, StageNo asc, Kind asc, P95Ms desc, Service asc
+    | summarize Calls = make_list(bag_pack(
+            "kind", Kind, "source", Source, "call", Service,
+            "correlationId", SessionId, "n", N,
+            "callTotalMs", CallTotalMs, "p50Ms", P50Ms, "p90Ms", P90Ms,
+            "p95Ms", P95Ms, "p99Ms", P99Ms, "maxMs", MaxMs,
+            "failureRatePct", FailureRatePct, "status", Status,
+            "detail", Detail, "errors", Errors), 80),
+        StepStart = min(Ts),
+        CallCount = sum(N),
+        StepFails = sumif(Fails, Kind != "page"),
+        StepTotal = sumif(N, Kind != "page")
+      by UserId, SessionId, StageNo, Stage
+    | join kind=leftouter stageApiMetrics on UserId, SessionId, StageNo, Stage
+    | extend StepFailPct = iff(
+                 StepTotal > 0,
+                 round(todouble(StepFails) / StepTotal * 100.0, 2),
+                 real(null)),
+             StepStatus = case(
+                isnull(StepP95), "N/A",
+                StepP95 < 2000, "GREEN",
+                StepP95 < 5000, "YELLOW",
+                "RED");
+stageRows
+| sort by UserId asc, SessionId asc, StageNo asc
+| summarize Journey = make_list(bag_pack(
+        "stageNo", StageNo, "stage", Stage, "t", StepStart,
+        "callCount", CallCount, "stageTotalMs", StageTotalMs,
+        "p50Ms", StepP50, "p90Ms", StepP90, "p95Ms", StepP95,
+        "p99Ms", StepP99, "maxMs", StepMax,
+        "failureRatePct", StepFailPct, "status", StepStatus, "calls", Calls), 14),
+    Steps = make_set(Stage, 14),
+    LastStep = max(StageNo),
+    FailedCalls = sum(StepFails),
+    JourneyTotalMs = round(sum(todouble(coalesce(StageTotalMs, 0.0)))),
+    SlowestCallMs = max(StepMax),
+    OverallP95 = max(StepP95),
+    SearchAt = minif(StepStart, StageNo == 2),
+    PurchaseAt = minif(StepStart, StageNo == 9),
+    ConfirmAt = minif(StepStart, StageNo == 11),
+    FirstSeen = min(StepStart),
+    LastSeen = max(StepStart)
+  by UserId, SessionId
+| join kind=leftouter failBySession on UserId, SessionId
+| project-away UserId1, SessionId1
+| join kind=leftouter (
+        webSessions
+        | summarize SessionCount = dcount(SessionId) by UserId
+    ) on UserId
+| project-away UserId1
+| extend CorrelationId = SessionId,
+         SessionCount = coalesce(SessionCount, 1)
+| extend BookOk = iff(isnotnull(ConfirmAt), 1, 0),
+         BookFail = iff(isnotempty(FailReason), 1, 0),
+         DistinctOkRes = iff(isnotnull(ConfirmAt), 1, 0),
+         BookedReservations = dynamic([])
+| extend PassedSearch = isnotnull(SearchAt),
+         IsBookSuccessful = BookOk > 0,
+         Exceptions = FailedCalls
+| extend Outcome = case(
+    BookOk > 0, "Booked",
+    BookFail > 0, case(
+        LastStep == 1, "T-Mobile SSO Failed",
+        LastStep == 2, "Cruise Listing Failed",
+        LastStep == 3, "Cruise Detail Failed",
+        LastStep == 4, "Rooms & Rates Failed",
+        LastStep == 5, "Review Total Price Failed",
+        LastStep == 6, "Cabin Selection Failed",
+        LastStep == 7, "Passenger Failed",
+        LastStep == 8, "Options Failed",
+        LastStep == 9, "Payment Failed",
+        LastStep == 10, "Review Failed",
+        LastStep == 11, "Confirmation Failed",
+        strcat("Failed at step ", tostring(LastStep))),
+    isnotnull(PurchaseAt), "Payment attempted, no confirmation",
+    strcat("Dropped at step ", tostring(LastStep)))
+| extend SearchToConfirm_s = datetime_diff("second", ConfirmAt, SearchAt)
+| project UserId, CorrelationId, SessionCount, SessionId, Outcome, LastStep, Steps, FailReason,
+          BookOk, BookFail, IsBookSuccessful, PassedSearch, DistinctOkRes, BookedReservations,
+          FailedCalls, Exceptions, JourneyTotalMs, SlowestCallMs, OverallP95,
+          SearchToConfirm_s, FirstSeen, LastSeen, Journey
+| top 50 by LastSeen desc

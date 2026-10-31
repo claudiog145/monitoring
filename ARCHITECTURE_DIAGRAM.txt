@@ -1,0 +1,321 @@
+# Multi-Company Architecture Diagram
+
+## 1. Complete Data Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           PORTAL WEB                                    │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ Company Selector Dropdown                                         │  │
+│  │ ┌─────────────────┐  ┌─────────────────┐                         │  │
+│  │ │   "arrivia" ▼   │  │   "demo" ▼      │                         │  │
+│  │ └────────┬────────┘  └────────┬────────┘                         │  │
+│  └─────────┼──────────────────────┼──────────────────────────────────┘  │
+│            │ PUT                  │ PUT                                  │
+│            └──────────────┬───────┘                                      │
+│                           ▼                                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│                        FUNCTIONS APP (Backend)                          │
+│                                                                          │
+│  CompanyProfileAdminFunctions                                          │
+│  ├─ GET /api/settings/company-profiles                                 │
+│  ├─ PUT /api/settings/company-profiles-active                          │
+│  │   │ Stores active company → monitoring.ActiveCompanyProfile        │
+│  │   └─ Invalidates cache (30s TTL)                                    │
+│  └─ GET /api/settings/company-profiles-audit                          │
+│                                                                          │
+│  ScoutMonkeyService                                                    │
+│  ├─ Calls CompanyAdapterProvider.GetAsync()                          │
+│  │  └─ Reads ActiveCompanyProfile OR uses DefaultProfileKey          │
+│  ├─ Gets ProfileDrivenAdapter                                        │
+│  ├─ Reads telemetry from AppInsights                                  │
+│  ├─ Classifies rows using adapter                                    │
+│  └─ Creates InvestigationPackages (with ProfileKey)                  │
+│                                                                          │
+│  InspectorMonkeyService                                                │
+│  ├─ Reads packages WHERE ProfileKey = @profileKey                    │
+│  └─ Creates ForensicCases (with ProfileKey)                          │
+│                                                                          │
+│  RcaAgentService                                                       │
+│  ├─ Reads ForensicCase.ProfileKey                                    │
+│  ├─ Searches KnowledgeChunk WHERE                                   │
+│  │  (ProfileKey = @profileKey OR ProfileKey = '')                    │
+│  └─ Returns RCA response                                              │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+         │                                      │
+         │ SQL                                  │ INSERT/SELECT
+         │                                      │
+         ▼                                      ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        SQL SERVER DATABASE                              │
+│                                                                          │
+│  monitoring.CompanyProfile                                             │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ ProfileKey | DisplayName  | ProfileJson | Enabled | Version    │   │
+│  ├─────────────────────────────────────────────────────────────────┤   │
+│  │ arrivia    | Arrivia Test | { services: [...] } | 1 | 1        │   │
+│  │ demo       | Demo Company | { services: [...] } | 1 | 1        │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│       (PK)                                                               │
+│                                                                          │
+│  monitoring.ActiveCompanyProfile (SINGLE ROW)                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ ProfileKey | UpdatedAt         | UpdatedBy                     │   │
+│  ├─────────────────────────────────────────────────────────────────┤   │
+│  │ arrivia    | 2026-10-30 07:35  | Operator@arrivia.com          │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│       ^ This determines what every cycle uses by default               │
+│                                                                          │
+│  monitoring.InvestigationPackage                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ Id  | CaseId | Board | ProfileKey | EntityKey | Status | ...  │   │
+│  ├─────────────────────────────────────────────────────────────────┤   │
+│  │ ID1 | Case1  | latency | arrivia  | club:1  | pending_handoff │   │
+│  │ ID2 | Case2  | latency | arrivia  | club:2  | handed_off      │   │
+│  │ ID3 | Case3  | latency | demo     | club:3  | pending_handoff │   │
+│  │ ID4 | Case4  | exception | arrivia | host:1 | handed_off      │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│       └─ UNIQUE (CaseId, Board, ProfileKey) ← Dedup per company       │
+│                                                                          │
+│  monitoring.ForensicCase                                               │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ Id  | PackageId | ProfileKey | CaseId | Status | Phase | ...  │   │
+│  ├─────────────────────────────────────────────────────────────────┤   │
+│  │ FC1 | ID1       | arrivia    | Case1  | running| scope │       │   │
+│  │ FC2 | ID2       | arrivia    | Case2  | closed | N/A   │       │   │
+│  │ FC3 | ID3       | demo       | Case3  | running| agents│       │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│       └─ ProfileKey COPIED from package (immutable)                    │
+│                                                                          │
+│  monitoring.KnowledgeChunk                                             │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ Id  | Content | Embedding | ProfileKey | CreatedAt | ...      │   │
+│  ├─────────────────────────────────────────────────────────────────┤   │
+│  │ CH1 | RCA doc | [vec]      | arrivia    | 2026-10-20 │         │   │
+│  │ CH2 | RCA doc | [vec]      | arrivia    | 2026-10-21 │         │   │
+│  │ CH3 | RCA doc | [vec]      | demo       | 2026-10-22 │         │   │
+│  │ CH4 | Knowledge | [vec]    | ''         | 2026-10-15 │ ← SHARED│   │
+│  │ CH5 | Runbook | [vec]      | ''         | 2026-09-20 │ ← SHARED│   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│       ├─ ProfileKey = 'arrivia' → Only arrivia can see                 │
+│       ├─ ProfileKey = 'demo' → Only demo can see                       │
+│       └─ ProfileKey = '' → ALL can see (shared corpus)                 │
+│                                                                          │
+│  monitoring.ScoutRun                                                   │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ Id | ProfileKey | Status | PackagesCreated | StartedAt | ...  │   │
+│  ├─────────────────────────────────────────────────────────────────┤   │
+│  │ SR1| arrivia    | clear  | 2         | 07:00 | ...      │       │   │
+│  │ SR2| demo       | clear  | 1         | 07:03 | ...      │       │   │
+│  │ SR3| arrivia    | detected | 4       | 07:30 | ...      │       │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│       └─ One ProfileKey per cycle                                      │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+         │
+         │ Query: WHERE ProfileKey = @ProfileKey OR @ProfileKey IS NULL
+         │
+         ▼
+    ┌─────────────────────────────────┐
+    │ API Response: Only company data │
+    └─────────────────────────────────┘
+```
+
+---
+
+## 2. Company Resolution Flow
+
+```
+CompanyAdapterProvider.GetAsync(profileKey = null)
+│
+├─ IF profileKey != null
+│  └─► Return adapter for that company (no DB read)
+│
+├─ ELSE (profileKey is null)
+│  │
+│  ├─ Read ActiveCompanyProfile from DB (cache 30s)
+│  │  │
+│  │  ├─ IF ActiveCompanyProfile.ProfileKey != null
+│  │  │  └─► Use that company
+│  │  │
+│  │  ├─ ELSE IF Company:DefaultProfileKey != null
+│  │  │  └─► Use configured default
+│  │  │
+│  │  └─ ELSE
+│  │     └─► THROW CompanyProfileResolutionException
+│  │
+│  └─ Load CompanyProfile from DB
+│     │
+│     ├─ IF profile is null or not enabled
+│     │  └─► THROW CompanyProfileResolutionException
+│     │
+│     └─ Build ProfileDrivenAdapter
+│        └─ Cache 30s
+```
+
+---
+
+## 3. Isolation Verification
+
+```
+┌────────────────────────────────────────────────────────────┐
+│                  COMPANY A (arrivia)                       │
+├────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Packages:                                                  │
+│  • ID1 CaseId=Case1 ProfileKey=arrivia Status=pending      │
+│  • ID2 CaseId=Case2 ProfileKey=arrivia Status=handed_off   │
+│  • ID4 CaseId=Case4 ProfileKey=arrivia Status=pending      │
+│                                                              │
+│  Cases:                                                     │
+│  • FC1 CaseId=Case1 ProfileKey=arrivia Status=running      │
+│  • FC2 CaseId=Case2 ProfileKey=arrivia Status=closed       │
+│  • FC4 CaseId=Case4 ProfileKey=arrivia Status=running      │
+│                                                              │
+│  Precedents:                                                │
+│  • CH1 ProfileKey=arrivia (arrivia RCA docs)              │
+│  • CH2 ProfileKey=arrivia (arrivia RCA docs)              │
+│  • CH4 ProfileKey='' (shared across all companies)         │
+│  • CH5 ProfileKey='' (shared across all companies)         │
+│                                                              │
+│  Cannot see:                                                │
+│  ✗ ID3, FC3, CH3 (all belong to "demo")                   │
+│                                                              │
+└────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────┐
+│                  COMPANY B (demo)                          │
+├────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Packages:                                                  │
+│  • ID3 CaseId=Case3 ProfileKey=demo Status=pending         │
+│                                                              │
+│  Cases:                                                     │
+│  • FC3 CaseId=Case3 ProfileKey=demo Status=running         │
+│                                                              │
+│  Precedents:                                                │
+│  • CH3 ProfileKey=demo (demo RCA docs)                    │
+│  • CH4 ProfileKey='' (shared across all companies)         │
+│  • CH5 ProfileKey='' (shared across all companies)         │
+│                                                              │
+│  Cannot see:                                                │
+│  ✗ ID1, ID2, ID4, FC1, FC2, FC4, CH1, CH2 (all arrivia)  │
+│                                                              │
+└────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 4. Cache & Invalidation
+
+```
+CompanyAdapterProvider
+│
+├─ _activeKey: volatile ActiveKeySnapshot
+│  ├─ ProfileKey: string?
+│  └─ ExpiresAt: DateTimeOffset (now + 30s)
+│
+├─ _snapshots: ConcurrentDictionary<string, Snapshot>
+│  ├─ "arrivia" → Snapshot(adapter, expiresAt)
+│  ├─ "demo" → Snapshot(adapter, expiresAt)
+│  └─ "test" → Snapshot(adapter, expiresAt)
+│
+└─ Invalidate()
+   ├─ _snapshots.Clear() ← All adapters cleared
+   └─ _activeKey = null ← Active company re-read next call
+```
+
+Flow:
+```
+Request 1: GetAsync()
+  └─► ReadActiveKeyAsync()
+      └─► DB read (cache miss)
+      └─► Store in _activeKey
+      
+Request 2 (within 30s): GetAsync()
+  └─► ReadActiveKeyAsync()
+      └─► Return cached _activeKey (no DB read!)
+      
+PUT /api/settings/company-profiles-active "arrivia"
+  └─► SetActiveAsync("arrivia")
+  └─► Invalidate()
+      └─► _activeKey = null
+      └─► _snapshots.Clear()
+      
+Request 3: GetAsync()
+  └─► ReadActiveKeyAsync()
+      └─► DB read again (cache was cleared)
+```
+
+---
+
+## 5. API Flow
+
+```
+┌─ GET /api/settings/company-profiles ────────────────────┐
+│  ├─ Query: SELECT * FROM monitoring.CompanyProfile      │
+│  └─ Response: { profiles: [ {...}, {...} ] }            │
+└────────────────────────────────────────────────────────┘
+
+┌─ GET /api/settings/company-profiles-active ───────────┐
+│  ├─ Query: SELECT * FROM monitoring.ActiveCompanyProfile │
+│  └─ Response: { profileKey: "arrivia", updatedAt: ..., │
+│               updatedBy: "..." }                        │
+└────────────────────────────────────────────────────────┘
+
+┌─ PUT /api/settings/company-profiles-active ───────────┐
+│  ├─ Auth: Require X-Settings-Write-Secret header      │
+│  ├─ Body: { profileKey: "arrivia" }                   │
+│  ├─ Validate: Must exist and be enabled               │
+│  ├─ Query: UPDATE monitoring.ActiveCompanyProfile     │
+│  ├─ Call: adapterProvider.Invalidate()                │
+│  └─ Response: { profileKey: "arrivia", ... }          │
+└────────────────────────────────────────────────────────┘
+
+┌─ GET /api/scout/packages?profileKey=arrivia ────────┐
+│  ├─ Query: SELECT * FROM monitoring.InvestigationPackage │
+│  │          WHERE ProfileKey = 'arrivia'            │
+│  └─ Response: { packages: [ {...}, {...} ] }        │
+└────────────────────────────────────────────────────────┘
+
+┌─ GET /api/scout/packages (no profileKey) ──────────┐
+│  ├─ Query: SELECT * FROM monitoring.InvestigationPackage │
+│  │          (no WHERE on ProfileKey)                │
+│  └─ Response: { packages: [ all companies ] }       │
+└────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 6. Deployment State
+
+```
+REQUIREMENTS MET ✅
+├─ monitoring schema exists
+├─ CompanyProfile table exists with ProfileKey PK
+├─ ActiveCompanyProfile table exists
+├─ All operational tables have ProfileKey column
+├─ UNIQUE indexes include ProfileKey
+├─ Company:DefaultProfileKey configured
+├─ MonitoringOptions:SettingsWriteSecret configured
+└─ ≥1 company in CompanyProfile table
+
+READY FOR SCOUT ✅
+├─ ProfileDrivenAdapter builds from ProfileJson
+├─ KQL templates inject company matchers
+├─ Scout classifies rows per company
+├─ Inspector reads packages per company
+├─ RCA searches precedents per company
+└─ UI switches companies without reload
+
+ISOLATION VERIFIED ✅
+├─ Company A data ≠ Company B data
+├─ ForensicCase.ProfileKey copied from package
+├─ RCA filters: ProfileKey = @profileKey OR ProfileKey = ''
+├─ KnowledgeChunk isolation by ProfileKey
+└─ All queries filter by @ProfileKey
+
+PRODUCTION READY ✅
+```
+

@@ -1,0 +1,46 @@
+# Build
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.dll
+*.exe
+*.pdb
+*.cache
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.slnLaunch.user
+
+# NuGet
+*.nupkg
+**/packages/
+project.lock.json
+
+# Test / coverage
+TestResults/
+coverage*.json
+*.coverage
+
+# Local Docker compose secrets (service principal for App Insights)
+.env
+Portal/.env
+
+# OS / editor
+Thumbs.db
+.DS_Store
+*.swp
+*~
+
+# Working docs (session notes, spikes, local backups) - not tracked in git
+docs/
+
+# Working docs dropped at the repo root (decks, rosters with on-call PII, exports)
+/Operating Model V2.pptx
+/PagerDuty_Roster_Complete_Updated_Maty.xlsx
+/Platform Reliability Strategy V3.md
+/Platform Reliability Strategy V3.pdf

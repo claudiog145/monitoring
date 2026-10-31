@@ -1,0 +1,52 @@
+// ADD THIS TO: Portal/src/JourneyMonitor.Web/Program.cs
+// Location: After builder.Services registrations (after line ~40), before var app = builder.Build();
+
+// ===== ADD THESE USING STATEMENTS AT TOP OF FILE =====
+using JourneyMonitor.Core.Monitoring;
+using Microsoft.AspNetCore.DataProtection;
+
+// ===== ADD THIS REGISTRATION IN Program.cs =====
+
+// AppInsights Token Management (Option 1 - External Tokens)
+// This enables users to paste their own Azure tokens for AppInsights access
+builder.Services.AddDataProtection(); // Required for encrypting/decrypting tokens
+
+// Register Token Service and Repository
+builder.Services.AddSingleton<IAppInsightsTokenRepository>(sp =>
+{
+    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+    var logger = sp.GetRequiredService<ILogger<SqlAppInsightsTokenRepository>>();
+    return new SqlAppInsightsTokenRepository(connectionString, logger);
+});
+
+builder.Services.AddScoped<IAppInsightsTokenService, AppInsightsTokenService>();
+builder.Services.AddScoped<IAppInsightsQueryService, AppInsightsQueryService>();
+
+// Register Tenant Resolver (maps tenant keys to AppInsights configurations)
+builder.Services.AddSingleton<ITenantResolver, TenantResolver>();
+
+// ===== CONFIGURATION =====
+// The TenantResolver in TenantResolver.cs contains a static dictionary with tenant configs.
+// UPDATE THIS DICTIONARY WITH YOUR ACTUAL VALUES:
+//
+// Example:
+// {
+//     "arrivia", new AppInsightsTenant
+//     {
+//         TenantKey = "arrivia",
+//         SubscriptionId = "your-arrivia-subscription-id",
+//         ResourceGroup = "rg-arrivia-prod",
+//         AppInsightsName = "ai-arrivia-prod",
+//         AadTenantId = "your-arrivia-aad-tenant-id"
+//     }
+// }
+//
+// FIND THIS FILE AND EDIT IT:
+// Portal/src/JourneyMonitor.Core/Monitoring/TenantResolver.cs
+// Lines that say: YOUR-ARRIVIA-SUBSCRIPTION-ID, etc.
+
+// ===== DATABASE MIGRATION =====
+// Run this SQL migration first:
+// Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/20241030_CreateAppInsightsTokensTable.sql
+//
+// This creates the [AppInsightsTokens] table that stores encrypted tokens.

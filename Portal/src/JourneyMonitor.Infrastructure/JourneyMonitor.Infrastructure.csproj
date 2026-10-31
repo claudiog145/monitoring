@@ -1,0 +1,48 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\JourneyMonitor.Core\JourneyMonitor.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- KQL text is embedded (not copy-to-output) so it ships inside the assembly regardless
+         of the process working directory - matches the original app shipping kql/*.txt alongside code. -->
+    <EmbeddedResource Include="Kql\*.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Anonymized demo fixture (port of data/demo-journeys.json). Copied to output rather than
+         embedded: it's large and only read once per fallback, no benefit to embedding it. -->
+    <Content Include="Demo\Data\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.21.0" />
+    <!-- Notifications tab's "Email" channel option for Azure Communication Services - the only
+         one of the 3 email providers whose auth (HMAC-signed requests) is impractical to
+         reimplement by hand, unlike SMTP (built-in SmtpClient) and SendGrid (plain REST+API key) -
+         see Notifications/AcsEmailSender.cs. -->
+    <PackageReference Include="Azure.Communication.Email" Version="1.1.0" />
+    <!-- Dapper backs the journey store only: both directions are stored procedures with OUTPUT
+         parameters returning raw row bags, which EF Core has nothing to model. -->
+    <PackageReference Include="Dapper" Version="2.1.66" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.1" />
+    <!-- SqlClient 7.1 moved the Entra ID auth providers out of the core package, so
+         "Authentication=Active Directory Default" fails without this. Keep the version in step
+         with Microsoft.Data.SqlClient above. -->
+    <PackageReference Include="Microsoft.Data.SqlClient.Extensions.Azure" Version="7.1.1" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.12" />
+    <!-- Only the abstractions (IDataProtectionProvider/IDataProtector) - the actual
+         implementation + key ring configuration is registered once in Functions/Program.cs. -->
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.Abstractions" Version="10.0.14" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

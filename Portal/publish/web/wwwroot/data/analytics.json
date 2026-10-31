@@ -1,0 +1,509 @@
+{
+  "timeseries": [
+    {
+      "timestamp": "2026-07-22T19:30:00Z",
+      "journeys": 182,
+      "successfulBookings": 170,
+      "failedBookings": 12,
+      "conversionRate": 0.934,
+      "p50": 355,
+      "p95": 763,
+      "p99": 1307,
+      "monkeyActions": 13
+    },
+    {
+      "timestamp": "2026-07-22T20:30:00Z",
+      "journeys": 211,
+      "successfulBookings": 192,
+      "failedBookings": 19,
+      "conversionRate": 0.91,
+      "p50": 374,
+      "p95": 892,
+      "p99": 1383,
+      "monkeyActions": 10
+    },
+    {
+      "timestamp": "2026-07-22T21:30:00Z",
+      "journeys": 224,
+      "successfulBookings": 201,
+      "failedBookings": 23,
+      "conversionRate": 0.897,
+      "p50": 420,
+      "p95": 819,
+      "p99": 1280,
+      "monkeyActions": 13
+    },
+    {
+      "timestamp": "2026-07-22T22:30:00Z",
+      "journeys": 238,
+      "successfulBookings": 220,
+      "failedBookings": 18,
+      "conversionRate": 0.924,
+      "p50": 358,
+      "p95": 778,
+      "p99": 1218,
+      "monkeyActions": 3
+    },
+    {
+      "timestamp": "2026-07-22T23:30:00Z",
+      "journeys": 204,
+      "successfulBookings": 184,
+      "failedBookings": 20,
+      "conversionRate": 0.902,
+      "p50": 310,
+      "p95": 924,
+      "p99": 1586,
+      "monkeyActions": 14
+    },
+    {
+      "timestamp": "2026-07-23T00:30:00Z",
+      "journeys": 203,
+      "successfulBookings": 187,
+      "failedBookings": 16,
+      "conversionRate": 0.921,
+      "p50": 335,
+      "p95": 897,
+      "p99": 1241,
+      "monkeyActions": 13
+    },
+    {
+      "timestamp": "2026-07-23T01:30:00Z",
+      "journeys": 255,
+      "successfulBookings": 229,
+      "failedBookings": 26,
+      "conversionRate": 0.898,
+      "p50": 352,
+      "p95": 701,
+      "p99": 1526,
+      "monkeyActions": 5
+    },
+    {
+      "timestamp": "2026-07-23T02:30:00Z",
+      "journeys": 217,
+      "successfulBookings": 200,
+      "failedBookings": 17,
+      "conversionRate": 0.922,
+      "p50": 372,
+      "p95": 741,
+      "p99": 1254,
+      "monkeyActions": 2
+    },
+    {
+      "timestamp": "2026-07-23T03:30:00Z",
+      "journeys": 248,
+      "successfulBookings": 234,
+      "failedBookings": 14,
+      "conversionRate": 0.944,
+      "p50": 350,
+      "p95": 673,
+      "p99": 1598,
+      "monkeyActions": 2
+    },
+    {
+      "timestamp": "2026-07-23T04:30:00Z",
+      "journeys": 250,
+      "successfulBookings": 231,
+      "failedBookings": 19,
+      "conversionRate": 0.924,
+      "p50": 312,
+      "p95": 901,
+      "p99": 1152,
+      "monkeyActions": 2
+    },
+    {
+      "timestamp": "2026-07-23T05:30:00Z",
+      "journeys": 253,
+      "successfulBookings": 234,
+      "failedBookings": 19,
+      "conversionRate": 0.925,
+      "p50": 400,
+      "p95": 895,
+      "p99": 1325,
+      "monkeyActions": 7
+    },
+    {
+      "timestamp": "2026-07-23T06:30:00Z",
+      "journeys": 203,
+      "successfulBookings": 192,
+      "failedBookings": 11,
+      "conversionRate": 0.946,
+      "p50": 344,
+      "p95": 894,
+      "p99": 1158,
+      "monkeyActions": 3
+    },
+    {
+      "timestamp": "2026-07-23T07:30:00Z",
+      "journeys": 231,
+      "successfulBookings": 206,
+      "failedBookings": 25,
+      "conversionRate": 0.892,
+      "p50": 298,
+      "p95": 945,
+      "p99": 1422,
+      "monkeyActions": 12
+    },
+    {
+      "timestamp": "2026-07-23T08:30:00Z",
+      "journeys": 186,
+      "successfulBookings": 172,
+      "failedBookings": 14,
+      "conversionRate": 0.925,
+      "p50": 318,
+      "p95": 938,
+      "p99": 1585,
+      "monkeyActions": 6
+    },
+    {
+      "timestamp": "2026-07-23T09:30:00Z",
+      "journeys": 190,
+      "successfulBookings": 173,
+      "failedBookings": 17,
+      "conversionRate": 0.911,
+      "p50": 310,
+      "p95": 935,
+      "p99": 1491,
+      "monkeyActions": 8
+    },
+    {
+      "timestamp": "2026-07-23T10:30:00Z",
+      "journeys": 257,
+      "successfulBookings": 228,
+      "failedBookings": 29,
+      "conversionRate": 0.887,
+      "p50": 337,
+      "p95": 917,
+      "p99": 1294,
+      "monkeyActions": 9
+    },
+    {
+      "timestamp": "2026-07-23T11:30:00Z",
+      "journeys": 236,
+      "successfulBookings": 217,
+      "failedBookings": 19,
+      "conversionRate": 0.919,
+      "p50": 389,
+      "p95": 806,
+      "p99": 1391,
+      "monkeyActions": 11
+    },
+    {
+      "timestamp": "2026-07-23T12:30:00Z",
+      "journeys": 187,
+      "successfulBookings": 158,
+      "failedBookings": 29,
+      "conversionRate": 0.845,
+      "p50": 305,
+      "p95": 756,
+      "p99": 1420,
+      "monkeyActions": 5
+    },
+    {
+      "timestamp": "2026-07-23T13:30:00Z",
+      "journeys": 213,
+      "successfulBookings": 201,
+      "failedBookings": 12,
+      "conversionRate": 0.944,
+      "p50": 320,
+      "p95": 1072,
+      "p99": 1638,
+      "monkeyActions": 10
+    },
+    {
+      "timestamp": "2026-07-23T14:30:00Z",
+      "journeys": 189,
+      "successfulBookings": 174,
+      "failedBookings": 15,
+      "conversionRate": 0.921,
+      "p50": 280,
+      "p95": 1159,
+      "p99": 1780,
+      "monkeyActions": 13
+    },
+    {
+      "timestamp": "2026-07-23T15:30:00Z",
+      "journeys": 256,
+      "successfulBookings": 231,
+      "failedBookings": 25,
+      "conversionRate": 0.902,
+      "p50": 354,
+      "p95": 966,
+      "p99": 1668,
+      "monkeyActions": 6
+    },
+    {
+      "timestamp": "2026-07-23T16:30:00Z",
+      "journeys": 216,
+      "successfulBookings": 192,
+      "failedBookings": 24,
+      "conversionRate": 0.889,
+      "p50": 298,
+      "p95": 769,
+      "p99": 1573,
+      "monkeyActions": 6
+    },
+    {
+      "timestamp": "2026-07-23T17:30:00Z",
+      "journeys": 260,
+      "successfulBookings": 232,
+      "failedBookings": 28,
+      "conversionRate": 0.892,
+      "p50": 330,
+      "p95": 867,
+      "p99": 1158,
+      "monkeyActions": 10
+    },
+    {
+      "timestamp": "2026-07-23T18:30:00Z",
+      "journeys": 208,
+      "successfulBookings": 178,
+      "failedBookings": 30,
+      "conversionRate": 0.856,
+      "p50": 318,
+      "p95": 786,
+      "p99": 1523,
+      "monkeyActions": 4
+    },
+    {
+      "timestamp": "2026-07-23T19:30:00Z",
+      "journeys": 189,
+      "successfulBookings": 178,
+      "failedBookings": 11,
+      "conversionRate": 0.942,
+      "p50": 322,
+      "p95": 807,
+      "p99": 1404,
+      "monkeyActions": 13
+    }
+  ],
+  "domainComparison": [
+    {
+      "domain": "hotels",
+      "journeys": 2588,
+      "conversionRate": 0.785,
+      "p95LatencyMs": 715,
+      "exceptions": 36
+    },
+    {
+      "domain": "air",
+      "journeys": 1154,
+      "conversionRate": 0.756,
+      "p95LatencyMs": 731,
+      "exceptions": 33
+    },
+    {
+      "domain": "cruises",
+      "journeys": 1457,
+      "conversionRate": 0.765,
+      "p95LatencyMs": 925,
+      "exceptions": 36
+    },
+    {
+      "domain": "cars",
+      "journeys": 1064,
+      "conversionRate": 0.793,
+      "p95LatencyMs": 862,
+      "exceptions": 28
+    }
+  ],
+  "exceptionsByDomain": [
+    {
+      "domain": "hotels",
+      "count": 5
+    },
+    {
+      "domain": "air",
+      "count": 5
+    },
+    {
+      "domain": "cruises",
+      "count": 4
+    },
+    {
+      "domain": "cars",
+      "count": 6
+    }
+  ],
+  "exceptionsByComponent": [
+    {
+      "component": "payments-svc",
+      "count": 4
+    },
+    {
+      "component": "booking-svc",
+      "count": 4
+    },
+    {
+      "component": "membership-svc",
+      "count": 2
+    },
+    {
+      "component": "notifications-svc",
+      "count": 2
+    },
+    {
+      "component": "inventory-cars",
+      "count": 1
+    },
+    {
+      "component": "inventory-hotels",
+      "count": 1
+    },
+    {
+      "component": "web-portal",
+      "count": 1
+    },
+    {
+      "component": "partner-connectors",
+      "count": 1
+    },
+    {
+      "component": "personalization-svc",
+      "count": 1
+    },
+    {
+      "component": "auth-svc",
+      "count": 1
+    },
+    {
+      "component": "event-processing",
+      "count": 1
+    },
+    {
+      "component": "inventory-cruises",
+      "count": 1
+    }
+  ],
+  "supplierPerformance": [
+    {
+      "supplier": "SkyLink GDS",
+      "domain": "air",
+      "availability": 97.2,
+      "p95LatencyMs": 640,
+      "errorRate": 4.1
+    },
+    {
+      "supplier": "AeroConnect API",
+      "domain": "air",
+      "availability": 99.6,
+      "p95LatencyMs": 210,
+      "errorRate": 0.4
+    },
+    {
+      "supplier": "GlobalStay Connect",
+      "domain": "hotels",
+      "availability": 99.1,
+      "p95LatencyMs": 320,
+      "errorRate": 0.9
+    },
+    {
+      "supplier": "Oceanic Reservations",
+      "domain": "cruises",
+      "availability": 98.7,
+      "p95LatencyMs": 410,
+      "errorRate": 1.3
+    },
+    {
+      "supplier": "DriveNow Partner API",
+      "domain": "cars",
+      "availability": 96.8,
+      "p95LatencyMs": 560,
+      "errorRate": 3.2
+    }
+  ],
+  "topFailingOperations": [
+    {
+      "operation": "Query Flight Suppliers",
+      "domain": "air",
+      "failureRate": 8.4,
+      "count": 214
+    },
+    {
+      "operation": "Payment Authorization",
+      "domain": "shared",
+      "failureRate": 5.1,
+      "count": 133
+    },
+    {
+      "operation": "Retrieve Cruise Inventory",
+      "domain": "cruises",
+      "failureRate": 3.6,
+      "count": 58
+    },
+    {
+      "operation": "Booking Confirmation",
+      "domain": "shared",
+      "failureRate": 2.9,
+      "count": 47
+    },
+    {
+      "operation": "Retrieve Supplier Inventory",
+      "domain": "cars",
+      "failureRate": 2.2,
+      "count": 31
+    }
+  ],
+  "topLatencyContributors": [
+    {
+      "component": "inventory-air",
+      "avgMs": 640,
+      "contributionPct": 32
+    },
+    {
+      "component": "payments-svc",
+      "avgMs": 410,
+      "contributionPct": 21
+    },
+    {
+      "component": "inventory-cars",
+      "avgMs": 360,
+      "contributionPct": 14
+    },
+    {
+      "component": "personalization-svc",
+      "avgMs": 240,
+      "contributionPct": 11
+    },
+    {
+      "component": "booking-svc",
+      "avgMs": 300,
+      "contributionPct": 10
+    }
+  ],
+  "mostAffectedRegions": [
+    {
+      "region": "North America",
+      "incidents": 10,
+      "usersAffected": 2251
+    },
+    {
+      "region": "EMEA",
+      "incidents": 1,
+      "usersAffected": 948
+    },
+    {
+      "region": "APAC",
+      "incidents": 4,
+      "usersAffected": 4912
+    },
+    {
+      "region": "LATAM",
+      "incidents": 10,
+      "usersAffected": 369
+    }
+  ],
+  "mostAffectedJourneys": [
+    "JNY-CAR-1011",
+    "JNY-HOT-1012",
+    "JNY-AIR-1013",
+    "JNY-CRU-1014",
+    "JNY-CAR-1015",
+    "JNY-HOT-1016"
+  ],
+  "operationalInsights": [
+    "Air search P95 latency increased 3.1x after the latest deployment window (demo data).",
+    "Hotel inventory failures are concentrated in a single supplier integration (demo data).",
+    "Cruise booking conversion dropped 6 points while search traffic remained stable (demo data).",
+    "Payment retries recovered an estimated 61% of initially failed bookings (demo data)."
+  ]
+}

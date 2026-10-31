@@ -1,0 +1,123 @@
+// Scout Monkey - latency priorities board, per-club grain.
+// Derived verbatim from the Azure workbook "SRE Reliability Priorities"
+// (workbook id 
+//  providers/microsoft.insights/workbooks/fe2f3d71-ad70-4596-817a-135a1ac897f7), with three
+// deliberate changes - do not "fix" them back without reading docs/sessions/session-2026-10-07.md:
+//   1. partition is by Entity (club/host), not by Vertical. The workbook keeps the global top 10
+//      per vertical, which lets the highest-volume club crowd everyone else out: measured on real
+//      data, one host held 44% of the rows and 112 clubs with rank>=2 problems were invisible.
+//   2. {TAKE_PER_CLUB} rows per club instead of a hardcoded 10.
+//   3. GroupPayload also carries Paths/Operations/SlowPaths. 100% of the rank=3 rows measured are
+//      Stage="Unmapped operation", so without the real request paths the handoff package says
+//      "something is slow somewhere" and the L3 side has to rediscover the endpoint from scratch.
+// Placeholders are substituted by ScoutBoardService before the text reaches Application Insights;
+// the REST API does not understand the workbook's own {...} parameter syntax.
+let verticalFilter=base64_decode_tostring('{{VERTICAL_B64}}');
+let clubFilter=base64_decode_tostring('{{CLUB_FILTER_B64}}');
+let bucketSize=toint('{{BUCKET_MINUTES}}')*1m;
+let currentStart={{TIME_START}};
+let tEnd={{TIME_END}};
+let historyStart=bin(currentStart,bucketSize)-bucketSize;
+let rawRequests=materialize(union
+(app("{{SOURCE:sor-frontend}}").requests | where timestamp>=historyStart and timestamp<tEnd | project timestamp,operation_Id,id,name,url,resultCode,success,duration,customDimensions,cloud_RoleName,cloud_RoleInstance,user_Id,AuthenticatedId=tostring(column_ifexists("user_AuthenticatedId","")) | extend Source="SOR"),
+(app("{{SOURCE:cruise-core}}").requests | where timestamp>=historyStart and timestamp<tEnd | project timestamp,operation_Id,id,name,url,resultCode,success,duration,customDimensions,cloud_RoleName,cloud_RoleInstance,user_Id,AuthenticatedId=tostring(column_ifexists("user_AuthenticatedId","")) | where verticalFilter=="All" or verticalFilter=="Cruise" | extend Source="Cruise Core"),
+(app("{{SOURCE:cruise-api}}").requests | where timestamp>=historyStart and timestamp<tEnd | project timestamp,operation_Id,id,name,url,resultCode,success,duration,customDimensions,cloud_RoleName,cloud_RoleInstance,user_Id,AuthenticatedId=tostring(column_ifexists("user_AuthenticatedId","")) | where verticalFilter=="All" or verticalFilter=="Cruise" | extend Source="Cruise API")
+| extend Host=tostring(parse_url(url).Host),Path=tolower(tostring(parse_url(url).Path)),Corr=coalesce(tostring(customDimensions.CorrelationId),tostring(customDimensions.correlationId),tostring(customDimensions.correlation_id)),Club=coalesce(tostring(customDimensions.VacationClubId),tostring(customDimensions.VacationClubID),tostring(customDimensions.ClubId),tostring(customDimensions.club_id),tostring(customDimensions.CobrandId),tostring(customDimensions.cobrandId),tostring(parse_url(url)["Query Parameters"]["cobrand"]),tostring(parse_url(url)["Query Parameters"]["cobrandId"])),VerticalHint=coalesce(tostring(customDimensions.Verticals),tostring(customDimensions.Vertical))
+| extend UserKey=coalesce(AuthenticatedId,tostring(customDimensions.UserId),tostring(customDimensions.UserID),tostring(customDimensions.MemberId),tostring(customDimensions.travel_platform_user_id),tostring(customDimensions.memberid),tostring(customDimensions.user_id),tostring(customDimensions.customerId),tostring(parse_urlquery(url)["Query Parameters"]["customerid"])),SessionKey=coalesce(tostring(customDimensions.session_id),tostring(customDimensions.sessionId)),BrowserKey=user_Id
+| extend UserKey=iff(UserKey in ("0","00000000-0000-0000-0000-000000000000"),"",UserKey)
+| extend Entity=iff(isnotempty(Club),strcat("club:",Club),iff(isnotempty(Host),strcat("host:",Host),"[host/club unavailable]"))
+| extend Vertical=case(Source startswith "Cruise" or cloud_RoleName=="cruise-web-api-wa-prod","Cruise",Path contains "carsearch" or Path contains "carlocationsearch" or Path contains "searchlocations" or Path contains "carbooking" or Path contains "/cars/" or VerticalHint has "Car","Cars",Path contains "search.json" or Path contains "backgroundhotelsearch" or Path contains "searchrooms" or Path contains "getcancelpolicy" or Path contains "hoteldetails" or Path contains "zentrumhubhoteldetailscontent" or Path contains "getreviews" or Path contains "book.json" or VerticalHint has "Hotel","Hotels","Shared / unclassified"));
+let normalized=union
+(rawRequests | where Vertical=="Hotels"
+| extend StageNo = case(
+    Path contains "login.json" or Path contains "logincheck", 1,
+    Path contains "backgroundhotelsearch", 3,
+    Path contains "search.json", 2,
+    Path contains "searchrooms" or Path contains "getcancelpolicy" or Path contains "hoteldetails" or Path contains "zentrumhubhoteldetailscontent" or Path contains "getreviews", 4,
+    Path contains "book.json", 5,
+    Path contains "purchasecomplete", 8,
+    Path contains "completepurchase" or Path contains "determine3dseligibility", 7,
+    Path contains "/reservations/purchase" or Path contains "userpeople_read" or Path contains "addremoveinsurance" or Path contains "travelerprofile", 6, 0)
+| extend Stage = case(StageNo==1,"01 Login",StageNo==2,"02 Hotel Search",StageNo==3,"03 Hotel Results",StageNo==4,"04 Hotel Details",StageNo==5,"05 PreBook",StageNo==6,"06 Checkout",StageNo==7,"07 Booking",StageNo==8,"08 Confirmation","00 Unclassified")
+
+),
+(rawRequests | where Vertical=="Cars"
+| extend StageNo = case(
+    Path contains "login.json" or Path contains "logincheck", 1,
+    Path contains "backgroundcarsearch" or Path contains "/cars/", 3,
+    Path contains "carlocationsearch" or Path contains "searchlocations" or Path contains "carsearch", 2,
+    Path contains "carbooking", 5,
+    Path contains "purchasecomplete", 8,
+    Path contains "completepurchase" or Path contains "determine3dseligibility", 7,
+    Path contains "/reservations/purchase" or Path contains "userpeople_read" or Path contains "addremoveinsurance" or Path contains "travelerprofile", 6,
+    Path contains "/reservations/cancel", 9, 0)
+| extend Stage = case(StageNo==1,"01 Login",StageNo==2,"02 Car Search",StageNo==3,"03 Car Results",StageNo==5,"05 PreBook",StageNo==6,"06 Checkout",StageNo==7,"07 Booking",StageNo==8,"08 Confirmation",StageNo==9,"09 Cancellation","00 Unclassified")
+
+),
+(rawRequests | where Vertical=="Cruise"
+| extend StageNo = case(
+    Path endswith "/cruisesearch" or Path endswith "/getcustomerid" or Path contains "/searchmatrix",2,
+    Path endswith "/cruiseitinerary",3,
+    Path endswith "/cruisecategory",4,
+    Path endswith "/cruisecabin",5,
+    Path endswith "/cruisecabinonhold",6,
+    Path contains "passenger" or Path endswith "/secure/cruisetravelwith.jsp" or Path endswith "/api/guest/get-guests",7,
+    Path endswith "/featuresandoptions" or Path endswith "/insurance",8,
+    Path endswith "/cruisepayment" or Path endswith "/cruisepaymentproc" or Path contains "payment",9,
+    Path endswith "/secure/cruisesummary.jsp",10,
+    Path endswith "/cruiseconfirm" or Path contains "confirm" or Path contains "booking",11,0)
+| extend Stage = case(StageNo==2,"02 Cruise Listing",StageNo==3,"03 Cruise Detail",StageNo==4,"04 Rooms & Rates",StageNo==5,"05 Total Price",StageNo==6,"06 Cabin Selection",StageNo==7,"07 Passenger",StageNo==8,"08 Options",StageNo==9,"09 Payment",StageNo==10,"10 Review",StageNo==11,"11 Confirmation","00 Unclassified")
+
+),
+(rawRequests | where Vertical=="Shared / unclassified"
+| extend StageNo=case(Path contains "login.json" or Path contains "logincheck",1,Path contains "purchasecomplete",8,Path contains "completepurchase" or Path contains "determine3dseligibility",7,Path contains "/reservations/purchase" or Path contains "userpeople_read" or Path contains "addremoveinsurance" or Path contains "travelerprofile",6,0)
+| extend Stage=case(StageNo==1,"01 Login",StageNo==6,"06 Checkout",StageNo==7,"07 Booking",StageNo==8,"08 Confirmation","Unmapped operation")
+);
+let allRequests=materialize(normalized
+| extend Stage=iff(StageNo==0,"Unmapped operation",Stage),Ms=todouble(duration),IsFailure=success==false,Component=cloud_RoleName,Instance=cloud_RoleInstance,
+ CorrelationId=iff(Corr=="00000000-0000-0000-0000-000000000000","",Corr),Ref=strcat(Source,":",operation_Id),RequestKey=coalesce(id,strcat(operation_Id,":",timestamp,":",name))
+| extend CorrKey=iff(isnotempty(CorrelationId),strcat("corr:",CorrelationId),strcat("op:",Ref)),GroupKey=strcat(Source," | ",Vertical," | ",Entity," | ",Stage)
+| where verticalFilter=="All" or Vertical==verticalFilter
+| where clubFilter=="*" or Club==clubFilter or Host==clubFilter or Entity==clubFilter
+| project timestamp,Source,Vertical,Entity,Host,Club,Stage,StageNo,Ms,IsFailure,Component,Instance,CorrelationId,CorrKey,GroupKey,Ref,RequestKey,operation_Id,name,Path,resultCode,UserKey,BrowserKey,SessionKey);
+let exceptionRows=union
+(app("{{SOURCE:sor-frontend}}").exceptions | where timestamp>=historyStart and timestamp<tEnd | extend Source="SOR"),
+(app("{{SOURCE:cruise-core}}").exceptions | where timestamp>=historyStart and timestamp<tEnd | where verticalFilter=="All" or verticalFilter=="Cruise" | extend Source="Cruise Core"),
+(app("{{SOURCE:cruise-api}}").exceptions | where timestamp>=historyStart and timestamp<tEnd | where verticalFilter=="All" or verticalFilter=="Cruise" | extend Source="Cruise API");
+let requestMap=allRequests | where isnotempty(operation_Id) | summarize arg_max(timestamp,GroupKey,Vertical,Entity,Stage,CorrKey,CorrelationId,UserKey,BrowserKey,SessionKey) by Ref
+| project Ref,RequestGroup=GroupKey,RequestVertical=Vertical,RequestEntity=Entity,RequestStage=Stage,RequestCorrKey=CorrKey,RequestCorrId=CorrelationId,RequestUser=UserKey,RequestBrowser=BrowserKey,RequestSession=SessionKey;
+let mappedExceptions=materialize(exceptionRows
+| extend Ref=strcat(Source,":",operation_Id),DirectCorr=coalesce(tostring(customDimensions.CorrelationId),tostring(customDimensions.correlationId),tostring(customDimensions.correlation_id))
+| lookup kind=leftouter requestMap on Ref
+| extend Vertical=coalesce(RequestVertical,iff(Source startswith "Cruise","Cruise","Shared / unclassified")),Entity=coalesce(RequestEntity,"[host/club unavailable]"),Stage=coalesce(RequestStage,"Unmapped operation"),CorrelationId=coalesce(RequestCorrId,iff(DirectCorr=="00000000-0000-0000-0000-000000000000","",DirectCorr))
+| extend CorrKey=coalesce(RequestCorrKey,iff(isnotempty(CorrelationId),strcat("corr:",CorrelationId),strcat("op:",Ref))),GroupKey=coalesce(RequestGroup,strcat(Source," | ",Vertical," | ",Entity," | ",Stage))
+| where verticalFilter=="All" or Vertical==verticalFilter
+| where clubFilter=="*" or Entity==clubFilter or Entity==strcat("club:",clubFilter) or Entity==strcat("host:",clubFilter)
+| extend UserKey=coalesce(coalesce(tostring(column_ifexists("user_AuthenticatedId","")),tostring(customDimensions.UserId),tostring(customDimensions.UserID),tostring(customDimensions.MemberId),tostring(customDimensions.travel_platform_user_id)),RequestUser),SessionKey=coalesce(tostring(customDimensions.session_id),tostring(customDimensions.sessionId),RequestSession),BrowserKey=coalesce(user_Id,RequestBrowser)
+| project timestamp,Source,Vertical,Entity,Stage,GroupKey,Ref,operation_Id,CorrKey,CorrelationId,type,outerMessage,innermostMessage,UserKey,BrowserKey,SessionKey);
+let requestBins=allRequests
+| summarize Requests=count(),MeanMs=avg(Ms),P95Ms=percentile(Ms,95),MaxMs=max(Ms),FailedRequests=countif(IsFailure),RequestUsers=make_set_if(UserKey,isnotempty(UserKey),40),RequestSessions=make_set_if(strcat(UserKey,"|",SessionKey),isnotempty(UserKey) and isnotempty(SessionKey),40),RequestCorrs=make_set_if(CorrelationId,isnotempty(CorrelationId),40),RequestOps=make_set_if(operation_Id,isnotempty(operation_Id),10),SlowOps=make_set_if(operation_Id,Ms>=10000 and isnotempty(operation_Id),10),SlowUsers=dcountif(UserKey,Ms>=10000 and isnotempty(UserKey)),SlowUserRecords=countif(Ms>=10000 and isnotempty(UserKey)),SlowRecords=countif(Ms>=10000),SlowBrowsers=dcountif(BrowserKey,Ms>=10000 and isempty(UserKey) and isnotempty(BrowserKey)),RequestPaths=make_set_if(Path,isnotempty(Path),10),RequestNames=make_set_if(name,isnotempty(name),10),SlowPaths=make_set_if(Path,Ms>=10000 and isnotempty(Path),10) by GroupKey,Bucket=bin(timestamp,bucketSize),Source,Vertical,Entity,Stage;
+let exceptionBins=mappedExceptions
+| summarize Exceptions=count(),ExceptionUsersSet=make_set_if(UserKey,isnotempty(UserKey),40),ExceptionSessions=make_set_if(strcat(UserKey,"|",SessionKey),isnotempty(UserKey) and isnotempty(SessionKey),40),ExceptionCorrs=make_set_if(CorrelationId,isnotempty(CorrelationId),40),ExceptionOps=make_set_if(operation_Id,isnotempty(operation_Id),20),ExceptionUsers=dcountif(UserKey,isnotempty(UserKey)),ExceptionUserRecords=countif(isnotempty(UserKey)),ExceptionBrowsers=dcountif(BrowserKey,isempty(UserKey) and isnotempty(BrowserKey)),ExceptionTypes=make_set(type,3),ErrorExample=take_any(substring(coalesce(innermostMessage,outerMessage),0,180)) by GroupKey,Bucket=bin(timestamp,bucketSize),Source,Vertical,Entity,Stage;
+let metrics=materialize(requestBins | join kind=fullouter exceptionBins on GroupKey,Bucket,Source,Vertical,Entity,Stage
+| project GroupKey=coalesce(GroupKey,GroupKey1),Bucket=coalesce(Bucket,Bucket1),Source=coalesce(Source,Source1),Vertical=coalesce(Vertical,Vertical1),Entity=coalesce(Entity,Entity1),Stage=coalesce(Stage,Stage1),Requests=coalesce(Requests,0),MeanMs,P95Ms,MaxMs,FailedRequests=coalesce(FailedRequests,0),Exceptions=coalesce(Exceptions,0),ExceptionTypes,ErrorExample,RequestOps,RequestPaths,RequestNames,SlowPaths,SlowOps,ExceptionOps,SlowUsers,SlowUserRecords,SlowRecords,SlowBrowsers,ExceptionUsers,ExceptionUserRecords,ExceptionBrowsers,RequestUsers,RequestSessions,RequestCorrs,ExceptionUsersSet,ExceptionSessions,ExceptionCorrs);
+let compared=metrics
+| lookup kind=leftouter (metrics | project GroupKey,Bucket=Bucket+bucketSize,PreviousP95=P95Ms,PreviousExceptions=Exceptions) on GroupKey,Bucket
+| where Bucket>=currentStart and Bucket<tEnd;
+let tops=materialize(compared
+| where Requests>0
+| extend LatencyRatio=iff(PreviousP95>0,P95Ms/PreviousP95,real(null)),ExceptionRatio=iff(PreviousExceptions>0,todouble(Exceptions)/PreviousExceptions,real(null)),FailedRate=iff(Requests>0,100.0*FailedRequests/Requests,real(null))
+| extend PriorityRank=case(Requests<5,0,
+ (P95Ms>=10000 and LatencyRatio>=3 and FailedRequests>=3) or (P95Ms>=30000 and FailedRequests>=3 and FailedRate>=10) or (P95Ms>=60000 and Requests>=20),3,
+ P95Ms>=10000 or (P95Ms>=2000 and LatencyRatio>=1.5) or FailedRequests>=3,2,1)
+| extend Reason=case(PriorityRank==0,"Fewer than 5 requests: check individual durations",PriorityRank==3 and P95Ms>=60000 and Requests>=20,"P95 >=60s with >=20 requests",PriorityRank==3,"Severe latency with multiple failed requests",PriorityRank==2 and LatencyRatio>=1.5,"Latency increase or repeated failed requests",PriorityRank==2,"High latency or repeated failed requests","Highest observed latency; check preceding interval")
+| extend Priority=case(PriorityRank==3," Investigate now",PriorityRank==2," Investigate next",PriorityRank==1," Review"," Low sample"),FailurePercent=round(FailedRate,1),LatencyGrowthX=round(LatencyRatio,2),ExceptionGrowthX=round(ExceptionRatio,2)
+| partition hint.strategy=native by Entity (sort by PriorityRank desc,P95Ms desc | take {{TAKE_PER_CLUB}}));
+tops
+| extend Start=Bucket,End=min_of(Bucket+bucketSize,tEnd),CaseId=strcat(GroupKey," | ",Bucket),ClearCorrelation="",IntervalStatus=iff(Bucket+bucketSize>tEnd,"Partial","Complete")
+| extend OpSelection=tostring(set_union(coalesce(SlowOps,dynamic([])),coalesce(ExceptionOps,dynamic([])),coalesce(RequestOps,dynamic([])))),StartEpoch=tostring(datetime_diff("millisecond",Start,datetime(1970-01-01))),EndEpoch=tostring(datetime_diff("millisecond",End,datetime(1970-01-01)))
+| extend GroupPayload=tostring(bag_pack("CaseId",CaseId,"GroupKey",GroupKey,"Vertical",Vertical,"Entity",Entity,"Stage",Stage,"Source",Source,"Start",Start,"End",End,"LatencyLimitMs",1000.0,"Priority",Priority,"Reason",Reason,"Ops",parse_json(OpSelection),"Users",set_union(coalesce(RequestUsers,dynamic([])),coalesce(ExceptionUsersSet,dynamic([]))),"Sessions",set_union(coalesce(RequestSessions,dynamic([])),coalesce(ExceptionSessions,dynamic([]))),"Correlations",set_union(coalesce(RequestCorrs,dynamic([])),coalesce(ExceptionCorrs,dynamic([]))),"Paths",coalesce(RequestPaths,dynamic([])),"Operations",coalesce(RequestNames,dynamic([])),"SlowPaths",coalesce(SlowPaths,dynamic([]))))
+| extend Change=case(isnull(PreviousP95),"No preceding interval",P95Ms>PreviousP95,"Increase",P95Ms<PreviousP95,"Decrease","Unchanged")
+| project Priority,Reason,Interval=Start,Vertical,ClubOrHost=Entity,JourneyStep=Stage,P95Seconds=round(P95Ms/1000.0,3),PreviousP95Seconds=round(PreviousP95/1000.0,3),Change,MeanSeconds=round(MeanMs/1000.0,3),MaxSeconds=round(MaxMs/1000.0,3),Requests,FailedRequests,FailurePercent,LatencyGrowthX,Exceptions,UniqueUserIds=iff(SlowUserRecords>0,SlowUsers,long(null)),AnonymousBrowserIds=SlowBrowsers,UserIdCoveragePct=iff(SlowRecords>0,round(100.0*SlowUserRecords/SlowRecords,1),real(null)),IntervalStatus,Source,GroupPayload,ClearCorrelation,PriorityRank,OpSelection,StartEpoch,EndEpoch
+| order by PriorityRank desc, P95Seconds desc
+

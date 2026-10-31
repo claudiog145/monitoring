@@ -1,0 +1,315 @@
+[
+  {
+    "id": "health-monkey",
+    "name": "Health Monkey",
+    "purpose": "Continuously evaluates component and domain health, detects abnormal latency, error rate or availability, and creates findings and recommendations.",
+    "mode": "Observe",
+    "status": "active",
+    "risk": "low",
+    "lastRun": "2026-07-23T19:26:00Z",
+    "nextRun": "2026-07-23T19:31:00Z",
+    "findings": 12,
+    "actionsProposed": 5,
+    "actionsExecuted": 0,
+    "successRate": 0.97,
+    "impactPrevented": "~3,100 users",
+    "guardrails": {
+      "maxAffectedInstances": 0,
+      "allowedEnvironments": [
+        "production",
+        "staging",
+        "development"
+      ],
+      "maintenanceWindowOnly": false,
+      "approvalThreshold": "n/a (observe only)",
+      "rollbackAvailable": false,
+      "auditLogging": true
+    },
+    "activity": [
+      {
+        "time": "2026-07-23T19:26:00Z",
+        "stage": "observation",
+        "text": "Observed Air Inventory p95 latency at 640ms (baseline 180ms) over 5 min window."
+      },
+      {
+        "time": "2026-07-23T19:26:00Z",
+        "stage": "evidence",
+        "text": "Evidence: 3 consecutive metric samples above threshold; 214 slow supplier calls."
+      },
+      {
+        "time": "2026-07-23T19:27:00Z",
+        "stage": "decision",
+        "text": "Decision: raise finding 'Air Inventory latency degradation' and notify Dependency Monkey."
+      },
+      {
+        "time": "2026-07-23T19:27:00Z",
+        "stage": "verification",
+        "text": "No action executed by this agent; verification deferred to remediation agent."
+      }
+    ]
+  },
+  {
+    "id": "janitor-monkey",
+    "name": "Janitor Monkey",
+    "purpose": "Detects stale resources, abandoned sessions, expired cache entries and unused temporary resources, and recommends or performs safe cleanup.",
+    "mode": "Autonomous",
+    "status": "active",
+    "risk": "low",
+    "lastRun": "2026-07-23T19:08:00Z",
+    "nextRun": "2026-07-23T20:08:00Z",
+    "findings": 41,
+    "actionsProposed": 41,
+    "actionsExecuted": 39,
+    "successRate": 0.95,
+    "impactPrevented": "18 GB cache reclaimed",
+    "guardrails": {
+      "maxAffectedInstances": 25,
+      "allowedEnvironments": [
+        "staging",
+        "development"
+      ],
+      "maintenanceWindowOnly": false,
+      "approvalThreshold": "> 50 resources",
+      "rollbackAvailable": true,
+      "auditLogging": true
+    },
+    "activity": [
+      {
+        "time": "2026-07-23T19:08:00Z",
+        "stage": "observation",
+        "text": "Found 1,204 expired search-cache entries and 37 abandoned guest sessions older than 24h."
+      },
+      {
+        "time": "2026-07-23T19:08:00Z",
+        "stage": "evidence",
+        "text": "Evidence: cache TTL expired, session last-activity timestamps exceeded retention policy."
+      },
+      {
+        "time": "2026-07-23T19:09:00Z",
+        "stage": "decision",
+        "text": "Decision: autonomous cleanup approved by guardrail (under 25-instance cap)."
+      },
+      {
+        "time": "2026-07-23T19:10:00Z",
+        "stage": "action",
+        "text": "Action executed: purged expired cache entries and abandoned sessions in staging."
+      },
+      {
+        "time": "2026-07-23T19:11:00Z",
+        "stage": "verification",
+        "text": "Verified cache hit rate recovered to 94%; no customer impact detected."
+      }
+    ]
+  },
+  {
+    "id": "reboot-monkey",
+    "name": "Reboot Monkey",
+    "purpose": "Detects unhealthy processes, workers or service instances, recommends or performs controlled restarts, and verifies health afterward.",
+    "mode": "Approval Required",
+    "status": "active",
+    "risk": "medium",
+    "lastRun": "2026-07-23T19:21:00Z",
+    "nextRun": "2026-07-23T19:51:00Z",
+    "findings": 6,
+    "actionsProposed": 6,
+    "actionsExecuted": 4,
+    "successRate": 0.92,
+    "impactPrevented": "~900 users",
+    "guardrails": {
+      "maxAffectedInstances": 2,
+      "allowedEnvironments": [
+        "production",
+        "staging"
+      ],
+      "maintenanceWindowOnly": true,
+      "approvalThreshold": "> 1 instance",
+      "rollbackAvailable": true,
+      "auditLogging": true
+    },
+    "activity": [
+      {
+        "time": "2026-07-23T19:21:00Z",
+        "stage": "observation",
+        "text": "Booking worker instance booking-svc-worker-07 unresponsive to health checks for 3 cycles."
+      },
+      {
+        "time": "2026-07-23T19:21:00Z",
+        "stage": "evidence",
+        "text": "Evidence: 0 successful heartbeats, thread-pool exhaustion in diagnostics dump."
+      },
+      {
+        "time": "2026-07-23T19:22:00Z",
+        "stage": "decision",
+        "text": "Decision: recommend controlled restart, human approval required (production + >1 threshold)."
+      },
+      {
+        "time": "2026-07-23T19:23:00Z",
+        "stage": "approval",
+        "text": "Approved by on-call SRE via portal."
+      },
+      {
+        "time": "2026-07-23T19:24:00Z",
+        "stage": "action",
+        "text": "Action executed: rolling restart of booking-svc-worker-07."
+      },
+      {
+        "time": "2026-07-23T19:25:00Z",
+        "stage": "verification",
+        "text": "Verified worker healthy post-restart; latency back to baseline."
+      }
+    ]
+  },
+  {
+    "id": "dependency-monkey",
+    "name": "Dependency Monkey",
+    "purpose": "Evaluates external providers and internal dependencies, detects supplier degradation, and recommends routing traffic to an alternative provider.",
+    "mode": "Recommend",
+    "status": "active",
+    "risk": "medium",
+    "lastRun": "2026-07-23T19:28:00Z",
+    "nextRun": "2026-07-23T19:33:00Z",
+    "findings": 8,
+    "actionsProposed": 3,
+    "actionsExecuted": 1,
+    "successRate": 0.88,
+    "impactPrevented": "~2,400 users",
+    "guardrails": {
+      "maxAffectedInstances": 0,
+      "allowedEnvironments": [
+        "production",
+        "staging",
+        "development"
+      ],
+      "maintenanceWindowOnly": false,
+      "approvalThreshold": "any traffic re-route",
+      "rollbackAvailable": true,
+      "auditLogging": true
+    },
+    "activity": [
+      {
+        "time": "2026-07-23T19:28:00Z",
+        "stage": "observation",
+        "text": "Air supplier 'SkyLink GDS' response time trending up (640ms p95, +255% vs baseline)."
+      },
+      {
+        "time": "2026-07-23T19:28:00Z",
+        "stage": "evidence",
+        "text": "Evidence: correlated with Health Monkey finding on Air Inventory latency degradation."
+      },
+      {
+        "time": "2026-07-23T19:29:00Z",
+        "stage": "decision",
+        "text": "Decision: recommend shifting 40% of traffic to secondary supplier 'AeroConnect API'."
+      },
+      {
+        "time": "2026-07-23T19:29:00Z",
+        "stage": "approval",
+        "text": "Awaiting approval - recommend-only mode, any re-route requires sign-off."
+      }
+    ]
+  },
+  {
+    "id": "deployment-monkey",
+    "name": "Deployment Monkey",
+    "purpose": "Correlates incidents with recent deployments, detects regression patterns, and recommends rollback or traffic reduction.",
+    "mode": "Recommend",
+    "status": "active",
+    "risk": "high",
+    "lastRun": "2026-07-23T19:16:00Z",
+    "nextRun": "2026-07-23T20:16:00Z",
+    "findings": 4,
+    "actionsProposed": 2,
+    "actionsExecuted": 0,
+    "successRate": 0.9,
+    "impactPrevented": "~1,150 users",
+    "guardrails": {
+      "maxAffectedInstances": 0,
+      "allowedEnvironments": [
+        "production"
+      ],
+      "maintenanceWindowOnly": false,
+      "approvalThreshold": "any rollback",
+      "rollbackAvailable": true,
+      "auditLogging": true
+    },
+    "activity": [
+      {
+        "time": "2026-07-23T19:16:00Z",
+        "stage": "observation",
+        "text": "Payment authorization failure rate rose 6.4% within 12 minutes of deploy payments-svc v4.2.1."
+      },
+      {
+        "time": "2026-07-23T19:16:00Z",
+        "stage": "evidence",
+        "text": "Evidence: exception spike timestamp correlates with deployment marker in change log."
+      },
+      {
+        "time": "2026-07-23T19:17:00Z",
+        "stage": "decision",
+        "text": "Decision: recommend rollback of payments-svc to v4.2.0 pending SRE confirmation."
+      },
+      {
+        "time": "2026-07-23T19:18:00Z",
+        "stage": "approval",
+        "text": "Awaiting approval - production rollback always requires sign-off."
+      }
+    ]
+  },
+  {
+    "id": "booking-recovery-monkey",
+    "name": "Booking Recovery Monkey",
+    "purpose": "Detects partially completed bookings, identifies payment-success-but-booking-failure scenarios, and recommends recovery, retry or manual review.",
+    "mode": "Approval Required",
+    "status": "active",
+    "risk": "high",
+    "lastRun": "2026-07-23T19:24:00Z",
+    "nextRun": "2026-07-23T19:54:00Z",
+    "findings": 5,
+    "actionsProposed": 5,
+    "actionsExecuted": 3,
+    "successRate": 0.93,
+    "impactPrevented": "~640 users / $118,400 GMV",
+    "guardrails": {
+      "maxAffectedInstances": 10,
+      "allowedEnvironments": [
+        "production"
+      ],
+      "maintenanceWindowOnly": false,
+      "approvalThreshold": "any customer-facing retry",
+      "rollbackAvailable": true,
+      "auditLogging": true
+    },
+    "activity": [
+      {
+        "time": "2026-07-23T19:24:00Z",
+        "stage": "observation",
+        "text": "Detected 5 bookings with successful payment capture but failed booking confirmation (cruises domain)."
+      },
+      {
+        "time": "2026-07-23T19:24:00Z",
+        "stage": "evidence",
+        "text": "Evidence: payment ledger shows captured funds; booking-svc returned timeout on confirmation call."
+      },
+      {
+        "time": "2026-07-23T19:25:00Z",
+        "stage": "decision",
+        "text": "Decision: recommend automatic retry for 3 low-risk cases, manual review for 2 high-value cases."
+      },
+      {
+        "time": "2026-07-23T19:26:00Z",
+        "stage": "approval",
+        "text": "Retry approved for 3 cases by booking-ops queue."
+      },
+      {
+        "time": "2026-07-23T19:27:00Z",
+        "stage": "action",
+        "text": "Action executed: automated booking confirmation retry for 3 reservations."
+      },
+      {
+        "time": "2026-07-23T19:28:00Z",
+        "stage": "verification",
+        "text": "Verified 3/3 retries succeeded; 2 remaining flagged for manual review."
+      }
+    ]
+  }
+]
