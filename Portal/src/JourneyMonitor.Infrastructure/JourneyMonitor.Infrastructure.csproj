@@ -33,7 +33,7 @@
          "Authentication=Active Directory Default" fails without this. Keep the version in step
          with Microsoft.Data.SqlClient above. -->
     <PackageReference Include="Microsoft.Data.SqlClient.Extensions.Azure" Version="7.1.1" />
-    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.14" />
     <!-- Only the abstractions (IDataProtectionProvider/IDataProtector) - the actual
          implementation + key ring configuration is registered once in Functions/Program.cs. -->
     <PackageReference Include="Microsoft.AspNetCore.DataProtection.Abstractions" Version="10.0.14" />
