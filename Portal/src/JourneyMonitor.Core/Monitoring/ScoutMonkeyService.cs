@@ -3,6 +3,8 @@ using System.Text.Json;
 using JourneyMonitor.Core.Abstractions;
 using JourneyMonitor.Core.Company;
 using JourneyMonitor.Core.Domain;
+using JourneyMonitor.Core.Monitoring.Daemons;
+using JourneyMonitor.Core.Monitoring.ScoutShadow;
 using JourneyMonitor.Core.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -46,8 +48,22 @@ public sealed class ScoutMonkeyService(
     IScoutRunRepository runs,
     IScoutLlmCallLogRepository llmCallLogs,
     IOptionsMonitor<ScoutOptions> scoutOptions,
-    ILogger<ScoutMonkeyService> logger)
+    ILogger<ScoutMonkeyService> logger,
+    IScoutShadowStore? shadowStore = null,
+    IKpiDefinitionStore? kpiDefinitions = null,
+    IKpiAnomalyStore? kpiAnomalies = null,
+    IKpiStateStore? kpiStates = null,
+    IKpiBucketStore? kpiBuckets = null,
+    IDaemonActivityRecorder? activity = null)
 {
+    /// <summary>Activity kind of the shadow's console lines (contract v4 §4).</summary>
+    public const string ShadowActivityKind = "scout-shadow";
+
+    // Null when the KPI stores are not wired (bare hosts, older tests): the cycle then runs exactly as before.
+    private readonly ScoutShadowRecorder? _shadow = shadowStore is not null && kpiDefinitions is not null && kpiAnomalies is not null
+        ? new ScoutShadowRecorder(shadowStore, kpiDefinitions, kpiAnomalies, kpiStates, kpiBuckets, logger)
+        : null;
+
     // camelCase, matching every API that reads these payloads back (GetScoutPackagesFunction and
     // the Simian Army card both look up "symptom"/"available"). Serializing with the default
     // PascalCase here would make those lookups silently return null.
@@ -55,6 +71,44 @@ public sealed class ScoutMonkeyService(
 
     /// <summary>Caps the row: the list is context for a reader, not an audit trail.</summary>
     private const int MaxSkippedCaseIdsRecorded = 50;
+
+    /// <summary>
+    /// Method mode: the cases are the daemons' anomalies of this board's kind (latency or exceptions KPIs, domain or
+    /// entity grain) detected within <see cref="ScoutOptions.ResolvedMethodLookbackMinutes"/>; the board supplies the
+    /// evidence row for each. Without the KPI stores there is nothing to follow, which is reported, not hidden.
+    /// </summary>
+    private async Task<List<ScoutBoardRow>> SelectByDaemonAnomaliesAsync(
+        string board, ICompanyAdapter adapter, IReadOnlyList<ScoutBoardRow> rows, ScoutOptions options, DateTimeOffset now, CancellationToken ct)
+    {
+        if (kpiDefinitions is null || kpiAnomalies is null)
+        {
+            throw new InvalidOperationException(
+                $"DetectionMode is Method for the {board} scout but the KPI stores are not wired, so there are no daemon anomalies to follow.");
+        }
+
+        var sourceKey = ScoutShadowRecorder.SourceKeyFor(board);
+        var definitions = (await kpiDefinitions.GetAllAsync(adapter.ProfileKey, ct))
+            .Where(d => d.Enabled
+                && string.Equals(d.ProfileKey, adapter.ProfileKey, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(d.SourceKey, sourceKey, StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(d => d.KpiDefinitionId);
+        if (definitions.Count == 0) return [];
+
+        var since = now.AddMinutes(-options.ResolvedMethodLookbackMinutes);
+        var signals = (await kpiAnomalies.GetRecentAsync(null, null, 500, adapter.ProfileKey, ct))
+            .Where(a => a.DetectedAt >= since && definitions.ContainsKey(a.KpiDefinitionId))
+            .Select(a =>
+            {
+                var d = definitions[a.KpiDefinitionId];
+                return new ScoutDaemonSignal(a.AnomalyId, d.Domain, a.EntityKey, a.BucketStart, d.BucketSize, d.Kpi, a.Detection);
+            })
+            .ToList();
+
+        var selected = ScoutMethodSelector.Select(adapter, rows, signals, TimeSpan.FromMinutes(options.ResolvedBucketMinutes));
+        logger.LogInformation("[{Monkey}] Method mode: {Signals} daemon anomaly(ies) in the last {Minutes} min -> {Cases} case(s) under profile \"{ProfileKey}\".",
+            ScoutBoard.MonkeyKeyFor(board), signals.Count, options.ResolvedMethodLookbackMinutes, selected.Count, adapter.ProfileKey);
+        return selected.ToList();
+    }
 
     public async Task<ScoutRun> RunAsync(string board, CancellationToken ct = default)
     {
@@ -81,6 +135,8 @@ public sealed class ScoutMonkeyService(
         }
 
         var stopwatch = Stopwatch.StartNew();
+        ICompanyAdapter? cycleAdapter = null;
+        IReadOnlyList<ScoutBoardRow>? cycleRows = null;
         try
         {
             var clubs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -90,6 +146,7 @@ public sealed class ScoutMonkeyService(
             // like a board with nothing on it.
             var adapter = await companyAdapters.GetAsync(options.ResolvedCompanyProfileKey, ct);
             run.ProfileKey = adapter.ProfileKey;
+            cycleAdapter = adapter;
 
             await ReportPhaseAsync(run, ScoutRunPhase.BoardPhaseFor(board), ct);
 
@@ -103,12 +160,15 @@ public sealed class ScoutMonkeyService(
                 options.ResolvedClubFilter);
 
             var boardResult = await boardReader.ReadAsync(request, ct);
+            cycleRows = boardResult.Rows;
             run.BoardRowsEvaluated = boardResult.Rows.Count;
             foreach (var row in boardResult.Rows) clubs.Add(row.EntityKey);
             run.ClubsWatched = clubs.Count;
-            var candidates = boardResult.Rows
-                .Where(r => r.PriorityRank >= options.ResolvedInvestigationMinPriorityRank)
-                .ToList();
+            var candidates = options.ResolvedDetectionMode == ScoutDetectionMode.Method
+                ? await SelectByDaemonAnomaliesAsync(board, adapter, boardResult.Rows, options, now, ct)
+                : boardResult.Rows
+                    .Where(r => r.PriorityRank >= options.ResolvedInvestigationMinPriorityRank)
+                    .ToList();
 
             // Recorded even on a clear cycle: knowing exactly what was asked is what makes a quiet
             // cycle meaningful rather than just empty. Still a map keyed by board so the payload
@@ -209,7 +269,49 @@ public sealed class ScoutMonkeyService(
             run.PackagesSkippedDuplicate, run.PackagesSkippedCap, run.PackagesVetoedByScout, run.DurationMs,
             options.ResolvedCompanyProfileKey ?? "(default)");
 
-        return await runs.UpdateAsync(run, ct);
+        var updated = await runs.UpdateAsync(run, ct);
+
+        // Strictly after the cycle is recorded: the shadow observes escalation, it never precedes or replaces it.
+        if (cycleAdapter is not null && cycleRows is not null
+            && run.Status is ScoutRunStatus.Clear or ScoutRunStatus.Detected)
+        {
+            await TryRecordShadowAsync(run, options, cycleAdapter, cycleRows, monkeyKey, ct);
+        }
+
+        return updated;
+    }
+
+    /// <summary>
+    /// Contract v4 §4. Best-effort: a failing shadow is logged and reported as an activity warning, and the cycle
+    /// keeps its outcome. Skipped on a failed cycle - without a board there is no rules side to compare.
+    /// </summary>
+    private async Task TryRecordShadowAsync(
+        ScoutRun run, ScoutOptions options, ICompanyAdapter adapter, IReadOnlyList<ScoutBoardRow> rows, string monkeyKey, CancellationToken ct)
+    {
+        if (_shadow is null) return;
+
+        var activityRun = activity?.BeginRun(monkeyKey) ?? NullDaemonRun.Instance;
+        try
+        {
+            var counts = await _shadow.RecordAsync(new ScoutShadowCycle(
+                run.Id, run.Board, adapter, rows, run.WindowFrom, run.WindowTo, options.ResolvedInvestigationMinPriorityRank), ct);
+            logger.LogInformation(
+                "[{Monkey}] shadow ({Mode}): {Both} both, {RulesOnly} rules-only, {MethodOnly} method-only under profile \"{ProfileKey}\".",
+                monkeyKey, options.ResolvedDetectionMode, counts.Both, counts.RulesOnly, counts.MethodOnly, adapter.ProfileKey);
+            activityRun.Info(ShadowActivityKind,
+                $"{run.Board} shadow: {counts.Both} both, {counts.RulesOnly} rules-only, {counts.MethodOnly} method-only",
+                new { runId = run.Id, board = run.Board, profileKey = adapter.ProfileKey, both = counts.Both, rulesOnly = counts.RulesOnly, methodOnly = counts.MethodOnly });
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "[{Monkey}] shadow comparison failed; the cycle outcome is unchanged.", monkeyKey);
+            activityRun.Warning(ShadowActivityKind, Truncate($"{run.Board} shadow comparison failed: {ex.Message}", 900),
+                new { runId = run.Id, board = run.Board, profileKey = adapter.ProfileKey });
+        }
+        finally
+        {
+            await activityRun.FlushAsync(CancellationToken.None);
+        }
     }
 
     /// <summary>

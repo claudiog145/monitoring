@@ -7,6 +7,8 @@ obj/
 *.exe
 *.pdb
 *.cache
+# Local publish output (scripts write here; never versioned)
+Portal/publish/
 
 # Visual Studio
 .vs/
@@ -37,10 +39,17 @@ Thumbs.db
 *~
 
 # Working docs (session notes, spikes, local backups) - not tracked in git
-docs/
+# (docs/company-profile/ holds the company-profile branch session notes and stays versioned)
+docs/*
+!docs/company-profile/
+!docs/company-profile/**
 
 # Working docs dropped at the repo root (decks, rosters with on-call PII, exports)
 /Operating Model V2.pptx
 /PagerDuty_Roster_Complete_Updated_Maty.xlsx
 /Platform Reliability Strategy V3.md
 /Platform Reliability Strategy V3.pdf
+
+# Spec 1000 agent workflow state (checks, verdicts, logs, current task) and blocker notes
+.spec1000/
+SPEC1000-BLOCKED.md

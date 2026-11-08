@@ -1,6 +1,9 @@
 -- Shared dashboard metric store. Domain is hotels/cruises/cars/air so Cars and Air can
 -- be ingested later without a new table. Chart ids are step_latency_p95 and exceptions_by_step.
--- Grain: one row per (Domain, Chart, ClubId, Environment, Series, BinStart). Re-ingest MERGEs those keys.
+-- Grain: one row per (ProfileKey, Domain, Chart, ClubId, Environment, Series, BinStart). Re-ingest MERGEs those keys.
+-- Contract v6 §3: ProfileKey defaults to 'arrivia' (the incumbent) so rows written before it existed keep
+-- their meaning. Only the incumbent is held to the hotels/cruises/cars/air domain list; another company's
+-- Domain is one of its own service keys.
 
 IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'dashboard')
     EXEC(N'CREATE SCHEMA dashboard');
@@ -23,8 +26,11 @@ BEGIN
             CONSTRAINT DF_dashboard_MetricPoint_FetchedAt DEFAULT SYSDATETIMEOFFSET(),
         ClubId        nvarchar(32)      NOT NULL
             CONSTRAINT DF_dashboard_MetricPoint_ClubId DEFAULT N'',
-        CONSTRAINT UQ_dashboard_MetricPoint UNIQUE (Domain, Chart, ClubId, Environment, Series, BinStart),
-        CONSTRAINT CK_dashboard_MetricPoint_Domain CHECK (Domain IN (N'hotels', N'cruises', N'cars', N'air'))
+        ProfileKey    nvarchar(128)     NOT NULL
+            CONSTRAINT DF_dashboard_MetricPoint_ProfileKey DEFAULT N'arrivia',
+        CONSTRAINT UQ_dashboard_MetricPoint UNIQUE (ProfileKey, Domain, Chart, ClubId, Environment, Series, BinStart),
+        CONSTRAINT CK_dashboard_MetricPoint_Domain
+            CHECK (ProfileKey <> N'arrivia' OR Domain IN (N'hotels', N'cruises', N'cars', N'air'))
     );
 
     CREATE INDEX IX_dashboard_MetricPoint_Read
@@ -38,10 +44,41 @@ IF COL_LENGTH(N'dashboard.MetricPoint', N'ClubId') IS NULL
         CONSTRAINT DF_dashboard_MetricPoint_ClubId DEFAULT N'';
 GO
 
+IF COL_LENGTH(N'dashboard.MetricPoint', N'ProfileKey') IS NULL
+    ALTER TABLE dashboard.MetricPoint ADD ProfileKey nvarchar(128) NOT NULL
+        CONSTRAINT DF_dashboard_MetricPoint_ProfileKey DEFAULT N'arrivia';
+GO
+
+IF EXISTS (
+    SELECT 1 FROM sys.check_constraints
+    WHERE name = N'CK_dashboard_MetricPoint_Domain'
+      AND parent_object_id = OBJECT_ID(N'dashboard.MetricPoint')
+      AND definition NOT LIKE N'%ProfileKey%')
+    ALTER TABLE dashboard.MetricPoint DROP CONSTRAINT CK_dashboard_MetricPoint_Domain;
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.check_constraints
+    WHERE name = N'CK_dashboard_MetricPoint_Domain'
+      AND parent_object_id = OBJECT_ID(N'dashboard.MetricPoint'))
+    ALTER TABLE dashboard.MetricPoint ADD CONSTRAINT CK_dashboard_MetricPoint_Domain
+        CHECK (ProfileKey <> N'arrivia' OR Domain IN (N'hotels', N'cruises', N'cars', N'air'));
+GO
+
+-- The natural key must include ProfileKey (and ClubId, for databases created before it existed).
+-- Rebuilt only while it still lacks ProfileKey, so a re-run leaves it alone.
 IF EXISTS (
     SELECT 1 FROM sys.indexes
     WHERE name = N'UQ_dashboard_MetricPoint'
       AND object_id = OBJECT_ID(N'dashboard.MetricPoint'))
+   AND NOT EXISTS (
+    SELECT 1
+    FROM sys.indexes AS i
+    INNER JOIN sys.index_columns AS ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+    INNER JOIN sys.columns AS c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+    WHERE i.name = N'UQ_dashboard_MetricPoint'
+      AND i.object_id = OBJECT_ID(N'dashboard.MetricPoint')
+      AND c.name = N'ProfileKey')
     ALTER TABLE dashboard.MetricPoint DROP CONSTRAINT UQ_dashboard_MetricPoint;
 GO
 
@@ -50,7 +87,16 @@ IF NOT EXISTS (
     WHERE name = N'UQ_dashboard_MetricPoint'
       AND object_id = OBJECT_ID(N'dashboard.MetricPoint'))
     ALTER TABLE dashboard.MetricPoint ADD CONSTRAINT UQ_dashboard_MetricPoint
-        UNIQUE (Domain, Chart, ClubId, Environment, Series, BinStart);
+        UNIQUE (ProfileKey, Domain, Chart, ClubId, Environment, Series, BinStart);
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'IX_dashboard_MetricPoint_Profile'
+      AND object_id = OBJECT_ID(N'dashboard.MetricPoint'))
+    CREATE INDEX IX_dashboard_MetricPoint_Profile
+        ON dashboard.MetricPoint (ProfileKey, Domain, Chart, BinStart)
+        INCLUDE (Series, Value);
 GO
 
 CREATE OR ALTER PROCEDURE dashboard.usp_ReplaceChartPoints
@@ -59,7 +105,8 @@ CREATE OR ALTER PROCEDURE dashboard.usp_ReplaceChartPoints
     @Window      nvarchar(16),
     @Environment nvarchar(32) = NULL,
     @ClubId      nvarchar(32) = NULL,
-    @RowsJson    nvarchar(max)
+    @RowsJson    nvarchar(max),
+    @ProfileKey  nvarchar(128) = N'arrivia'
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -71,6 +118,7 @@ BEGIN
     DECLARE @Now datetimeoffset(7) = SYSDATETIMEOFFSET();
     DECLARE @Club nvarchar(32) = ISNULL(@ClubId, N'');
     DECLARE @Env nvarchar(32) = @Environment;
+    DECLARE @Profile nvarchar(128) = ISNULL(NULLIF(LTRIM(RTRIM(@ProfileKey)), N''), N'arrivia');
 
     BEGIN TRANSACTION;
 
@@ -94,7 +142,8 @@ BEGIN
     )
     MERGE dashboard.MetricPoint WITH (HOLDLOCK) AS target
     USING (SELECT BinStart, Series, Value FROM src WHERE rn = 1) AS incoming
-        ON target.Domain = @Domain
+        ON target.ProfileKey = @Profile
+       AND target.Domain = @Domain
        AND target.Chart = @Chart
        AND ISNULL(target.ClubId, N'') = @Club
        AND ISNULL(target.Environment, N'') = ISNULL(@Env, N'')
@@ -108,8 +157,8 @@ BEGIN
             ClubId = @Club,
             FetchedAt = @Now
     WHEN NOT MATCHED BY TARGET THEN
-        INSERT (Domain, Chart, Series, BinStart, Value, Window, Environment, ClubId, FetchedAt)
-        VALUES (@Domain, @Chart, incoming.Series, incoming.BinStart, incoming.Value, @Window, @Env, @Club, @Now);
+        INSERT (Domain, Chart, Series, BinStart, Value, Window, Environment, ClubId, FetchedAt, ProfileKey)
+        VALUES (@Domain, @Chart, incoming.Series, incoming.BinStart, incoming.Value, @Window, @Env, @Club, @Now, @Profile);
 
     -- Older bins stay. A later 15-minute sync must not erase the hours already stored.
     COMMIT TRANSACTION;
@@ -122,7 +171,9 @@ CREATE OR ALTER PROCEDURE dashboard.usp_GetChartPoints
     @Chart       nvarchar(64) = NULL,
     @Since       datetimeoffset(7) = NULL,
     @Environment nvarchar(32) = NULL,
-    @ClubId      nvarchar(32) = NULL
+    @ClubId      nvarchar(32) = NULL,
+    -- NULL keeps the pre-v6 behaviour (no company filter, incumbent domain list when @Domain is NULL).
+    @ProfileKey  nvarchar(128) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -137,8 +188,10 @@ BEGIN
         Environment,
         FetchedAt
     FROM dashboard.MetricPoint
-    WHERE (
-            (@Domain IS NULL AND Domain IN (N'hotels', N'cruises'))
+    WHERE (@ProfileKey IS NULL OR ProfileKey = @ProfileKey)
+      AND (
+            (@Domain IS NULL AND (Domain IN (N'hotels', N'cruises', N'cars')
+                                  OR (@ProfileKey IS NOT NULL AND @ProfileKey <> N'arrivia')))
             OR Domain = @Domain
           )
       AND (@Chart IS NULL OR Chart = @Chart)

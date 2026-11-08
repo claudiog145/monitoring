@@ -638,7 +638,8 @@ GO
 
 -- @ProfileKey defaults to NULL and not to N'' because the two mean different things here: NULL is
 -- "every company" (the pre-multi-company behaviour, kept so existing callers are unchanged), while
--- N'' is a real stored value - the cases written before the column existed, which belong to nobody.
+-- N'' is a real stored value - cases written without a company, which are the incumbent's (contract v6
+-- §3), so a read for N'arrivia' includes them.
 CREATE OR ALTER PROCEDURE monitoring.usp_GetRecentForensicCases
     @Top int, @Vertical nvarchar(64) = NULL, @ClubId nvarchar(64) = NULL, @ProfileKey nvarchar(128) = NULL
 AS
@@ -658,7 +659,7 @@ BEGIN
            OR LOWER(RTRIM(Vertical)) + N's' = LOWER(@Vertical))
       -- Either id identifies the club: hotels/cars carry ClubId, cruises/air carry the partner id.
       AND (@ClubId IS NULL OR ClubId = @ClubId OR IcePartnerId = @ClubId)
-      AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey)
+      AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia'))
     ORDER BY StartedAt DESC;
 END
 GO
@@ -691,7 +692,7 @@ BEGIN
         FirstCaseAt         = MIN(StartedAt),
         LastCaseAt          = MAX(StartedAt)
     FROM monitoring.ForensicCase
-    WHERE (@ProfileKey IS NULL OR ProfileKey = @ProfileKey);
+    WHERE (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia'));
 END
 GO
 

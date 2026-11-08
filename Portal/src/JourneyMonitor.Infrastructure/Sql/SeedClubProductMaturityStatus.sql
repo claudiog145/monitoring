@@ -1,5 +1,6 @@
 -- Populate brand.ClubProductMaturityStatus from ClubInventory.Domain (legacy CSV).
--- Only Fusion/Hybrid clubs. Only Products Cars/Cruises/Hotels/Flights. Default Status = 0.
+-- Any platform with Domain set (Fusion/Hybrid/SOR; NG usually has no Domain). Products:
+-- Cars/Cruises/Hotels/Flights only. Default Status = 0.
 -- Run after CreateClubInventory.sql, CreateClubInventoryMaturity.sql, and a ClubInventory seed.
 -- Idempotent MERGE. Safe to re-run when new clubs are added to ClubInventory.
 
@@ -14,8 +15,7 @@ GO
     CROSS APPLY STRING_SPLIT(c.Domain, N',') AS parts
     INNER JOIN brand.Product AS p
         ON LTRIM(RTRIM(parts.value)) = p.Name
-    WHERE c.FusionPlatform IN (N'Fusion', N'Hybrid')
-      AND c.Domain IS NOT NULL
+    WHERE c.Domain IS NOT NULL
 )
 MERGE brand.ClubProductMaturityStatus WITH (HOLDLOCK) AS target
 USING ClubProducts AS source

@@ -44,15 +44,7 @@ builder.Services.AddDataProtection()
             ? Path.Combine(Path.GetTempPath(), "JourneyMonitorDataProtectionKeys")
             : keysDirectory));
 
-builder.Services.AddSingleton<IAppInsightsTokenRepository>(sp =>
-{
-    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-    var logger = sp.GetRequiredService<ILogger<SqlAppInsightsTokenRepository>>();
-    return new SqlAppInsightsTokenRepository(connectionString, logger);
-});
-
-builder.Services.AddScoped<IAppInsightsTokenService, AppInsightsTokenService>();
-builder.Services.AddScoped<IAppInsightsQueryService, AppInsightsQueryService>();
+// The token store itself lives in Functions; the /api/appinsights/tokens routes below forward to it.
 builder.Services.AddSingleton<ITenantResolver, TenantResolver>();
 
 // --- JourneyMonitor.Functions typed client -------------------------------------------------
@@ -67,6 +59,9 @@ builder.Services.AddHttpClient<IJourneyMonitorApiClient, JourneyMonitorApiClient
     // Extension point: in Azure, attach a Managed Identity-issued token here (service-to-service
     // call, see ARCHITECTURE.md #22-23) instead of calling the Function anonymously.
 });
+
+// Demo mode is read from options only (no Function call, no SQL): the demo stack sets Demo__Enabled.
+builder.Services.Configure<JourneyMonitor.Core.Options.DemoOptions>(builder.Configuration.GetSection(JourneyMonitor.Core.Options.DemoOptions.SectionName));
 
 var app = builder.Build();
 
@@ -101,6 +96,12 @@ app.UseAntiforgery();
 
 // --- API proxy: Razor stays thin, all business logic lives behind these Function calls ----
 // (see AGENTS.md - PageModels/endpoints must never reconstruct journeys, only forward requests).
+app.MapGet("/api/demo-mode", (HttpContext context, Microsoft.Extensions.Options.IOptions<JourneyMonitor.Core.Options.DemoOptions> demo) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    return Results.Json(demo.Value.ToInfo());
+}).AllowAnonymous();
+
 app.MapGet("/api/journeys/db", async (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
 {
     var (statusCode, body) = await client.GetDbJourneysAsync(context.Request.QueryString.Value ?? "", cancellationToken);
@@ -136,12 +137,30 @@ app.MapGet("/api/clubs", async (HttpContext context, IJourneyMonitorApiClient cl
     return Results.Content(body, "application/json; charset=utf-8", statusCode: statusCode);
 }).AllowAnonymous();
 
-app.MapGet("/api/club-inventory", async (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
+// Contract v6 §5: the query string (profileKey) is forwarded like every other read.
+app.MapGet("/api/club-inventory", (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
+    ForwardCatalogGetAsync(context, client, $"/api/club-inventory{context.Request.QueryString}", cancellationToken)).AllowAnonymous();
+
+// Contract v6 §4.1/§4.2: generic per-company journeys and entities. Pure proxies; the query string carries profileKey and filters.
+app.MapGet("/api/profile-journeys", (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
+    ForwardCatalogGetAsync(context, client, $"/api/profile-journeys{context.Request.QueryString}", cancellationToken)).AllowAnonymous();
+
+app.MapGet("/api/profile-journeys/{journeyId}", (HttpContext context, IJourneyMonitorApiClient client, string journeyId, CancellationToken cancellationToken) =>
+    ForwardCatalogGetAsync(context, client, $"/api/profile-journeys/{Uri.EscapeDataString(journeyId)}{context.Request.QueryString}", cancellationToken)).AllowAnonymous();
+
+app.MapGet("/api/entities", (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
+    ForwardCatalogGetAsync(context, client, $"/api/entities{context.Request.QueryString}", cancellationToken)).AllowAnonymous();
+
+var hotelBusinessHealthRoute = app.MapGet("/api/hotels/business-health", async (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
 {
-    var (statusCode, body) = await client.GetClubInventoryAsync(cancellationToken);
+    var (statusCode, body) = await client.GetHotelBusinessHealthAsync(context.Request.QueryString.Value ?? "", cancellationToken);
     context.Response.Headers.CacheControl = "no-store";
     return Results.Content(body, "application/json; charset=utf-8", statusCode: statusCode);
-}).AllowAnonymous();
+});
+if (!hasEntraIdConfig)
+{
+    hotelBusinessHealthRoute.AllowAnonymous();
+}
 
 app.MapGet("/api/monkeys", async (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
 {
@@ -189,14 +208,14 @@ if (!hasEntraIdConfig)
 
 app.MapGet("/api/findings", async (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
 {
-    var (statusCode, body) = await client.GetFindingsAsync(cancellationToken);
+    var (statusCode, body) = await client.GetFindingsAsync(context.Request.QueryString.Value ?? "", cancellationToken);
     context.Response.Headers.CacheControl = "no-store";
     return Results.Content(body, "application/json; charset=utf-8", statusCode: statusCode);
 }).AllowAnonymous();
 
 var doctorReportRoute = app.MapGet("/api/findings/{id}/doctor-report", async (HttpContext context, string id, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
 {
-    var (statusCode, body) = await client.GetFindingDoctorReportAsync(id, cancellationToken);
+    var (statusCode, body) = await client.GetFindingDoctorReportAsync(id, context.Request.QueryString.Value ?? "", cancellationToken);
     context.Response.Headers.CacheControl = "no-store";
     return Results.Content(body, "application/json; charset=utf-8", statusCode: statusCode);
 });
@@ -229,9 +248,17 @@ app.MapGet("/api/scout/stats", async (HttpContext context, IJourneyMonitorApiCli
     return Results.Content(body, "application/json; charset=utf-8", statusCode: statusCode);
 }).AllowAnonymous();
 
+// Contract v4 §4: the Scout's rules-vs-method shadow comparison. Read-only forward, query string as-is.
+app.MapGet("/api/scouts/{board}/shadow", async (HttpContext context, string board, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
+{
+    var (statusCode, body) = await client.GetScoutShadowAsync(board, context.Request.QueryString.Value ?? "", cancellationToken);
+    context.Response.Headers.CacheControl = "no-store";
+    return Results.Content(body, "application/json; charset=utf-8", statusCode: statusCode);
+}).AllowAnonymous();
+
 var scoutPackageRoute = app.MapGet("/api/scout/packages/{id}", async (HttpContext context, string id, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
 {
-    var (statusCode, body) = await client.GetScoutPackageAsync(id, cancellationToken);
+    var (statusCode, body) = await client.GetScoutPackageAsync(id, context.Request.QueryString.Value ?? "", cancellationToken);
     context.Response.Headers.CacheControl = "no-store";
     return Results.Content(body, "application/json; charset=utf-8", statusCode: statusCode);
 });
@@ -251,7 +278,7 @@ var inspectorCasesRoute = app.MapGet("/api/inspector/cases", async (HttpContext 
 
 var inspectorQueueRoute = app.MapGet("/api/inspector/queue", async (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
 {
-    var (statusCode, body) = await client.GetInspectorQueueAsync(cancellationToken);
+    var (statusCode, body) = await client.GetInspectorQueueAsync(context.Request.QueryString.Value ?? "", cancellationToken);
     context.Response.Headers.CacheControl = "no-store";
     return Results.Content(body, "application/json; charset=utf-8", statusCode: statusCode);
 });
@@ -287,13 +314,13 @@ var inspectorToastsRoute = app.MapGet("/api/inspector/toasts", async (HttpContex
 // full package and the doctor-report, whereas the list/queue/toasts are summaries.
 var inspectorCaseRoute = app.MapGet("/api/inspector/cases/{id}", async (HttpContext context, string id, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
 {
-    var (statusCode, body) = await client.GetInspectorCaseAsync(id, cancellationToken);
+    var (statusCode, body) = await client.GetInspectorCaseAsync(id, context.Request.QueryString.Value ?? "", cancellationToken);
     context.Response.Headers.CacheControl = "no-store";
     return Results.Content(body, "application/json; charset=utf-8", statusCode: statusCode);
 });
 var rcaGetRoute = app.MapGet("/api/inspector/cases/{id}/rca", async (HttpContext context, string id, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
 {
-    var (statusCode, body) = await client.GetRcaAsync(id, cancellationToken);
+    var (statusCode, body) = await client.GetRcaAsync(id, context.Request.QueryString.Value ?? "", cancellationToken);
     context.Response.Headers.CacheControl = "no-store";
     return Results.Content(body, "application/json; charset=utf-8", statusCode: statusCode);
 });
@@ -315,7 +342,7 @@ var rcaComposeRoute = app.MapPost("/api/inspector/cases/{id}/rca", async (HttpCo
 // text - so the evidence modal can show what was imported without becoming a document viewer.
 var knowledgeDocumentsRoute = app.MapGet("/api/knowledge/documents", async (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
 {
-    var (statusCode, body) = await client.GetKnowledgeDocumentsAsync(cancellationToken);
+    var (statusCode, body) = await client.GetKnowledgeDocumentsAsync(context.Request.QueryString.Value ?? "", cancellationToken);
     context.Response.Headers.CacheControl = "no-store";
     return Results.Content(body, "application/json; charset=utf-8", statusCode: statusCode);
 });
@@ -780,55 +807,147 @@ if (!hasEntraIdConfig)
     upsertAlertChannelSettingRoute.DisableAntiforgery();
 }
 
-// --- AppInsights Token Management Proxy Routes -----------------------------------------------
-// Forward AppInsights token requests from Web to Functions via JourneyMonitorApiClient
+// --- Spec 1000: pillar health, Triage Monkey and KPI definitions --------------------------------
+// The portal only renders what the backend monitors computed; these routes forward and never
+// evaluate anything. Secrets are attached by JourneyMonitorApiClient, never by the browser.
+static IResult Spec1000Json(HttpContext context, int statusCode, string body)
+{
+    context.Response.Headers.CacheControl = "no-store";
+    return Results.Content(body, "application/json; charset=utf-8", statusCode: statusCode);
+}
 
-var addTokenRoute = app.MapPost("/api/appinsights/tokens", async (HttpContext context, IAppInsightsTokenService tokenService, IAntiforgery antiforgery, CancellationToken cancellationToken) =>
+app.MapGet("/api/health/pillars", async (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
+{
+    var (statusCode, body) = await client.GetPillarHealthAsync(context.Request.QueryString.Value ?? "", cancellationToken);
+    return Spec1000Json(context, statusCode, body);
+}).AllowAnonymous();
+
+app.MapGet("/api/health/anomalies", async (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
+{
+    var (statusCode, body) = await client.GetKpiAnomaliesAsync(context.Request.QueryString.Value ?? "", cancellationToken);
+    return Spec1000Json(context, statusCode, body);
+}).AllowAnonymous();
+
+app.MapGet("/api/health/kpis/{id:int}/buckets", async (HttpContext context, int id, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
+{
+    var (statusCode, body) = await client.GetKpiBucketsAsync(id, context.Request.QueryString.Value ?? "", cancellationToken);
+    return Spec1000Json(context, statusCode, body);
+}).AllowAnonymous();
+
+// Daemons tab: status cards and the live activity console. Read-only; "Run now" reuses /api/monkeys/{id}/run.
+app.MapGet("/api/daemons", async (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
+{
+    var (statusCode, body) = await client.GetDaemonsAsync(context.Request.QueryString.Value ?? "", cancellationToken);
+    return Spec1000Json(context, statusCode, body);
+}).AllowAnonymous();
+
+app.MapGet("/api/daemons/activity", async (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
+{
+    var (statusCode, body) = await client.GetDaemonActivityAsync(context.Request.QueryString.Value ?? "", cancellationToken);
+    return Spec1000Json(context, statusCode, body);
+}).AllowAnonymous();
+
+app.MapGet("/api/triage/investigations", async (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
+{
+    var (statusCode, body) = await client.GetTriageInvestigationsAsync(context.Request.QueryString.Value ?? "", cancellationToken);
+    return Spec1000Json(context, statusCode, body);
+}).AllowAnonymous();
+
+app.MapGet("/api/triage/investigations/{id:guid}", async (HttpContext context, Guid id, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
+{
+    var (statusCode, body) = await client.GetTriageInvestigationAsync(id, context.Request.QueryString.Value ?? "", cancellationToken);
+    return Spec1000Json(context, statusCode, body);
+}).AllowAnonymous();
+
+app.MapGet("/api/settings/kpis", async (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
+{
+    var (statusCode, body) = await client.GetKpiDefinitionsAsync(context.Request.QueryString.Value ?? "", cancellationToken);
+    return Spec1000Json(context, statusCode, body);
+}).AllowAnonymous();
+
+app.MapGet("/api/settings/kpis/{id:int}/audit", async (HttpContext context, int id, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
+{
+    var (statusCode, body) = await client.GetKpiDefinitionAuditAsync(id, context.Request.QueryString.Value ?? "", cancellationToken);
+    return Spec1000Json(context, statusCode, body);
+}).AllowAnonymous();
+
+// Manual Triage Monkey run: can cost an LLM investigation, so it gets the same antiforgery/auth
+// treatment as RunMonkeyNow. With Entra, the signed-in identity names who asked for it.
+var submitTriageRoute = app.MapPost("/api/triage/investigations", async (HttpContext context, IJourneyMonitorApiClient client, IAntiforgery antiforgery, CancellationToken cancellationToken) =>
 {
     var antiforgeryError = await ValidateAntiforgeryAsync(context, antiforgery);
     if (antiforgeryError is not null) return antiforgeryError;
 
-    using var reader = new StreamReader(context.Request.Body);
-    var body = await reader.ReadToEndAsync(cancellationToken);
-    
-    try
+    var node = await ReadJsonObjectAsync(context, cancellationToken);
+    if (node is null)
     {
-        var request = System.Text.Json.JsonDocument.Parse(body);
-        var root = request.RootElement;
-        
-        var tenantKey = root.GetProperty("tenantKey").GetString();
-        var email = root.TryGetProperty("email", out var emailEl) 
-            ? emailEl.GetString() 
-            : root.TryGetProperty("userEmail", out var userEmailEl) 
-                ? userEmailEl.GetString() 
-                : null;
-        var token = root.GetProperty("token").GetString();
-        var notes = root.TryGetProperty("notes", out var notesEl) ? notesEl.GetString() : null;
+        context.Response.Headers.CacheControl = "no-store";
+        return Results.Json(new { errors = new[] { "Request body must be a valid JSON object." } }, statusCode: StatusCodes.Status400BadRequest);
+    }
 
-        if (string.IsNullOrWhiteSpace(tenantKey) || string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(token))
-        {
-            return Results.Json(new { success = false, error = "Missing required fields (tenantKey, email/userEmail, token)" }, statusCode: StatusCodes.Status400BadRequest);
-        }
+    // Never trust the browser's text once a session exists, even when the identity has no name.
+    if (context.User.Identity?.IsAuthenticated == true)
+    {
+        var name = context.User.Identity.Name;
+        node["detection"] = $"manual: {(string.IsNullOrWhiteSpace(name) ? "portal-user" : name)}";
+    }
 
-        await tokenService.SaveTokenAsync(tenantKey, email, token, notes);
-        
-        return Results.Json(new
-        {
-            success = true,
-            message = $"Token saved successfully for tenant '{tenantKey}'",
-            tenant = tenantKey,
-            email = email,
-            expiresIn = "~1 hour"
-        });
-    }
-    catch (InvalidOperationException ex)
+    var (statusCode, body) = await client.SubmitTriageInvestigationAsync(node.ToJsonString(), cancellationToken);
+    return Spec1000Json(context, statusCode, body);
+});
+if (!hasEntraIdConfig)
+{
+    submitTriageRoute.AllowAnonymous();
+    submitTriageRoute.DisableAntiforgery();
+}
+
+// Same treatment as the latency settings PUT: the authenticated identity always wins over the
+// "changedBy" the browser sent, so the KPI audit trail cannot be spoofed.
+var upsertKpiDefinitionRoute = app.MapPost("/api/settings/kpis", async (HttpContext context, IJourneyMonitorApiClient client, IAntiforgery antiforgery, CancellationToken cancellationToken) =>
+{
+    var antiforgeryError = await ValidateAntiforgeryAsync(context, antiforgery);
+    if (antiforgeryError is not null) return antiforgeryError;
+
+    var node = await ReadJsonObjectAsync(context, cancellationToken);
+    if (node is null)
     {
-        return Results.Json(new { success = false, error = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
+        context.Response.Headers.CacheControl = "no-store";
+        return Results.Json(new { errors = new[] { "Request body must be a valid JSON object." } }, statusCode: StatusCodes.Status400BadRequest);
     }
-    catch (Exception ex)
+
+    if (context.User.Identity?.IsAuthenticated == true)
     {
-        return Results.Json(new { success = false, error = ex.Message }, statusCode: StatusCodes.Status500InternalServerError);
+        node["changedBy"] = context.User.Identity.Name;
     }
+
+    var (statusCode, body) = await client.UpsertKpiDefinitionAsync(node.ToJsonString(), cancellationToken);
+    return Spec1000Json(context, statusCode, body);
+});
+if (!hasEntraIdConfig)
+{
+    upsertKpiDefinitionRoute.AllowAnonymous();
+    upsertKpiDefinitionRoute.DisableAntiforgery();
+}
+
+// --- AppInsights Token Management Proxy Routes -----------------------------------------------
+// Forward AppInsights token requests from Web to Functions via JourneyMonitorApiClient
+
+// Tokens are encrypted and stored by Functions (the token-refresh daemon lives there); Web only forwards.
+// The list never carries a token, the encrypted token or a client secret.
+var addTokenRoute = app.MapPost("/api/appinsights/tokens", async (HttpContext context, IJourneyMonitorApiClient client, IAntiforgery antiforgery, CancellationToken cancellationToken) =>
+{
+    var antiforgeryError = await ValidateAntiforgeryAsync(context, antiforgery);
+    if (antiforgeryError is not null) return antiforgeryError;
+
+    var node = await ReadJsonObjectAsync(context, cancellationToken);
+    if (node is null)
+    {
+        context.Response.Headers.CacheControl = "no-store";
+        return Results.Json(new { success = false, error = "Request body must be a valid JSON object." }, statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    var (statusCode, body) = await client.SaveAppInsightsTokenAsync(node.ToJsonString(), cancellationToken);
+    return Spec1000Json(context, statusCode, body);
 });
 
 if (!hasEntraIdConfig)
@@ -836,37 +955,10 @@ if (!hasEntraIdConfig)
     addTokenRoute.AllowAnonymous().DisableAntiforgery();
 }
 
-var getTokensRoute = app.MapGet("/api/appinsights/tokens", async (IAppInsightsTokenService tokenService) =>
+var getTokensRoute = app.MapGet("/api/appinsights/tokens", async (HttpContext context, IJourneyMonitorApiClient client, CancellationToken cancellationToken) =>
 {
-    try
-    {
-        var tokens = await tokenService.GetAllTokensAsync();
-        var tokenMetadata = tokens.Select(t => new
-        {
-            id = t.Id,
-            tenantKey = t.TenantKey,
-            email = t.Email,
-            createdAt = t.CreatedAt,
-            expiresAt = t.ExpiresAt,
-            isActive = t.IsActive,
-            isExpired = t.IsExpired,
-            isValid = t.IsValid,
-            usageCount = t.UsageCount,
-            lastUsedAt = t.LastUsedAt,
-            notes = t.Notes
-        }).ToList();
-
-        return Results.Json(new
-        {
-            success = true,
-            count = tokenMetadata.Count,
-            tokens = tokenMetadata
-        });
-    }
-    catch (Exception ex)
-    {
-        return Results.Json(new { success = false, error = ex.Message }, statusCode: StatusCodes.Status500InternalServerError);
-    }
+    var (statusCode, body) = await client.GetAppInsightsTokensAsync(cancellationToken);
+    return Spec1000Json(context, statusCode, body);
 });
 
 if (!hasEntraIdConfig)
@@ -874,29 +966,33 @@ if (!hasEntraIdConfig)
     getTokensRoute.AllowAnonymous();
 }
 
-var deactivateTokenRoute = app.MapPost("/api/appinsights/tokens/{tenantKey}/deactivate", async (string tenantKey, IAppInsightsTokenService tokenService, IAntiforgery antiforgery, HttpContext context, CancellationToken cancellationToken) =>
+var deactivateTokenRoute = app.MapPost("/api/appinsights/tokens/{tenantKey}/deactivate", async (string tenantKey, IJourneyMonitorApiClient client, IAntiforgery antiforgery, HttpContext context, CancellationToken cancellationToken) =>
 {
     var antiforgeryError = await ValidateAntiforgeryAsync(context, antiforgery);
     if (antiforgeryError is not null) return antiforgeryError;
 
-    try
-    {
-        await tokenService.DeactivateTokenAsync(tenantKey);
-        return Results.Json(new { success = true, message = $"Token deactivated for {tenantKey}" });
-    }
-    catch (InvalidOperationException ex)
-    {
-        return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status404NotFound);
-    }
-    catch (Exception ex)
-    {
-        return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status500InternalServerError);
-    }
+    var (statusCode, body) = await client.DeactivateAppInsightsTokenAsync(tenantKey, cancellationToken);
+    return Spec1000Json(context, statusCode, body);
 });
 
 if (!hasEntraIdConfig)
 {
     deactivateTokenRoute.AllowAnonymous().DisableAntiforgery();
+}
+
+// Refresh happens in Functions, where the token-refresh daemon and its credentials live.
+var refreshTokenRoute = app.MapPost("/api/appinsights/tokens/{tenantKey}/refresh", async (string tenantKey, IJourneyMonitorApiClient client, IAntiforgery antiforgery, HttpContext context, CancellationToken cancellationToken) =>
+{
+    var antiforgeryError = await ValidateAntiforgeryAsync(context, antiforgery);
+    if (antiforgeryError is not null) return antiforgeryError;
+
+    var (statusCode, body) = await client.RefreshAppInsightsTokenAsync(tenantKey, cancellationToken);
+    return Spec1000Json(context, statusCode, body);
+});
+
+if (!hasEntraIdConfig)
+{
+    refreshTokenRoute.AllowAnonymous().DisableAntiforgery();
 }
 
 var healthRoute = app.MapGet("/api/appinsights/health", () => Results.Json(new
@@ -911,6 +1007,21 @@ if (!hasEntraIdConfig)
     healthRoute.AllowAnonymous();
 }
 
+static async Task<System.Text.Json.Nodes.JsonObject?> ReadJsonObjectAsync(HttpContext context, CancellationToken cancellationToken)
+{
+    using var reader = new StreamReader(context.Request.Body);
+    var rawBody = await reader.ReadToEndAsync(cancellationToken);
+    try
+    {
+        return System.Text.Json.Nodes.JsonNode.Parse(rawBody) as System.Text.Json.Nodes.JsonObject;
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        return null;
+    }
+}
+
 app.MapRazorPages();
 
 app.Run();
+

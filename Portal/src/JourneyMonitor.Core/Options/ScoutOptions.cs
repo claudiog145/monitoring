@@ -116,6 +116,27 @@ public sealed class ScoutOptions
     /// </summary>
     public int? MaxRawEvidenceRows { get; set; }
 
+    /// <summary>
+    /// Contract v4 §4 (<c>Scout:{Latency|Exception}:DetectionMode</c>). Default <see cref="ScoutDetectionMode.Rules"/>:
+    /// the fixed board rules escalate and the entity method only runs in Shadow. Method is SD8.
+    /// </summary>
+    public ScoutDetectionMode? DetectionMode { get; set; }
+
+    /// <summary>Method mode: how far back daemon anomalies become cases. Default 30 minutes.</summary>
+    public int? MethodLookbackMinutes { get; set; }
+
+    /// <summary>
+    /// Minutes between scheduled cycles. Default 5 (the original schedule). The timer ticks every minute and a cycle
+    /// runs when the UTC minute is a multiple of this value, so 5 reproduces the old ":00/:05/..." cadence exactly.
+    /// </summary>
+    public int? IntervalMinutes { get; set; }
+
+    public int ResolvedMethodLookbackMinutes => MethodLookbackMinutes is > 0 ? MethodLookbackMinutes.Value : 30;
+
+    public int ResolvedIntervalMinutes => IntervalMinutes is > 0 and <= 60 ? IntervalMinutes.Value : 5;
+
+    public bool IsDueAt(DateTimeOffset utcNow) => utcNow.Minute % ResolvedIntervalMinutes == 0;
+
     public bool ResolvedEnabled => Enabled ?? true;
 
     public double ResolvedWindowHours => WindowHours is > 0 ? WindowHours.Value : 4;
@@ -146,4 +167,8 @@ public sealed class ScoutOptions
     public bool ResolvedIncludeRawEvidence => IncludeRawEvidence ?? true;
 
     public int ResolvedMaxRawEvidenceRows => MaxRawEvidenceRows is > 0 ? MaxRawEvidenceRows.Value : 200;
+
+    public ScoutDetectionMode ResolvedDetectionMode => DetectionMode ?? ScoutDetectionMode.Rules;
 }
+
+public enum ScoutDetectionMode { Rules, Method }

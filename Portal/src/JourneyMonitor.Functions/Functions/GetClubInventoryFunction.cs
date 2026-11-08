@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text.Json;
+using JourneyMonitor.Core.Company;
+using JourneyMonitor.Core.Monitoring.Kpi;
 using JourneyMonitor.Core.UseCases;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -8,11 +10,14 @@ using Microsoft.Extensions.Logging;
 namespace JourneyMonitor.Functions.Functions;
 
 /// <summary>
-/// GET /api/club-inventory — thin HTTP trigger over <see cref="GetClubInventoryService"/>.
+/// GET /api/club-inventory?profileKey= — thin HTTP trigger over <see cref="GetClubInventoryService"/>.
+/// Contract v6 §5: incumbent only; another company gets an empty list with <c>applicable:false</c>.
+/// Missing profileKey → the active company, "*" → every company.
 /// </summary>
 public sealed class GetClubInventoryFunction(
     GetClubInventoryService getClubInventoryService,
-    ILogger<GetClubInventoryFunction> logger)
+    ILogger<GetClubInventoryFunction> logger,
+    KpiProfileResolver? profileResolver = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -23,7 +28,14 @@ public sealed class GetClubInventoryFunction(
     {
         try
         {
-            var result = await getClubInventoryService.GetAsync(cancellationToken);
+            var (scope, error) = await ProfileReadScope.ResolveAsync(
+                profileResolver, System.Web.HttpUtility.ParseQueryString(req.Url.Query)["profileKey"], cancellationToken);
+            if (scope is null)
+            {
+                return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { source = "error", warning = error, clubs = Array.Empty<object>() });
+            }
+
+            var result = await getClubInventoryService.GetAsync(scope, cancellationToken);
             return await WriteJsonAsync(req, HttpStatusCode.OK, result);
         }
         catch (Exception ex)

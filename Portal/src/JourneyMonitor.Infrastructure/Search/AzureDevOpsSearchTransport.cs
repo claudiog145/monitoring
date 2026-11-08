@@ -186,7 +186,7 @@ public sealed class AzureDevOpsSearchTransport(
         var tenant = string.IsNullOrWhiteSpace(settings.TenantId) ? "<azure-devops-tenant-id>" : settings.TenantId;
         return $"{Truncate(reason, 300).TrimEnd('.', ' ')}. Supply one out-of-band instead: "
             + $"`az account get-access-token --tenant {tenant} --scope {AzureDevOpsResource} --query accessToken -o tsv`, "
-            + $"then store it under tenant key '{StoredTokenKey}' via POST /api/appinsights/tokens (Settings -> AppInsights Tokens) "
+            + $"then store it under tenant key '{StoredTokenKey}' via POST /api/appinsights/tokens (Settings -> Access Tokens; refresh mode azure-cli renews it with this scope) "
             + $"or set AzureDevOpsSearch__AccessToken. The token must be minted for scope {AzureDevOpsResource} - "
             + "a token for ARM or for Application Insights is accepted by the credential chain and then rejected by Azure DevOps.";
     }

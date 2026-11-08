@@ -1,0 +1,77 @@
+{
+  "profileKey": "mercadolibre",
+  "displayName": "Mercado Libre (demo)",
+  "theme": { "primaryColor": "#F7D547", "accentColor": "#1C2F6B", "shortName": "Mercado Libre (demo)" },
+  "labels": { "service": "Platform", "flow": "Journey", "step": "Step", "entity": "Site", "owner": "Squad" },
+  "services": [
+    {
+      "key": "storefront", "displayName": "Storefront (web)", "telemetrySourceAliases": ["retail-storefront"], "hostFilters": ["www.mercadolibre.demo"],
+      "flows": [
+        { "key": "browse", "displayName": "Browse and buy", "steps": [
+          { "key": "search-page", "displayName": "Search results page", "order": 1, "matchers": [ { "kind": "path-contains", "value": "/search" } ] },
+          { "key": "item-page", "displayName": "Item detail page", "order": 2, "matchers": [ { "kind": "path-contains", "value": "/item/" } ] },
+          { "key": "add-to-cart", "displayName": "Add to cart", "order": 3, "matchers": [ { "kind": "operation-equals", "value": "POST /cart/items" } ] },
+          { "key": "cart-page", "displayName": "Cart page", "order": 4, "matchers": [ { "kind": "operation-equals", "value": "GET /cart" } ] }
+        ] }
+      ]
+    },
+    {
+      "key": "search", "displayName": "Search API", "telemetrySourceAliases": ["retail-search-api"], "hostFilters": ["search-api.mercadolibre.demo"],
+      "flows": [
+        { "key": "discovery", "displayName": "Discovery", "steps": [
+          { "key": "search-query", "displayName": "Search query", "order": 1, "matchers": [ { "kind": "path-contains", "value": "/api/search" } ] },
+          { "key": "item-detail", "displayName": "Item detail", "order": 2, "matchers": [ { "kind": "path-contains", "value": "/api/items/" } ] }
+        ] }
+      ]
+    },
+    {
+      "key": "checkout", "displayName": "Checkout API", "telemetrySourceAliases": ["retail-checkout-api"], "hostFilters": ["checkout-api.mercadolibre.demo"],
+      "flows": [
+        { "key": "purchase", "displayName": "Purchase", "steps": [
+          { "key": "checkout-quote", "displayName": "Checkout quote", "order": 1, "matchers": [ { "kind": "path-contains", "value": "/api/checkout/quote" } ] },
+          { "key": "place-order", "displayName": "Place order", "order": 2, "matchers": [ { "kind": "path-contains", "value": "/api/checkout/orders" } ] }
+        ] }
+      ]
+    },
+    {
+      "key": "payments", "displayName": "Payments", "telemetrySourceAliases": ["retail-payments"], "hostFilters": ["payments.mercadolibre.demo"],
+      "flows": [
+        { "key": "pay", "displayName": "Pay", "steps": [
+          { "key": "payment-methods", "displayName": "Payment methods", "order": 1, "matchers": [ { "kind": "operation-equals", "value": "GET /api/payments/methods" } ] },
+          { "key": "charge", "displayName": "Charge and authorize", "order": 2, "matchers": [ { "kind": "operation-equals", "value": "POST /api/payments" } ] }
+        ] }
+      ]
+    },
+    {
+      "key": "shipping", "displayName": "Shipping", "telemetrySourceAliases": ["retail-shipping"], "hostFilters": ["shipping.mercadolibre.demo"],
+      "flows": [
+        { "key": "fulfillment", "displayName": "Fulfillment", "steps": [
+          { "key": "shipping-quote", "displayName": "Shipping quote", "order": 1, "matchers": [ { "kind": "path-contains", "value": "/api/shipping/quote" } ] },
+          { "key": "shipping-label", "displayName": "Shipping label", "order": 2, "matchers": [ { "kind": "path-contains", "value": "/api/shipping/labels" } ] }
+        ] }
+      ]
+    }
+  ],
+  "entityIdentitySources": [ { "order": 1, "kind": "custom-dimension", "key": "SiteId", "entityKind": "site" } ],
+  "glossary": {
+    "serviceNoun": "platform", "flowNoun": "journey", "stepNoun": "step", "entityNoun": "site", "ownerNoun": "squad",
+    "description": "Mercado Libre (demo) is a synthetic LatAm e-commerce marketplace used only for demos. A site is a country marketplace (MLB Brazil, MLA Argentina, MLM Mexico, MCO Colombia, MLC Chile); MLB and MLA carry most of the traffic. The buyer funnel is search -> item detail -> cart -> checkout -> payment -> shipping quote and label. GMV is the sum of OrderPlaced amounts in USD. Hot Sale is a planned campaign that multiplies traffic and is not an incident. Every service, partner, number and document is invented."
+  },
+  "enabled": true,
+  "notes": "Demo profile (contract v5 pack 'retail'). Synthetic data only; partners are generic fictional companies.",
+  "partners": [
+    { "key": "payment-gateway", "displayName": "Payment gateway (fictional)", "matchers": [ { "kind": "dependency-target-contains", "value": "payments-partner.demo" } ] },
+    { "key": "card-acquirer", "displayName": "Card acquirer (fictional)", "matchers": [ { "kind": "dependency-target-contains", "value": "acquirer-partner.demo" } ] },
+    { "key": "fraud-screening", "displayName": "Fraud screening (fictional)", "matchers": [ { "kind": "dependency-target-contains", "value": "fraud-partner.demo" } ] },
+    { "key": "carrier-a", "displayName": "Carrier A (fictional)", "matchers": [ { "kind": "dependency-target-contains", "value": "carrier-a.demo" } ] },
+    { "key": "carrier-b", "displayName": "Carrier B (fictional)", "matchers": [ { "kind": "dependency-target-contains", "value": "carrier-b.demo" } ] },
+    { "key": "search-cluster", "displayName": "Search cluster (internal)", "matchers": [ { "kind": "dependency-target-contains", "value": "search-cluster.retail.internal" } ] },
+    { "key": "catalog-db", "displayName": "Catalog database (internal)", "matchers": [ { "kind": "dependency-target-contains", "value": "catalog-db.retail.internal" } ] },
+    { "key": "orders-db", "displayName": "Orders database (internal)", "matchers": [ { "kind": "dependency-target-contains", "value": "orders-db.retail.internal" } ] }
+  ],
+  "privacy": {
+    "allowRawEvidence": false,
+    "piiDimensions": ["BuyerEmail", "BuyerDocument", "ShippingAddress"],
+    "patterns": [ "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "\\b\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}\\b" ]
+  }
+}

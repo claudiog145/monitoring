@@ -1,0 +1,9 @@
+{
+  "name": "company-switch-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Playwright E2E for the header company switch (spec 1000 MC6).",
+  "dependencies": {
+    "playwright": "1.44.1"
+  }
+}

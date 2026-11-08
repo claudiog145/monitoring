@@ -1,18 +1,25 @@
 -- Hotel journey store for KQL rows from TMobile_HOTEL_Query_KQL_v6d_demo_2h.txt.
--- Grain: one hotel.Journey row per member (UserId), carrying that member's current state.
--- CorrelationId is the session of the member's LAST call (v6d); it is reported, not the group key,
--- so it is an updatable column and must not be used to identify a row.
+-- The query returns one row per inactivity session. CorrelationId is the session key
+-- (raw correlation id + "-" + sequence). Steps with no correlation id inherit the id on the
+-- same operation_Id, or attach to a nearby session of the same member. They are not stored
+-- under a synthetic UserId-nocorr key.
+-- HotelVisitMerger then folds a session into the next one when the same member continues
+-- the funnel within 2 minutes and the earlier session did not book. The stored CorrelationId
+-- is the session that reached the furthest stage. AbsorbedCorrelationIds on that row names
+-- the fragment keys a previous ingest must drop.
+-- UserId is the member and is not unique. A later booking is a different row and does not
+-- rewrite an earlier abandoned session.
 -- Nested Journey[] / calls[] are shredded into hotel.JourneyStep and hotel.JourneyCall.
 -- JourneyJson keeps the original Kusto bag so the portal can still round-trip raw rows.
 --
 -- The KQL job may run many times a day and its window overlaps, so consecutive runs re-report
--- the same members. Ingestion upserts on UserId: a member seen again only has their row rewritten
--- when LastSeen advanced, otherwise the run just re-stamps QueryRunId to record "still seen".
--- hotel.Journey.QueryRunId therefore means "the last run that saw this member", which is what
--- makes the read below return exactly the members present in the newest run.
+-- the same sessions. Ingestion upserts on CorrelationId: a session seen again only has its row
+-- rewritten when LastSeen advanced, otherwise the run just re-stamps QueryRunId to record
+-- "still seen". hotel.Journey.QueryRunId therefore means "the last run that saw this session",
+-- which is what makes the read below return exactly the sessions present in the newest run.
 --
--- Do not load Air or Cruise KQL rows into these tables. Hotel v6d groups by UserId;
--- Cruise groups by SessionId; Air groups by CorrelationId with Status / FunnelStep / Route.
+-- Do not load Air or Cruise KQL rows into these tables. Cruise and Air also upsert on
+-- CorrelationId; Air uses Status / FunnelStep / Route.
 --
 -- Auth when calling from Azure: Managed Identity + Azure SQL (not SQL passwords in source).
 -- Connection strings belong in Key Vault / Function app settings.
@@ -125,11 +132,11 @@ BEGIN
         QueryRunId             uniqueidentifier  NOT NULL
             CONSTRAINT FK_hotel_Journey_QueryRun
                 REFERENCES hotel.QueryRun (QueryRunId) ON DELETE CASCADE,
-        -- Club of the ingest that last wrote this member. KQL rows do not carry it;
+        -- Club of the ingest that last wrote this session. KQL rows do not carry it;
         -- usp_IngestKqlRows stamps @ClubId. NOT NULL so a MERGE cannot leave it blank.
         ClubId                 nvarchar(64)      NOT NULL,
         UserId                 nvarchar(128)     NOT NULL,
-        CorrelationId          nvarchar(128)     NULL,
+        CorrelationId          nvarchar(128)     NOT NULL,
         SessionCount           int               NOT NULL
             CONSTRAINT DF_hotel_Journey_SessionCount DEFAULT 0,
         CallsViaCorrelation    int               NOT NULL
@@ -163,7 +170,7 @@ BEGIN
         LastSeen               datetimeoffset(7) NULL,
         StepsJson              nvarchar(max)     NULL,
         JourneyJson            nvarchar(max)     NULL,
-        CONSTRAINT UQ_hotel_Journey_Run_User UNIQUE (QueryRunId, UserId),
+        CONSTRAINT UQ_hotel_Journey_Run_Correlation UNIQUE (QueryRunId, CorrelationId),
         CONSTRAINT CK_hotel_Journey_BookedReservations CHECK (BookedReservations IS NULL OR ISJSON(BookedReservations) = 1),
         CONSTRAINT CK_hotel_Journey_StepsJson   CHECK (StepsJson   IS NULL OR ISJSON(StepsJson)   = 1),
         CONSTRAINT CK_hotel_Journey_JourneyJson CHECK (JourneyJson IS NULL OR ISJSON(JourneyJson) = 1)
@@ -184,30 +191,88 @@ BEGIN
 END
 GO
 
--- Databases written by the previous insert-per-run ingestion hold one row per member per run.
--- Collapse them to the newest row per member so the unique index below can exist. Steps and
--- calls of the discarded rows go with them through their cascading foreign keys.
+-- One-time move off one-row-per-member. The old unique index is the guard: once it is gone,
+-- later deploys must not wipe again, and must not collapse sessions that share a UserId.
 IF OBJECT_ID(N'hotel.Journey', N'U') IS NOT NULL
-   AND EXISTS (SELECT 1 FROM hotel.Journey GROUP BY UserId HAVING COUNT(*) > 1)
+   AND EXISTS (SELECT 1 FROM sys.indexes
+               WHERE name = N'UQ_hotel_Journey_UserId'
+                 AND object_id = OBJECT_ID(N'hotel.Journey'))
 BEGIN
-    WITH ranked AS
-    (
-        SELECT
-            JourneyId,
-            ROW_NUMBER() OVER (PARTITION BY UserId ORDER BY LastSeen DESC, JourneyId DESC) AS rn
-        FROM hotel.Journey
-    )
-    DELETE FROM hotel.Journey
-    WHERE JourneyId IN (SELECT JourneyId FROM ranked WHERE rn > 1);
+    DELETE FROM hotel.Journey;
+    DROP INDEX UQ_hotel_Journey_UserId ON hotel.Journey;
 END
 GO
 
--- The grain is the member, so UserId is the identity ingestion upserts on.
+-- UQ_hotel_Journey_Club_User (ClubId, UserId) is not created anywhere in this script, but a
+-- database provisioned before the session-grain migration above can still carry it (it predates
+-- this file's version history). It enforces one row per member per club, which contradicts the
+-- CorrelationId session grain documented at the top: a member legitimately gets a second
+-- hotel.Journey row in the same club once their prior session's correlation id is reused after a
+-- 30+ minute gap, or once a new raw correlation id starts. With that old index still in place,
+-- usp_IngestKqlRows's MERGE throws "Cannot insert duplicate key row ... UQ_hotel_Journey_Club_User"
+-- on the second session and - because the procedure runs under SET XACT_ABORT ON - rolls back and
+-- drops every session that run reported for that whole club, not just the conflicting one.
+IF OBJECT_ID(N'hotel.Journey', N'U') IS NOT NULL
+   AND EXISTS (SELECT 1 FROM sys.indexes
+               WHERE name = N'UQ_hotel_Journey_Club_User'
+                 AND object_id = OBJECT_ID(N'hotel.Journey'))
+    DROP INDEX UQ_hotel_Journey_Club_User ON hotel.Journey;
+GO
+
+IF OBJECT_ID(N'hotel.Journey', N'U') IS NOT NULL
+   AND EXISTS (SELECT 1 FROM sys.key_constraints
+               WHERE name = N'UQ_hotel_Journey_Run_User'
+                 AND parent_object_id = OBJECT_ID(N'hotel.Journey'))
+    ALTER TABLE hotel.Journey DROP CONSTRAINT UQ_hotel_Journey_Run_User;
+GO
+
+-- CorrelationId was a nullable label. It is the session key now, so it has to be present.
+-- The lookup index has to come off first; SQL Server will not change nullability under it.
+IF OBJECT_ID(N'hotel.Journey', N'U') IS NOT NULL
+   AND COLUMNPROPERTY(OBJECT_ID(N'hotel.Journey'), N'CorrelationId', 'AllowsNull') = 1
+BEGIN
+    DELETE FROM hotel.Journey WHERE CorrelationId IS NULL;
+
+    IF EXISTS (SELECT 1 FROM sys.indexes
+               WHERE name = N'IX_hotel_Journey_CorrelationId'
+                 AND object_id = OBJECT_ID(N'hotel.Journey'))
+        DROP INDEX IX_hotel_Journey_CorrelationId ON hotel.Journey;
+
+    IF EXISTS (SELECT 1 FROM sys.indexes
+               WHERE name = N'IX_hotel_Journey_LastSeen'
+                 AND object_id = OBJECT_ID(N'hotel.Journey'))
+        DROP INDEX IX_hotel_Journey_LastSeen ON hotel.Journey;
+
+    ALTER TABLE hotel.Journey ALTER COLUMN CorrelationId nvarchar(128) NOT NULL;
+
+    CREATE INDEX IX_hotel_Journey_CorrelationId ON hotel.Journey (CorrelationId);
+    CREATE INDEX IX_hotel_Journey_LastSeen
+        ON hotel.Journey (LastSeen DESC)
+        INCLUDE (UserId, Outcome, CorrelationId);
+END
+GO
+
+IF OBJECT_ID(N'hotel.Journey', N'U') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.key_constraints
+                   WHERE name = N'UQ_hotel_Journey_Run_Correlation'
+                     AND parent_object_id = OBJECT_ID(N'hotel.Journey'))
+    ALTER TABLE hotel.Journey
+        ADD CONSTRAINT UQ_hotel_Journey_Run_Correlation UNIQUE (QueryRunId, CorrelationId);
+GO
+
+-- The grain is the session, so CorrelationId is the identity ingestion upserts on.
 IF OBJECT_ID(N'hotel.Journey', N'U') IS NOT NULL
    AND NOT EXISTS (SELECT 1 FROM sys.indexes
-                   WHERE name = N'UQ_hotel_Journey_UserId'
+                   WHERE name = N'UQ_hotel_Journey_CorrelationId'
                      AND object_id = OBJECT_ID(N'hotel.Journey'))
-    CREATE UNIQUE INDEX UQ_hotel_Journey_UserId ON hotel.Journey (UserId);
+    CREATE UNIQUE INDEX UQ_hotel_Journey_CorrelationId ON hotel.Journey (CorrelationId);
+GO
+
+-- UserId-nocorr-seq rows were a synthetic key for steps that had no correlation id.
+-- Those steps now join a real session, so the old key no longer matches an upsert and
+-- would linger beside the journey it belongs to. Steps and calls cascade from Journey.
+IF OBJECT_ID(N'hotel.Journey', N'U') IS NOT NULL
+    DELETE FROM hotel.Journey WHERE CorrelationId LIKE N'%-nocorr-%';
 GO
 
 -- Databases created before ClubId existed on the journey row. The ingest parameter is the
@@ -399,7 +464,7 @@ BEGIN
     VALUES
         (@QueryRunId, N'hotel', @Window, @Environment, @ClubId, @Host, @Now, 0, @Source, @KqlFile);
 
-    -- Which members this run touched, and whether their journey actually moved. Steps and calls
+    -- Which sessions this run touched, and whether the journey actually moved. Steps and calls
     -- are rebuilt only for the ones that moved.
     DECLARE @Touched TABLE
     (
@@ -409,8 +474,8 @@ BEGIN
     );
 
     -- Parsed once into a temp table because both the upsert and the "still seen" pass below read
-    -- it. One row per member: MERGE cannot match the same target row twice, and a payload that
-    -- repeated a UserId would abort the whole run.
+    -- it. One row per session: MERGE cannot match the same target row twice, and a payload that
+    -- repeated a CorrelationId would abort the whole run.
     SELECT d.*
     INTO #Src
     FROM
@@ -418,6 +483,7 @@ BEGIN
         SELECT
             r.UserId,
             NULLIF(r.CorrelationId, N'')                    AS CorrelationId,
+            NULLIF(r.CorrelationId, N'')                    AS PayloadCorrelationId,
             ISNULL(r.SessionCount, 0)                       AS SessionCount,
             ISNULL(r.CallsViaCorrelation, 0)                AS CallsViaCorrelation,
             ISNULL(r.CallsNoCorrelation, 0)                 AS CallsNoCorrelation,
@@ -440,7 +506,7 @@ BEGIN
             r.LastSeen,
             r.StepsJson,
             r.JourneyJson,
-            ROW_NUMBER() OVER (PARTITION BY r.UserId ORDER BY r.LastSeen DESC) AS rn
+            ROW_NUMBER() OVER (PARTITION BY r.CorrelationId ORDER BY r.LastSeen DESC) AS rn
         FROM OPENJSON(@RowsJson)
         WITH
         (
@@ -470,18 +536,278 @@ BEGIN
             JourneyJson              nvarchar(max)     N'$.Journey' AS JSON
         ) AS r
         WHERE NULLIF(r.UserId, N'') IS NOT NULL
+          AND NULLIF(r.CorrelationId, N'') IS NOT NULL
           AND r.Outcome IS NOT NULL
     ) AS d
     WHERE d.rn = 1;
 
+    -- KQL session suffixes are window-relative. Reconcile every incoming row against
+    -- persisted activity boundaries so a clipped continuation keeps its stored key.
+    -- The same raw id after an inactivity gap gets a new stored suffix below.
+    SELECT
+        s.CorrelationId AS IncomingId,
+        prior.CorrelationId AS StoredId,
+        ROW_NUMBER() OVER (PARTITION BY prior.CorrelationId ORDER BY s.LastSeen DESC, s.CorrelationId) AS rn
+    INTO #SessionStitch
+    FROM #Src AS s
+    CROSS APPLY (
+        SELECT TOP (1) j.CorrelationId
+        FROM hotel.Journey AS j
+        WHERE j.UserId = s.UserId
+          AND (@ClubId IS NULL OR j.ClubId = @ClubId OR j.ClubId IS NULL)
+          AND s.FirstSeen IS NOT NULL
+          AND s.CorrelationId LIKE N'%-[0-9]%'
+          AND j.CorrelationId LIKE N'%-[0-9]%'
+          AND RIGHT(s.CorrelationId, CHARINDEX(N'-', REVERSE(s.CorrelationId)) - 1) NOT LIKE N'%[^0-9]%'
+          AND RIGHT(j.CorrelationId, CHARINDEX(N'-', REVERSE(j.CorrelationId)) - 1) NOT LIKE N'%[^0-9]%'
+          AND LEN(RIGHT(s.CorrelationId, CHARINDEX(N'-', REVERSE(s.CorrelationId)) - 1)) BETWEEN 1 AND 6
+          AND LEN(RIGHT(j.CorrelationId, CHARINDEX(N'-', REVERSE(j.CorrelationId)) - 1)) BETWEEN 1 AND 6
+          AND LEFT(j.CorrelationId, LEN(j.CorrelationId) - CHARINDEX(N'-', REVERSE(j.CorrelationId)))
+              = LEFT(s.CorrelationId, LEN(s.CorrelationId) - CHARINDEX(N'-', REVERSE(s.CorrelationId)))
+          AND j.LastSeen IS NOT NULL
+          AND s.FirstSeen <= DATEADD(minute, 30, j.LastSeen)
+          AND s.LastSeen >= DATEADD(minute, -30, j.FirstSeen)
+        ORDER BY ABS(DATEDIFF(second, s.FirstSeen, j.LastSeen)), j.FirstSeen
+    ) AS prior
+    WHERE NOT EXISTS (
+        SELECT 1 FROM #Src AS other WHERE other.CorrelationId = prior.CorrelationId
+    );
+
+    UPDATE s
+    SET CorrelationId = stitch.StoredId
+    FROM #Src AS s
+    INNER JOIN #SessionStitch AS stitch
+        ON stitch.IncomingId = s.CorrelationId
+       AND stitch.rn = 1;
+
+    -- A window-relative suffix can collide with an older, separate visit (for example,
+    -- two 15-minute runs both report rawId-1). Allocate the next persisted suffix
+    -- when that matching key is outside the inactivity boundary.
+    ;WITH collisions AS
+    (
+        SELECT
+            s.CorrelationId AS IncomingId,
+            CONCAT(
+                LEFT(s.CorrelationId, LEN(s.CorrelationId) - CHARINDEX(N'-', REVERSE(s.CorrelationId))),
+                N'-',
+                (
+                    SELECT ISNULL(MAX(sequence.No), 0)
+                    FROM
+                    (
+                        SELECT TRY_CONVERT(int, RIGHT(j.CorrelationId, CHARINDEX(N'-', REVERSE(j.CorrelationId)) - 1)) AS No
+                        FROM hotel.Journey AS j
+                        WHERE LEFT(j.CorrelationId, LEN(j.CorrelationId) - CHARINDEX(N'-', REVERSE(j.CorrelationId)))
+                            = LEFT(s.CorrelationId, LEN(s.CorrelationId) - CHARINDEX(N'-', REVERSE(s.CorrelationId)))
+                        UNION ALL
+                        SELECT TRY_CONVERT(int, RIGHT(other.CorrelationId, CHARINDEX(N'-', REVERSE(other.CorrelationId)) - 1))
+                        FROM #Src AS other
+                        WHERE LEFT(other.CorrelationId, LEN(other.CorrelationId) - CHARINDEX(N'-', REVERSE(other.CorrelationId)))
+                            = LEFT(s.CorrelationId, LEN(s.CorrelationId) - CHARINDEX(N'-', REVERSE(s.CorrelationId)))
+                    ) AS sequence
+                ) + ROW_NUMBER() OVER (
+                    PARTITION BY LEFT(s.CorrelationId, LEN(s.CorrelationId) - CHARINDEX(N'-', REVERSE(s.CorrelationId)))
+                    ORDER BY s.FirstSeen, s.CorrelationId)
+            ) AS StoredId
+        FROM #Src AS s
+        WHERE EXISTS
+        (
+            SELECT 1
+            FROM hotel.Journey AS j
+            WHERE j.CorrelationId = s.CorrelationId
+              AND NOT
+              (
+                  s.FirstSeen <= DATEADD(minute, 30, j.LastSeen)
+                  AND s.LastSeen >= DATEADD(minute, -30, j.FirstSeen)
+              )
+        )
+    )
+    UPDATE s
+    SET CorrelationId = collisions.StoredId
+    FROM #Src AS s
+    INNER JOIN collisions ON collisions.IncomingId = s.CorrelationId;
+
+    DROP TABLE #SessionStitch;
+
+    -- HotelVisitMerger names a fragment by the id in this payload. A clipped window can
+    -- give that raw id a later suffix, and a later stage can become the keeper, so the
+    -- stored login is not that exact id. Resolve the fragment to the stored session whose
+    -- activity is within 30 minutes, copy the stages the keeper no longer has, then delete
+    -- the fragment. A separate visit with the same raw id, more than 30 minutes earlier,
+    -- is left alone. PayloadCorrelationId stays the id from the payload after stitching
+    -- rewrites CorrelationId.
+    SELECT
+        keeper.CorrelationId AS KeeperId,
+        j.CorrelationId AS StoredId
+    INTO #AbsorbedHit
+    FROM OPENJSON(@RowsJson) AS payload
+    CROSS APPLY OPENJSON(payload.[value], '$.AbsorbedCorrelationIds') AS absorbed
+    INNER JOIN #Src AS keeper
+        ON keeper.PayloadCorrelationId = JSON_VALUE(payload.[value], '$.CorrelationId')
+    INNER JOIN hotel.Journey AS j
+        ON (@ClubId IS NULL OR j.ClubId = @ClubId OR j.ClubId IS NULL)
+       AND j.UserId = keeper.UserId
+       AND j.CorrelationId <> keeper.CorrelationId
+       AND (
+            j.CorrelationId = absorbed.[value]
+            OR (
+                absorbed.[value] LIKE N'%-[0-9]%'
+                AND j.CorrelationId LIKE N'%-[0-9]%'
+                AND RIGHT(absorbed.[value], CHARINDEX(N'-', REVERSE(absorbed.[value])) - 1) NOT LIKE N'%[^0-9]%'
+                AND RIGHT(j.CorrelationId, CHARINDEX(N'-', REVERSE(j.CorrelationId)) - 1) NOT LIKE N'%[^0-9]%'
+                AND LEN(RIGHT(absorbed.[value], CHARINDEX(N'-', REVERSE(absorbed.[value])) - 1)) BETWEEN 1 AND 6
+                AND LEN(RIGHT(j.CorrelationId, CHARINDEX(N'-', REVERSE(j.CorrelationId)) - 1)) BETWEEN 1 AND 6
+                AND LEFT(j.CorrelationId, LEN(j.CorrelationId) - CHARINDEX(N'-', REVERSE(j.CorrelationId)))
+                    = LEFT(absorbed.[value], LEN(absorbed.[value]) - CHARINDEX(N'-', REVERSE(absorbed.[value])))
+                AND j.FirstSeen IS NOT NULL
+                AND j.LastSeen IS NOT NULL
+                AND keeper.FirstSeen IS NOT NULL
+                AND j.LastSeen >= DATEADD(minute, -30, keeper.FirstSeen)
+                AND j.FirstSeen <= DATEADD(minute, 30, COALESCE(keeper.LastSeen, keeper.FirstSeen))
+            )
+       )
+    WHERE NULLIF(absorbed.[value], N'') IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM #Src AS other WHERE other.CorrelationId = j.CorrelationId);
+
+    UPDATE s
+    SET
+        FirstSeen = CASE
+                        WHEN edge.StoredFirst IS NOT NULL AND (s.FirstSeen IS NULL OR edge.StoredFirst < s.FirstSeen)
+                            THEN edge.StoredFirst
+                        ELSE s.FirstSeen
+                    END,
+        LastStep = CASE WHEN edge.StoredLastStep > s.LastStep THEN edge.StoredLastStep ELSE s.LastStep END,
+        PassedSearch = CASE WHEN edge.StoredPassed = 1 THEN CONVERT(bit, 1) ELSE s.PassedSearch END,
+        IsBookSuccessful = CASE WHEN edge.StoredBooked = 1 THEN CONVERT(bit, 1) ELSE s.IsBookSuccessful END,
+        BookOk = CASE WHEN edge.StoredBookOk > s.BookOk THEN edge.StoredBookOk ELSE s.BookOk END,
+        DistinctOkRes = CASE WHEN edge.StoredDistinct > s.DistinctOkRes THEN edge.StoredDistinct ELSE s.DistinctOkRes END,
+        Outcome = CASE
+                      WHEN edge.StoredBooked = 1 AND s.IsBookSuccessful = 0 THEN edge.StoredOutcome
+                      ELSE s.Outcome
+                  END,
+        BookedReservations = CASE
+                                 WHEN (
+                                     s.BookedReservations IS NULL
+                                     OR s.BookedReservations IN (N'', N'[]', N'null')
+                                 )
+                                  AND edge.StoredReservations IS NOT NULL
+                                     THEN edge.StoredReservations
+                                 ELSE s.BookedReservations
+                             END,
+        JourneyJson = COALESCE(edge.MergedJourney, s.JourneyJson),
+        StepsJson = COALESCE(edge.MergedSteps, s.StepsJson)
+    FROM #Src AS s
+    CROSS APPLY (
+        SELECT
+            MIN(j.FirstSeen) AS StoredFirst,
+            MAX(j.LastStep) AS StoredLastStep,
+            MAX(CONVERT(int, j.PassedSearch)) AS StoredPassed,
+            MAX(CONVERT(int, j.IsBookSuccessful)) AS StoredBooked,
+            MAX(j.BookOk) AS StoredBookOk,
+            MAX(j.DistinctOkRes) AS StoredDistinct,
+            (
+                SELECT TOP (1) booked.Outcome
+                FROM hotel.Journey AS booked
+                INNER JOIN #AbsorbedHit AS hit
+                    ON hit.StoredId = booked.CorrelationId
+                WHERE hit.KeeperId = s.CorrelationId
+                  AND booked.IsBookSuccessful = 1
+                ORDER BY booked.FirstSeen
+            ) AS StoredOutcome,
+            (
+                SELECT TOP (1) booked.BookedReservations
+                FROM hotel.Journey AS booked
+                INNER JOIN #AbsorbedHit AS hit
+                    ON hit.StoredId = booked.CorrelationId
+                WHERE hit.KeeperId = s.CorrelationId
+                  AND NULLIF(booked.BookedReservations, N'') IS NOT NULL
+                  AND booked.BookedReservations NOT IN (N'[]', N'null')
+                ORDER BY booked.IsBookSuccessful DESC, booked.DistinctOkRes DESC
+            ) AS StoredReservations,
+            (
+                SELECT N'[' + STRING_AGG(CAST(chosen.[value] AS nvarchar(max)), N',')
+                       WITHIN GROUP (ORDER BY TRY_CONVERT(int, JSON_VALUE(chosen.[value], '$.stageNo'))) + N']'
+                FROM (
+                    SELECT piece.[value],
+                           ROW_NUMBER() OVER (
+                               PARTITION BY JSON_VALUE(piece.[value], '$.stageNo')
+                               ORDER BY piece.PreferIncoming,
+                                        TRY_CONVERT(datetimeoffset(7), JSON_VALUE(piece.[value], '$.t'))
+                           ) AS rn
+                    FROM (
+                        SELECT head.[value], 1 AS PreferIncoming
+                        FROM hotel.Journey AS stored
+                        INNER JOIN #AbsorbedHit AS hit
+                            ON hit.StoredId = stored.CorrelationId
+                           AND hit.KeeperId = s.CorrelationId
+                        CROSS APPLY OPENJSON(stored.JourneyJson) AS head
+                        WHERE ISJSON(stored.JourneyJson) = 1
+                        UNION ALL
+                        SELECT incoming.[value], 0 AS PreferIncoming
+                        FROM OPENJSON(s.JourneyJson) AS incoming
+                        WHERE ISJSON(s.JourneyJson) = 1
+                    ) AS piece
+                ) AS chosen
+                WHERE chosen.rn = 1
+            ) AS MergedJourney,
+            (
+                SELECT N'[' + STRING_AGG(N'"' + STRING_ESCAPE(names.stepName, 'json') + N'"', N',') + N']'
+                FROM (
+                    SELECT DISTINCT steps.[value] AS stepName
+                    FROM (
+                        SELECT head.[value]
+                        FROM hotel.Journey AS stored
+                        INNER JOIN #AbsorbedHit AS hit
+                            ON hit.StoredId = stored.CorrelationId
+                           AND hit.KeeperId = s.CorrelationId
+                        CROSS APPLY OPENJSON(stored.StepsJson) AS head
+                        WHERE ISJSON(stored.StepsJson) = 1
+                          AND ISJSON(head.[value]) = 0
+                        UNION
+                        SELECT incoming.[value]
+                        FROM OPENJSON(s.StepsJson) AS incoming
+                        WHERE ISJSON(s.StepsJson) = 1
+                          AND ISJSON(incoming.[value]) = 0
+                    ) AS steps
+                ) AS names
+            ) AS MergedSteps
+        FROM hotel.Journey AS j
+        INNER JOIN #AbsorbedHit AS hit
+            ON hit.StoredId = j.CorrelationId
+        WHERE hit.KeeperId = s.CorrelationId
+    ) AS edge
+    WHERE EXISTS (SELECT 1 FROM #AbsorbedHit AS hit WHERE hit.KeeperId = s.CorrelationId);
+
+    DELETE j
+    FROM hotel.Journey AS j
+    INNER JOIN #AbsorbedHit AS hit
+        ON hit.StoredId = j.CorrelationId;
+
+    DROP TABLE #AbsorbedHit;
+
     MERGE hotel.Journey WITH (HOLDLOCK) AS target
     USING #Src AS src
-        ON target.UserId = src.UserId
-    -- The member's journey moved on, so the stored row is stale: rewrite it. Members matched but
-    -- not advanced deliberately fall through to the pass below; SQL Server allows only one
-    -- WHEN MATCHED ... UPDATE per MERGE.
+        ON target.CorrelationId = src.CorrelationId
+    -- The session moved on, so the stored row is stale: rewrite it. A row that lists
+    -- AbsorbedCorrelationIds also rewrites when the fold does not move LastSeen, but only
+    -- if this payload still contains the start of the visit. A later window that dropped
+    -- the login step and kept the same LastSeen must not replace the stored journey.
+    -- Sessions matched but not advanced fall through to the pass below; SQL Server allows
+    -- only one WHEN MATCHED UPDATE per MERGE.
     WHEN MATCHED AND src.LastSeen IS NOT NULL
-                 AND (target.LastSeen IS NULL OR src.LastSeen > target.LastSeen) THEN
+                 AND (target.LastSeen IS NULL OR src.LastSeen >= target.LastSeen)
+                 AND (
+            (target.LastSeen IS NULL OR src.LastSeen > target.LastSeen)
+            OR (
+                EXISTS (
+                    SELECT 1
+                    FROM OPENJSON(@RowsJson) AS payload
+                    CROSS APPLY OPENJSON(payload.[value], '$.AbsorbedCorrelationIds') AS absorbed
+                    WHERE JSON_VALUE(payload.[value], '$.CorrelationId') = src.PayloadCorrelationId
+                      AND NULLIF(absorbed.value, N'') IS NOT NULL
+                )
+                AND (target.FirstSeen IS NULL OR src.FirstSeen IS NULL OR src.FirstSeen <= target.FirstSeen)
+            )
+        ) THEN
         UPDATE SET
             QueryRunId             = @QueryRunId,
             ClubId                 = @ClubId,
@@ -489,23 +815,77 @@ BEGIN
             SessionCount           = src.SessionCount,
             CallsViaCorrelation    = src.CallsViaCorrelation,
             CallsNoCorrelation     = src.CallsNoCorrelation,
-            Outcome                = src.Outcome,
-            LastStep               = src.LastStep,
+            Outcome                = CASE
+                                         WHEN target.FirstSeen IS NOT NULL
+                                          AND src.FirstSeen > target.FirstSeen
+                                          AND target.IsBookSuccessful = 1
+                                          AND src.IsBookSuccessful = 0
+                                             THEN target.Outcome
+                                         ELSE src.Outcome
+                                     END,
+            LastStep               = CASE
+                                         WHEN target.FirstSeen IS NOT NULL
+                                          AND src.FirstSeen > target.FirstSeen
+                                          AND target.LastStep > src.LastStep
+                                             THEN target.LastStep
+                                         ELSE src.LastStep
+                                     END,
             FailReason             = src.FailReason,
-            BookOk                 = src.BookOk,
+            BookOk                 = CASE
+                                         WHEN target.FirstSeen IS NOT NULL
+                                          AND src.FirstSeen > target.FirstSeen
+                                          AND target.BookOk > src.BookOk
+                                             THEN target.BookOk
+                                         ELSE src.BookOk
+                                     END,
             BookFail               = src.BookFail,
-            DistinctOkRes          = src.DistinctOkRes,
-            BookedReservations     = src.BookedReservations,
+            DistinctOkRes          = CASE
+                                         WHEN target.FirstSeen IS NOT NULL
+                                          AND src.FirstSeen > target.FirstSeen
+                                          AND target.DistinctOkRes > src.DistinctOkRes
+                                             THEN target.DistinctOkRes
+                                         ELSE src.DistinctOkRes
+                                     END,
+            BookedReservations     = CASE
+                                         WHEN target.FirstSeen IS NOT NULL
+                                          AND src.FirstSeen > target.FirstSeen
+                                          AND (
+                                              src.BookedReservations IS NULL
+                                              OR src.BookedReservations IN (N'', N'[]', N'null')
+                                          )
+                                          AND NULLIF(target.BookedReservations, N'') IS NOT NULL
+                                          AND target.BookedReservations <> N'[]'
+                                             THEN target.BookedReservations
+                                         ELSE src.BookedReservations
+                                     END,
             FailedCalls            = src.FailedCalls,
-            IsBookSuccessful       = src.IsBookSuccessful,
-            PassedSearch           = src.PassedSearch,
+            IsBookSuccessful       = CASE
+                                         WHEN target.FirstSeen IS NOT NULL
+                                          AND src.FirstSeen > target.FirstSeen
+                                          AND target.IsBookSuccessful = 1
+                                             THEN CONVERT(bit, 1)
+                                         ELSE src.IsBookSuccessful
+                                     END,
+            PassedSearch           = CASE
+                                         WHEN target.FirstSeen IS NOT NULL
+                                          AND src.FirstSeen > target.FirstSeen
+                                          AND target.PassedSearch = 1
+                                             THEN CONVERT(bit, 1)
+                                         ELSE src.PassedSearch
+                                     END,
             Exceptions             = src.Exceptions,
-            JourneyTotalMs         = src.JourneyTotalMs,
+            JourneyTotalMs         = CASE
+                                         WHEN target.FirstSeen IS NOT NULL
+                                          AND src.FirstSeen > target.FirstSeen
+                                          AND ISNULL(target.JourneyTotalMs, 0) > ISNULL(src.JourneyTotalMs, 0)
+                                             THEN target.JourneyTotalMs
+                                         ELSE src.JourneyTotalMs
+                                     END,
             SlowestCallMs          = src.SlowestCallMs,
             OverallP95             = src.OverallP95,
             SearchToConfirmSeconds = src.SearchToConfirmSeconds,
-            -- FirstSeen is when we first observed the member; the newest payload may have dropped
-            -- the older sessions out of its window, so never let it move forward.
+            -- FirstSeen is when we first observed this session; a later payload may have dropped
+            -- the earlier steps out of its window, so never let it move forward.
             FirstSeen              = CASE
                                          WHEN target.FirstSeen IS NULL THEN src.FirstSeen
                                          WHEN src.FirstSeen IS NULL THEN target.FirstSeen
@@ -513,8 +893,63 @@ BEGIN
                                          ELSE target.FirstSeen
                                      END,
             LastSeen               = src.LastSeen,
-            StepsJson              = src.StepsJson,
-            JourneyJson            = src.JourneyJson
+            -- A clipped window reports a later FirstSeen. Keep stages that started before
+            -- that, and take the fresh tail from this payload. Replacing the JSON wholesale
+            -- would delete the login step while FirstSeen still says the visit began then.
+            StepsJson              = CASE
+                                         WHEN target.FirstSeen IS NOT NULL
+                                          AND src.FirstSeen > target.FirstSeen
+                                          AND ISJSON(target.StepsJson) = 1
+                                          AND ISJSON(src.StepsJson) = 1
+                                             THEN COALESCE(
+                                                 (
+                                                     SELECT N'[' + STRING_AGG(N'"' + STRING_ESCAPE(names.stepName, 'json') + N'"', N',') + N']'
+                                                     FROM (
+                                                         SELECT DISTINCT steps.[value] AS stepName
+                                                         FROM (
+                                                             SELECT head.[value]
+                                                             FROM OPENJSON(target.StepsJson) AS head
+                                                             WHERE ISJSON(head.[value]) = 0
+                                                             UNION
+                                                             SELECT tail.[value]
+                                                             FROM OPENJSON(src.StepsJson) AS tail
+                                                             WHERE ISJSON(tail.[value]) = 0
+                                                         ) AS steps
+                                                     ) AS names
+                                                 ),
+                                                 src.StepsJson)
+                                         ELSE src.StepsJson
+                                     END,
+            JourneyJson            = CASE
+                                         WHEN target.FirstSeen IS NOT NULL
+                                          AND src.FirstSeen > target.FirstSeen
+                                          AND ISJSON(target.JourneyJson) = 1
+                                          AND ISJSON(src.JourneyJson) = 1
+                                             THEN COALESCE(
+                                                 (
+                                                     SELECT N'[' + STRING_AGG(CAST(piece.[value] AS nvarchar(max)), N',')
+                                                            WITHIN GROUP (ORDER BY TRY_CONVERT(int, JSON_VALUE(piece.[value], '$.stageNo'))) + N']'
+                                                     FROM (
+                                                         SELECT head.[value]
+                                                         FROM OPENJSON(target.JourneyJson) AS head
+                                                         WHERE (
+                                                             TRY_CONVERT(datetimeoffset(7), JSON_VALUE(head.[value], '$.t')) IS NULL
+                                                             OR TRY_CONVERT(datetimeoffset(7), JSON_VALUE(head.[value], '$.t')) < src.FirstSeen
+                                                         )
+                                                         AND NOT EXISTS (
+                                                             SELECT 1
+                                                             FROM OPENJSON(src.JourneyJson) AS incoming
+                                                             WHERE JSON_VALUE(incoming.[value], '$.stageNo') = JSON_VALUE(head.[value], '$.stageNo')
+                                                               AND JSON_VALUE(incoming.[value], '$.stageNo') IS NOT NULL
+                                                         )
+                                                         UNION ALL
+                                                         SELECT tail.[value]
+                                                         FROM OPENJSON(src.JourneyJson) AS tail
+                                                     ) AS piece
+                                                 ),
+                                                 src.JourneyJson)
+                                         ELSE src.JourneyJson
+                                     END
     WHEN NOT MATCHED BY TARGET THEN
         INSERT
         (
@@ -538,7 +973,7 @@ BEGIN
     OUTPUT inserted.JourneyId, $action, CONVERT(bit, 1)
     INTO @Touched (JourneyId, Action, Changed);
 
-    -- Members the overlapping window re-reported with nothing new. Their stored row stays as is;
+    -- Sessions the overlapping window re-reported with nothing new. Their stored row stays as is;
     -- re-stamping QueryRunId is what keeps them in the snapshot the portal reads.
     UPDATE j
     SET QueryRunId = @QueryRunId,
@@ -547,7 +982,7 @@ BEGIN
     INTO @Touched (JourneyId, Action, Changed)
     FROM hotel.Journey AS j
     INNER JOIN #Src AS s
-        ON s.UserId = j.UserId
+        ON s.CorrelationId = j.CorrelationId
     WHERE NOT EXISTS (SELECT 1 FROM @Touched AS t WHERE t.JourneyId = j.JourneyId);
 
     -- Steps and calls are derived from JourneyJson, so they are only stale where the journey moved.
@@ -655,7 +1090,7 @@ BEGIN
     WHERE s.StageNo = st.StageNo
       AND c.CallName IS NOT NULL;
 
-    -- Counted over every member this run saw, not just the ones it rewrote: that whole set is
+    -- Counted over every session this run saw, not just the ones it rewrote: that whole set is
     -- what the snapshot exposes.
     DECLARE @JourneyCount int = (SELECT COUNT(*) FROM @Touched);
     DECLARE @StepCount int =
@@ -697,8 +1132,8 @@ BEGIN
 END
 GO
 
--- Read path. With @Since, return every member of the club whose LastSeen is still inside
--- the portal range, including members the latest 15-minute ingest no longer re-saw.
+-- Read path. With @Since, return every session of the club whose LastSeen is still inside
+-- the portal range, including sessions the latest 15-minute ingest no longer re-saw.
 -- Without @Since, return only the current snapshot. Do not SELECT TOP (@RecordCount)
 -- from the whole Journey table.
 CREATE OR ALTER PROCEDURE hotel.usp_GetLatestJourneys
@@ -771,6 +1206,9 @@ WHERE QueryRunId = @QueryRunId;
         QueryRunId,
         UserId,
         CorrelationId,
+        -- Club stamped at ingest. An unfiltered read mixes clubs, so the portal names each
+        -- row from this instead of the response header (that header is only the newest snapshot).
+        ClubId,
         SessionCount,
         CallsViaCorrelation,
         CallsNoCorrelation,

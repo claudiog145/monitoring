@@ -147,7 +147,8 @@ public sealed class TelemetryDiscoveryFunctions(
 
             // The measurement travels with the proposal. A reviewer who has to fetch the discovery
             // report separately to check a number is a reviewer who will not check it.
-            return await WriteJsonAsync(req, HttpStatusCode.OK, new { draft, discovery = report });
+            // suggestedKpis (contract v4 §5): every body is POST /api/settings/kpis-ready and disabled.
+            return await WriteJsonAsync(req, HttpStatusCode.OK, new { draft, discovery = report, suggestedKpis = draft.SuggestedKpis ?? [] });
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

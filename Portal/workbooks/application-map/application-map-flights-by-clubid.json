@@ -1,0 +1,92 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "crossComponentResources": [
+          "/subscriptions/819c105d-0328-4c63-a1a4-5284021e175f/resourceGroups/Air-RG-Prod-USC/providers/microsoft.insights/components/appInsights-Air-UI-Prod-USC"
+        ],
+        "parameters": [
+          {
+            "id": "p-clubid",
+            "version": "KqlParameterItem/1.0",
+            "name": "ClubId",
+            "type": 1,
+            "description": "ClubId from Application Map",
+            "value": "15639",
+            "isRequired": true
+          },
+          {
+            "id": "p-partner",
+            "version": "KqlParameterItem/1.0",
+            "name": "PartnerId",
+            "type": 1,
+            "description": "Optional IcePartnerId",
+            "value": ""
+          },
+          {
+            "id": "p-time",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "type": 4,
+            "value": { "durationMs": 86400000 },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 3600000 },
+                { "durationMs": 14400000 },
+                { "durationMs": 43200000 },
+                { "durationMs": 86400000 },
+                { "durationMs": 604800000 }
+              ]
+            }
+          }
+        ]
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Application Map — Flights by ClubId\n\nUS 241135. Source: `appInsights-Air-UI-Prod-USC` (Air tenant). Telemetry for this club (ClubId / optional PartnerId)."
+      },
+      "name": "intro"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "size": 0,
+        "query": "let clubId = tostring(\"{ClubId}\");\nlet partnerId = tostring(\"{PartnerId}\");\nunion isfuzzy=true customEvents, traces, pageViews, requests\n| where timestamp {TimeRange}\n| extend Club = coalesce(tostring(customDimensions.ClubId), tostring(customDimensions.VacationClubID), tostring(customDimensions.VacationClubId), tostring(customDimensions.club_id))\n| extend Partner = coalesce(tostring(customDimensions.PartnerId), tostring(customDimensions.partnerId), tostring(customDimensions.partner_id))\n| where Club == clubId or (isnotempty(partnerId) and Partner == partnerId)\n| summarize Events = count() by bin(timestamp, 1h)\n| order by timestamp asc\n| render timechart",
+        "title": "Events over time",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/819c105d-0328-4c63-a1a4-5284021e175f/resourceGroups/Air-RG-Prod-USC/providers/microsoft.insights/components/appInsights-Air-UI-Prod-USC"
+        ]
+      },
+      "name": "timechart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "size": 0,
+        "query": "let clubId = tostring(\"{ClubId}\");\nlet partnerId = tostring(\"{PartnerId}\");\nunion isfuzzy=true customEvents, traces, pageViews, requests\n| where timestamp {TimeRange}\n| extend Club = coalesce(tostring(customDimensions.ClubId), tostring(customDimensions.VacationClubID), tostring(customDimensions.VacationClubId), tostring(customDimensions.club_id))\n| extend Partner = coalesce(tostring(customDimensions.PartnerId), tostring(customDimensions.partnerId), tostring(customDimensions.partner_id))\n| where Club == clubId or (isnotempty(partnerId) and Partner == partnerId)\n| project timestamp, itemType, name, message, operation_Name, Club, Partner, customDimensions\n| order by timestamp desc\n| take 100",
+        "title": "Recent telemetry (top 100)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/819c105d-0328-4c63-a1a4-5284021e175f/resourceGroups/Air-RG-Prod-USC/providers/microsoft.insights/components/appInsights-Air-UI-Prod-USC"
+        ]
+      },
+      "name": "table"
+    }
+  ],
+  "fallbackResourceIds": [
+    "/subscriptions/819c105d-0328-4c63-a1a4-5284021e175f/resourceGroups/Air-RG-Prod-USC/providers/microsoft.insights/components/appInsights-Air-UI-Prod-USC"
+  ]
+}

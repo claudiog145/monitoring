@@ -29,6 +29,10 @@ public sealed class SqlTelemetrySourceStore(IOptions<JourneyStoreOptions> storeO
         parameters.Add("TenantId", source.TenantId, DbType.String, size: 64);
         parameters.Add("Enabled", source.Enabled, DbType.Boolean);
         parameters.Add("Notes", source.Notes, DbType.String, size: 1000);
+        parameters.Add("OwnerProfileKey", string.IsNullOrWhiteSpace(source.OwnerProfileKey) ? null : source.OwnerProfileKey.Trim(), DbType.String, size: 128);
+        // A null owner on the domain record means shared; the proc keeps the stored owner when
+        // @OwnerProfileKey is omitted, so "shared" has to be said explicitly.
+        parameters.Add("MakeShared", string.IsNullOrWhiteSpace(source.OwnerProfileKey), DbType.Boolean);
         parameters.Add("ChangedBy", changedBy, DbType.String, size: 128);
 
         await using var connection = OpenConnection();
@@ -60,6 +64,16 @@ public sealed class SqlTelemetrySourceStore(IOptions<JourneyStoreOptions> storeO
         return rows.Select(r => r.ToDomain()).ToList();
     }
 
+    public async Task<string?> GetLastKnownOwnerAsync(string alias, CancellationToken ct = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("Alias", alias, DbType.String, size: 64);
+
+        await using var connection = OpenConnection();
+        return await connection.QuerySingleOrDefaultAsync<string?>(new CommandDefinition(
+            "monitoring.usp_GetTelemetrySourceLastKnownOwner", parameters, commandType: CommandType.StoredProcedure, cancellationToken: ct));
+    }
+
     private SqlConnection OpenConnection()
     {
         var options = storeOptions.Value;
@@ -72,17 +86,19 @@ public sealed class SqlTelemetrySourceStore(IOptions<JourneyStoreOptions> storeO
 
     private sealed record SourceRow(
         string Alias, string Environment, string Kind, string ResourceId, string? AppId, string? TenantId,
-        bool Enabled, string? Notes, DateTimeOffset UpdatedAt, string UpdatedBy)
+        bool Enabled, string? Notes, DateTimeOffset UpdatedAt, string UpdatedBy, string? OwnerProfileKey)
     {
         public TelemetrySourceEntry ToDomain() =>
-            new(Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled, Notes, UpdatedAt, UpdatedBy);
+            new(Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled, Notes, UpdatedAt, UpdatedBy, OwnerProfileKey);
     }
 
     private sealed record AuditRow(
         long AuditId, string Alias, string Environment, string? Kind, string? ResourceId, string? AppId,
-        string? TenantId, bool? Enabled, string? Notes, bool Removed, DateTimeOffset ChangedAt, string ChangedBy)
+        string? TenantId, bool? Enabled, string? Notes, bool Removed, DateTimeOffset ChangedAt, string ChangedBy,
+        string? OwnerProfileKey, string? PreviousOwnerProfileKey)
     {
         public TelemetrySourceAuditEntry ToDomain() =>
-            new(AuditId, Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled, Notes, Removed, ChangedAt, ChangedBy);
+            new(AuditId, Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled, Notes, Removed, ChangedAt, ChangedBy,
+                OwnerProfileKey, PreviousOwnerProfileKey);
     }
 }

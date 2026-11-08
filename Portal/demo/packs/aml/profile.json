@@ -1,0 +1,67 @@
+{
+  "profileKey": "kinectify",
+  "displayName": "Kinectify (demo)",
+  "theme": { "primaryColor": "#3B2A8F", "accentColor": "#9B6CF0", "shortName": "Kinectify" },
+  "labels": { "service": "Product", "flow": "Workflow", "step": "Stage", "entity": "Customer", "owner": "Team" },
+  "services": [
+    {
+      "key": "screening", "displayName": "Transaction Screening", "telemetrySourceAliases": ["aml-screening-api"], "hostFilters": ["screening.kinectify.demo"],
+      "flows": [ { "key": "screen-transaction", "displayName": "Screen a transaction", "steps": [
+        { "key": "01-ingest", "displayName": "01 Ingest", "order": 1, "matchers": [ { "kind": "path-contains", "value": "/api/v1/transactions" } ] },
+        { "key": "02-risk-score", "displayName": "02 Risk scoring", "order": 2, "matchers": [ { "kind": "path-contains", "value": "/api/v1/risk-score" } ] },
+        { "key": "03-status", "displayName": "03 Screening status", "order": 3, "matchers": [ { "kind": "path-contains", "value": "/api/v1/screening-status" } ] }
+      ] } ]
+    },
+    {
+      "key": "alerts", "displayName": "Alerting", "telemetrySourceAliases": ["aml-alerts-worker"], "hostFilters": ["alerts-worker.kinectify.internal"],
+      "flows": [ { "key": "alert-pipeline", "displayName": "Raise and escalate an alert", "steps": [
+        { "key": "01-alert-generation", "displayName": "01 Alert generation", "order": 1, "matchers": [ { "kind": "operation-equals", "value": "PROCESS alert-generation" }, { "kind": "path-contains", "value": "/jobs/alert-generation" } ] },
+        { "key": "02-case-escalation", "displayName": "02 Case escalation", "order": 2, "matchers": [ { "kind": "operation-equals", "value": "PROCESS case-escalation" }, { "kind": "path-contains", "value": "/jobs/case-escalation" } ] }
+      ] } ]
+    },
+    {
+      "key": "cases", "displayName": "Case Management", "telemetrySourceAliases": ["aml-case-mgmt"], "hostFilters": ["cases.kinectify.demo"],
+      "flows": [ { "key": "case-lifecycle", "displayName": "Investigate a case", "steps": [
+        { "key": "01-open", "displayName": "01 Open case", "order": 1, "matchers": [ { "kind": "path-contains", "value": "/api/cases/open" } ] },
+        { "key": "02-review", "displayName": "02 Review case", "order": 2, "matchers": [ { "kind": "path-contains", "value": "/api/cases/review" } ] },
+        { "key": "03-close", "displayName": "03 Close case", "order": 3, "matchers": [ { "kind": "path-contains", "value": "/api/cases/close" } ] }
+      ] } ]
+    },
+    {
+      "key": "onboarding", "displayName": "Client Onboarding (KYC)", "telemetrySourceAliases": ["aml-onboarding-kyc"], "hostFilters": ["onboarding.kinectify.demo"],
+      "flows": [ { "key": "onboard-client", "displayName": "Onboard a client", "steps": [
+        { "key": "01-submit", "displayName": "01 Submit application", "order": 1, "matchers": [ { "kind": "path-contains", "value": "/api/onboarding/applications" } ] },
+        { "key": "02-verify-identity", "displayName": "02 ID verification", "order": 2, "matchers": [ { "kind": "path-contains", "value": "/api/onboarding/verify-identity" } ] },
+        { "key": "03-sanctions-check", "displayName": "03 Sanctions check", "order": 3, "matchers": [ { "kind": "path-contains", "value": "/api/onboarding/sanctions-check" } ] },
+        { "key": "04-approve", "displayName": "04 Approve", "order": 4, "matchers": [ { "kind": "path-contains", "value": "/api/onboarding/approve" } ] }
+      ] } ]
+    }
+  ],
+  "entityIdentitySources": [ { "order": 1, "kind": "custom-dimension", "key": "CustomerTenantId", "entityKind": "customer" } ],
+  "glossary": {
+    "serviceNoun": "product", "flowNoun": "workflow", "stepNoun": "stage", "entityNoun": "customer", "ownerNoun": "team",
+    "description": "Kinectify (demo) is a synthetic AML and compliance SaaS. Its customers (casinos, fintechs and crypto exchanges) send transactions for real-time risk screening, receive alerts, investigate cases and onboard their own clients through KYC; external partners supply sanctions/PEP lists, identity verification, blockchain analytics and document OCR."
+  },
+  "enabled": true,
+  "notes": "Demo company pack 'aml'. Every name, host, partner and record is synthetic.",
+  "partners": [
+    { "key": "sanctions-provider", "displayName": "Sanctions & PEP list provider", "matchers": [ { "kind": "dependency-target-contains", "value": "sanctionlists.demo" } ] },
+    { "key": "idv-provider", "displayName": "Identity verification provider", "matchers": [ { "kind": "dependency-target-contains", "value": "verifyid.demo" } ] },
+    { "key": "chain-analytics", "displayName": "Blockchain analytics provider", "matchers": [ { "kind": "dependency-target-contains", "value": "chainlens.demo" } ] },
+    { "key": "doc-ocr", "displayName": "Document OCR provider", "matchers": [ { "kind": "dependency-target-contains", "value": "docuscan.demo" } ] },
+    { "key": "scoring-model", "displayName": "Risk scoring model (internal)", "matchers": [ { "kind": "dependency-target-contains", "value": "risk-model.kinectify.internal" } ] },
+    { "key": "alert-queue", "displayName": "Alerts message bus (internal)", "matchers": [ { "kind": "dependency-target-contains", "value": "sb-kinectify.servicebus.demo" } ] },
+    { "key": "screening-db", "displayName": "Screening database (internal)", "matchers": [ { "kind": "dependency-target-contains", "value": "sql-screening.kinectify.internal" } ] },
+    { "key": "case-db", "displayName": "Case database (internal)", "matchers": [ { "kind": "dependency-target-contains", "value": "sql-cases.kinectify.internal" } ] },
+    { "key": "onboarding-db", "displayName": "KYC database (internal)", "matchers": [ { "kind": "dependency-target-contains", "value": "sql-onboarding.kinectify.internal" } ] }
+  ],
+  "privacy": {
+    "allowRawEvidence": false,
+    "piiDimensions": ["CustomerName", "AccountNumber", "DateOfBirth", "EmailAddress", "WalletAddress"],
+    "patterns": [
+      "\\b\\d{12,19}\\b",
+      "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}",
+      "\\b0x[0-9a-fA-F]{40}\\b"
+    ]
+  }
+}

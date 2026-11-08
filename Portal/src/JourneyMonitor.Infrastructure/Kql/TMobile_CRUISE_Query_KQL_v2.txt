@@ -10,15 +10,20 @@
 //   Production Web   cruise-web-ai-prod
 //   Staging Web      cruise-web-ai-uat
 // Keep this file as one contiguous query: Azure Logs treats blank lines as separators.
-// Grain: one row per frontend session_id. UserId is the member id.
-// Portal columns (Hotel v6d / Air contract): CorrelationId is that session_id.
-// SessionCount is how many frontend sessions the same member had in the window
-// (this row is still one visit; SessionCount > 1 means other visits exist).
+// SSO, Core calls and Core errors attach to each inactivity visit (webSessions), not the raw id.
+// Grain: one row per inactivity visit inside a frontend session_id. UserId is the member id.
+// Portal columns: CorrelationId is rawSessionId-seq (sessionId-1). The visit is split once, on the
+// frontend page views, before SSO or Core calls are attached. Those calls keep that VisitStart.
+// FrontendStart and FrontendEnd are that page-view window (webSessions). FirstSeen and LastSeen
+// also include SSO and Core, so stitching and clipped-tail updates must use the page bounds.
+// Do not split again on call timestamps: an SSO sitting in the gap would join two visits and
+// turn the earlier abandoned attempt into one booked journey. SessionId stays the raw frontend id.
+// SessionCount is how many frontend sessions the same member had in the window.
 // Correlation proven in PROD, 2026-08-27:
 //   - operation_Id changes per page/request and is only used inside one telemetry resource.
 //   - frontend session_id is the durable visit id, but it is not propagated to Club or Core.
 //   - MemberId/customerid + nearest timestamp attaches Club/Core calls to a frontend session.
-//   - SSO must occur from 10m before through 1m after the frontend session starts.
+//   - SSO must occur from 30m before through 1m after the frontend session starts.
 //   - Core calls must start from 2m before through 15m after the last frontend event.
 // Stage time sums only kind=api: SSO plus timed frontend pageViews.
 // Core calls are kind=backend, explaining latency without double-counting frontend waits.
@@ -50,13 +55,16 @@ let webBase =
     | where PartnerId == tmoPartner
     | where Product == "cruise" or url has tmoHost
     | project UserId, SessionId, NameId, PageName, Err, Name = name, Url = url,
-              Ms = todouble(duration), Ts = timestamp, operation_Id;
+              Ms = todouble(duration), Ts = timestamp, operation_Id, PartnerId
+    | sort by UserId asc, SessionId asc, Ts asc
+    | extend VisitStart = row_window_session(
+        Ts, 365d, 30m, prev(UserId) != UserId or prev(SessionId) != SessionId);
 let webSessions =
     webBase
     | summarize SessionStart = min(Ts),
                 SessionEnd = max(Ts),
                 NameId = take_anyif(NameId, isnotempty(NameId))
-      by UserId, SessionId;
+      by UserId, SessionId, VisitStart;
 let webCalls =
     webBase
     | extend StageNo = case(
@@ -95,7 +103,7 @@ let webCalls =
         "page")
     | extend Failed = isnotempty(Err) and Err != "None",
              Detail = iff(isnotempty(Err) and Err != "None", Err, "")
-    | project UserId, SessionId, StageNo, Stage, Kind,
+    | project UserId, SessionId, VisitStart, StageNo, Stage, Kind,
               Service = iff(isnotempty(Name), Name, Url),
               Ms, Failed, Detail, Ts, operation_Id, Source = "Cruise Web";
 let webErrorRaw =
@@ -143,9 +151,18 @@ let webErrorRaw =
               Service = strcat("Error ", coalesce(tostring(customDimensions.eventType), "unknown")),
               Ms = real(null), Failed = true, Detail = Err, Ts = timestamp,
               operation_Id, Source = "Cruise Web";
+let webErrorCalls =
+    webErrorRaw
+    | join kind=inner webSessions on UserId, SessionId
+    | extend Distance = case(
+        Ts < SessionStart, datetime_diff("second", SessionStart, Ts),
+        Ts > SessionEnd, datetime_diff("second", Ts, SessionEnd),
+        0)
+    | summarize arg_min(Distance, *) by UserId, SessionId, Ts, operation_Id
+    | project UserId, SessionId, VisitStart, StageNo, Stage, Kind, Service, Ms, Failed, Detail, Ts, operation_Id, Source;
 let clubSsoRaw =
     app('{{SOURCE:club}}').requests
-    | where timestamp > ago(win)
+    | where timestamp > ago(win + 30m)
     | where name == "GET Redirect/AuthenticateTmo"
     | extend UserId = coalesce(
         tostring(customDimensions.MemberId),
@@ -162,11 +179,11 @@ let clubSsoRaw =
 let clubSsoCalls =
     clubSsoRaw
     | join kind=inner webSessions on UserId
-    | where SsoTs between ((SessionStart - 10m) .. (SessionStart + 1m))
+    | where SsoTs between ((SessionStart - 30m) .. (SessionStart + 1m))
     | extend NameMatches = isempty(NameId1) or isempty(NameId) or NameId == NameId1
     | where NameMatches
-    | summarize arg_max(SsoTs, *) by UserId, SessionId
-    | project UserId, SessionId, StageNo = 1, Stage = "01 T-Mobile SSO",
+    | summarize arg_max(SsoTs, *) by UserId, SessionId, VisitStart
+    | project UserId, SessionId, VisitStart, StageNo = 1, Stage = "01 T-Mobile SSO",
               Kind = "api", Service = "AuthenticateTmo", Ms = SsoMs,
               Failed = SsoFailed,
               Detail = iff(
@@ -215,7 +232,7 @@ let coreCalls =
         StageNo == 9, "09 Payment",
         StageNo == 10, "10 Review",
         "11 Confirmation")
-    | project UserId, SessionId, StageNo, Stage, Kind = "backend",
+    | project UserId, SessionId, VisitStart, StageNo, Stage, Kind = "backend",
               Service = CoreService, Ms = CoreMs, Failed = CoreFailed,
               Detail = iff(CoreFailed, strcat("HTTP ", CoreResultCode), ""),
               Ts = CoreTs, operation_Id, Source = "Cruise Core";
@@ -264,17 +281,24 @@ let coreErrorCalls =
         StageNo == 9, "09 Payment",
         StageNo == 10, "10 Review",
         "11 Confirmation")
-    | project UserId, SessionId, StageNo, Stage, Kind = "result",
+    | project UserId, SessionId, VisitStart, StageNo, Stage, Kind = "result",
               Service = strcat("Core error ", ErrorType), Ms = real(null),
               Failed = true, Detail = ErrorMessage, Ts = ErrorTs,
               operation_Id, Source = "Cruise Core";
-let allCalls = union webCalls, webErrorRaw, clubSsoCalls, coreCalls, coreErrorCalls;
-let sequenced =
+let allCalls = union webCalls, webErrorCalls, clubSsoCalls, coreCalls, coreErrorCalls;
+// Session key is the visit already chosen above. Splitting again on call timestamps would let
+// an SSO between two visits bridge the gap and book the earlier abandoned attempt.
+let sessionCalls =
     allCalls
-    | sort by UserId asc, SessionId asc, StageNo asc, Kind asc, Service asc, Ts asc
+    | sort by SessionId asc, VisitStart asc, Ts asc
+    | extend VisitSeq = row_rank_dense(VisitStart, prev(SessionId) != SessionId)
+    | extend SessionKey = strcat(SessionId, "-", tostring(VisitSeq));
+let sequenced =
+    sessionCalls
+    | sort by UserId asc, SessionKey asc, StageNo asc, Kind asc, Service asc, Ts asc
     | extend Seq = row_number(
         1,
-        prev(UserId) != UserId or prev(SessionId) != SessionId
+        prev(UserId) != UserId or prev(SessionKey) != SessionKey
             or prev(StageNo) != StageNo or prev(Kind) != Kind or prev(Service) != Service);
 let callMetrics =
     sequenced
@@ -291,8 +315,11 @@ let callMetrics =
                     bag_pack("n", Seq, "t", Ts, "message", Detail),
                     Failed and isnotempty(Detail),
                     8),
-                Ts = min(Ts)
-      by UserId, SessionId, StageNo, Stage, Kind, Service, Source
+                Ts = min(Ts),
+                LastTs = max(Ts),
+                SessionId = take_any(SessionId),
+                VisitStart = take_any(VisitStart)
+      by UserId, SessionKey, StageNo, Stage, Kind, Service, Source
     | extend FailureRatePct = round(todouble(Fails) / N * 100.0, 2),
              Status = case(
                 isnull(P95Ms), "N/A",
@@ -300,7 +327,7 @@ let callMetrics =
                 P95Ms < 5000, "YELLOW",
                 "RED");
 let stageApiMetrics =
-    allCalls
+    sessionCalls
     | where Kind == "api" and isnotnull(Ms)
     | summarize StageTotalMs = round(sum(Ms)),
                 StepP50 = round(percentile(Ms, 50)),
@@ -308,27 +335,31 @@ let stageApiMetrics =
                 StepP95 = round(percentile(Ms, 95)),
                 StepP99 = round(percentile(Ms, 99)),
                 StepMax = round(max(Ms))
-      by UserId, SessionId, StageNo, Stage;
+      by UserId, SessionKey, StageNo, Stage;
 let failBySession =
-    union webErrorRaw, coreErrorCalls
-    | summarize arg_max(Ts, Detail) by UserId, SessionId
-    | project UserId, SessionId, FailReason = Detail;
+    sessionCalls
+    | where Kind == "result" and Failed and isnotempty(Detail)
+    | summarize arg_max(Ts, Detail) by UserId, SessionKey
+    | project UserId, SessionKey, FailReason = Detail;
 let stageRows =
     callMetrics
-    | sort by UserId asc, SessionId asc, StageNo asc, Kind asc, P95Ms desc, Service asc
+    | sort by UserId asc, SessionKey asc, StageNo asc, Kind asc, P95Ms desc, Service asc
     | summarize Calls = make_list(bag_pack(
             "kind", Kind, "source", Source, "call", Service,
-            "correlationId", SessionId, "n", N,
+            "correlationId", SessionKey, "n", N,
             "callTotalMs", CallTotalMs, "p50Ms", P50Ms, "p90Ms", P90Ms,
             "p95Ms", P95Ms, "p99Ms", P99Ms, "maxMs", MaxMs,
             "failureRatePct", FailureRatePct, "status", Status,
             "detail", Detail, "errors", Errors), 80),
         StepStart = min(Ts),
+        StepEnd = max(LastTs),
         CallCount = sum(N),
         StepFails = sumif(Fails, Kind != "page"),
-        StepTotal = sumif(N, Kind != "page")
-      by UserId, SessionId, StageNo, Stage
-    | join kind=leftouter stageApiMetrics on UserId, SessionId, StageNo, Stage
+        StepTotal = sumif(N, Kind != "page"),
+        SessionId = take_any(SessionId),
+        VisitStart = take_any(VisitStart)
+      by UserId, SessionKey, StageNo, Stage
+    | join kind=leftouter stageApiMetrics on UserId, SessionKey, StageNo, Stage
     | extend StepFailPct = iff(
                  StepTotal > 0,
                  round(todouble(StepFails) / StepTotal * 100.0, 2),
@@ -339,7 +370,7 @@ let stageRows =
                 StepP95 < 5000, "YELLOW",
                 "RED");
 stageRows
-| sort by UserId asc, SessionId asc, StageNo asc
+| sort by UserId asc, SessionKey asc, StageNo asc
 | summarize Journey = make_list(bag_pack(
         "stageNo", StageNo, "stage", Stage, "t", StepStart,
         "callCount", CallCount, "stageTotalMs", StageTotalMs,
@@ -356,16 +387,24 @@ stageRows
     PurchaseAt = minif(StepStart, StageNo == 9),
     ConfirmAt = minif(StepStart, StageNo == 11),
     FirstSeen = min(StepStart),
-    LastSeen = max(StepStart)
-  by UserId, SessionId
-| join kind=leftouter failBySession on UserId, SessionId
-| project-away UserId1, SessionId1
+    LastSeen = max(StepEnd),
+    SessionId = take_any(SessionId),
+    VisitStart = take_any(VisitStart)
+  by UserId, SessionKey
+| join kind=leftouter failBySession on UserId, SessionKey
+| project-away UserId1, SessionKey1
 | join kind=leftouter (
         webSessions
         | summarize SessionCount = dcount(SessionId) by UserId
     ) on UserId
 | project-away UserId1
-| extend CorrelationId = SessionId,
+| join kind=leftouter (
+        webSessions
+        | project UserId, SessionId, VisitStart,
+                  FrontendStart = SessionStart, FrontendEnd = SessionEnd
+    ) on UserId, SessionId, VisitStart
+| project-away UserId1, SessionId1, VisitStart1
+| extend CorrelationId = SessionKey,
          SessionCount = coalesce(SessionCount, 1)
 | extend BookOk = iff(isnotnull(ConfirmAt), 1, 0),
          BookFail = iff(isnotempty(FailReason), 1, 0),
@@ -395,5 +434,5 @@ stageRows
 | project UserId, CorrelationId, SessionCount, SessionId, Outcome, LastStep, Steps, FailReason,
           BookOk, BookFail, IsBookSuccessful, PassedSearch, DistinctOkRes, BookedReservations,
           FailedCalls, Exceptions, JourneyTotalMs, SlowestCallMs, OverallP95,
-          SearchToConfirm_s, FirstSeen, LastSeen, Journey
+          SearchToConfirm_s, FirstSeen, LastSeen, FrontendStart, FrontendEnd, Journey
 | top 50 by LastSeen desc

@@ -34,16 +34,17 @@ public sealed class InMemoryTelemetrySourceStore : ITelemetrySourceStore
     public Task<TelemetrySourceEntry> UpsertAsync(TelemetrySourceEntry source, string changedBy, CancellationToken ct = default)
     {
         var stored = source with { UpdatedAt = DateTimeOffset.UtcNow, UpdatedBy = changedBy };
+        _sources.TryGetValue(Key(source.Alias, source.Environment), out var previous);
         _sources[Key(source.Alias, source.Environment)] = stored;
-        Record(stored, false, changedBy);
+        Record(stored, false, changedBy, previous?.OwnerProfileKey);
         return Task.FromResult(stored);
     }
 
     public Task DeleteAsync(string alias, string environment, string changedBy, CancellationToken ct = default)
     {
-        _sources.TryRemove(Key(alias, environment), out _);
+        _sources.TryRemove(Key(alias, environment), out var removed);
         // Recorded even when nothing was removed: the attempt is still history.
-        Record(new TelemetrySourceEntry(alias, environment, "", ""), true, changedBy);
+        Record(new TelemetrySourceEntry(alias, environment, "", ""), true, changedBy, removed?.OwnerProfileKey);
         return Task.CompletedTask;
     }
 
@@ -56,7 +57,15 @@ public sealed class InMemoryTelemetrySourceStore : ITelemetrySourceStore
         }
     }
 
-    private void Record(TelemetrySourceEntry entry, bool removed, string changedBy)
+    public Task<string?> GetLastKnownOwnerAsync(string alias, CancellationToken ct = default)
+    {
+        lock (_audit)
+        {
+            return Task.FromResult(TelemetrySourceAuditOwners.LastKnownOwner(_audit, alias));
+        }
+    }
+
+    private void Record(TelemetrySourceEntry entry, bool removed, string changedBy, string? previousOwner)
     {
         lock (_audit)
         {
@@ -68,7 +77,9 @@ public sealed class InMemoryTelemetrySourceStore : ITelemetrySourceStore
                 removed ? null : entry.TenantId,
                 removed ? null : entry.Enabled,
                 removed ? null : entry.Notes,
-                removed, DateTimeOffset.UtcNow, changedBy));
+                removed, DateTimeOffset.UtcNow, changedBy,
+                removed ? null : entry.OwnerProfileKey,
+                previousOwner));
         }
     }
 

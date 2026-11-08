@@ -1,9 +1,11 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using JourneyMonitor.Core.Abstractions;
 using JourneyMonitor.Core.Company;
 using JourneyMonitor.Core.Domain;
+using JourneyMonitor.Core.Monitoring.Privacy;
 using JourneyMonitor.Core.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -254,12 +256,37 @@ public sealed record InspectorCaseBrief(string Headline, string Facts, string Sc
 /// investigation it documents - but the accounting is not: it happens before the write, so a case
 /// can never under-report what it spent because a log insert failed.
 /// </summary>
-public sealed class InspectorRecorder(IAgentTranscriptRepository transcripts, ILogger<InspectorRecorder> logger)
+public sealed class InspectorRecorder(
+    IAgentTranscriptRepository transcripts,
+    ILogger<InspectorRecorder> logger,
+    // Trailing and optional so the existing tests keep constructing this the way they already do.
+    // Null redactor still redacts (closed by default, contract v4 §5); null store means the profile
+    // is known only by its key, see EvidenceRedactor.PlaceholderProfile.
+    IEvidenceRedactor? redactor = null,
+    ICompanyProfileStore? profiles = null)
 {
     private const int MaxErrorLength = 1024;
 
     /// <summary>Guards the counters on <see cref="ForensicCase"/>: the five specialists gather in parallel and would otherwise lose increments.</summary>
     private readonly object _gate = new();
+
+    private readonly IEvidenceRedactor _redactor = redactor ?? new EvidenceRedactor();
+    private readonly ConcurrentDictionary<string, CompanyProfile> _profiles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<Guid, SortedDictionary<string, int>> _redactions = [];
+
+    /// <summary>
+    /// What the redactor hid in the prompts of one case, as pattern name → count. Never values:
+    /// this is the audit trail of contract v4 §5.
+    /// </summary>
+    public IReadOnlyDictionary<string, int> RedactionsFor(Guid forensicCaseId)
+    {
+        lock (_gate)
+        {
+            return _redactions.TryGetValue(forensicCaseId, out var counts)
+                ? new Dictionary<string, int>(counts, StringComparer.Ordinal)
+                : new Dictionary<string, int>(StringComparer.Ordinal);
+        }
+    }
 
     /// <summary>
     /// One tool-capable completion, metered and recorded. <paramref name="classify"/> lets the
@@ -283,6 +310,7 @@ public sealed class InspectorRecorder(IAgentTranscriptRepository transcripts, IL
         Func<LlmCompletion, (string Status, string? OutcomeJson)>? classify = null)
     {
         var stopwatch = Stopwatch.StartNew();
+        messages = await RedactAsync(forensicCase, agentRole, messages, ct);
         var completion = await llm.CompleteAsync(model, messages, tools, maxTokens, ct);
         stopwatch.Stop();
 
@@ -320,6 +348,75 @@ public sealed class InspectorRecorder(IAgentTranscriptRepository transcripts, IL
 
         await PersistTurnAsync(turn, ct);
         return (completion, turn.Id);
+    }
+
+    /// <summary>
+    /// Every message content goes through the redactor before it leaves for the provider - the
+    /// brief, the blackboard, peer proposals and tool results alike - so no specialist can forget.
+    /// The persisted turn renders these redacted messages: the transcript shows what was sent.
+    /// </summary>
+    private async Task<IReadOnlyList<LlmMessage>> RedactAsync(
+        ForensicCase forensicCase, string agentRole, IReadOnlyList<LlmMessage> messages, CancellationToken ct)
+    {
+        var profile = await ResolveProfileAsync(forensicCase.ProfileKey, ct);
+        if (!EvidenceRedactor.RedactionRequired(profile)) return messages;
+
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var redacted = new List<LlmMessage>(messages.Count);
+        foreach (var message in messages)
+        {
+            if (string.IsNullOrEmpty(message.Content))
+            {
+                redacted.Add(message);
+                continue;
+            }
+
+            var result = _redactor.Redact(message.Content, profile);
+            EvidenceRedactor.Accumulate(counts, result.CountsByPattern);
+            redacted.Add(message with { Content = result.Text });
+        }
+
+        if (counts.Count > 0)
+        {
+            lock (_gate)
+            {
+                if (!_redactions.TryGetValue(forensicCase.Id, out var total))
+                {
+                    total = new SortedDictionary<string, int>(StringComparer.Ordinal);
+                    _redactions[forensicCase.Id] = total;
+                }
+                EvidenceRedactor.Accumulate(total, counts);
+            }
+            logger.LogInformation(
+                "[InspectorMonkey] {CaseId} [{ProfileKey}] {Role}: prompt redacted before the LLM call ({Redactions}).",
+                forensicCase.CaseId, profile.ProfileKey, agentRole, string.Join(", ", counts.OrderBy(c => c.Key, StringComparer.Ordinal).Select(c => $"{c.Key}={c.Value}")));
+        }
+        return redacted;
+    }
+
+    private async Task<CompanyProfile> ResolveProfileAsync(string? profileKey, CancellationToken ct)
+    {
+        // "" is what pre-multi-company cases carry; they belong to the incumbent.
+        var key = string.IsNullOrWhiteSpace(profileKey) ? KpiProfiles.Default : profileKey.Trim();
+        if (_profiles.TryGetValue(key, out var cached)) return cached;
+
+        CompanyProfile? stored = null;
+        if (profiles is not null)
+        {
+            try
+            {
+                stored = await profiles.GetAsync(key, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "[InspectorMonkey] could not read profile {ProfileKey}; redacting with the closed default.", key);
+                return EvidenceRedactor.PlaceholderProfile(key);
+            }
+        }
+
+        var profile = stored ?? EvidenceRedactor.PlaceholderProfile(key);
+        _profiles[key] = profile;
+        return profile;
     }
 
     /// <summary>A phase that reached a conclusion without a model still gets a turn, so the transcript has no gaps a reader has to explain.</summary>

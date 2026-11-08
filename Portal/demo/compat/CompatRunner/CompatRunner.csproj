@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- DT0 go/no-go harness, run by ../run-compat.ps1. Deliberately NOT in JourneyMonitor.slnx: it is
+       the one demo tool that loads the platform (to render its built-in KQL exactly as production
+       does); the four demo projects stay independent of it. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Azure.Kusto.Language" Version="12.4.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\FakeAppInsights\Rewrite\*.cs" Link="Rewrite\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\JourneyMonitor.Core\JourneyMonitor.Core.csproj" />
+    <ProjectReference Include="..\..\..\src\JourneyMonitor.Infrastructure\JourneyMonitor.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

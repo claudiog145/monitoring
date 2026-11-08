@@ -2,7 +2,7 @@
 -- For: Option 1 - Token Externo (External Token Storage)
 -- Date: 2024-10-30
 
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'AppInsightsTokens')
+IF OBJECT_ID(N'dbo.AppInsightsTokens', N'U') IS NULL
 BEGIN
     CREATE TABLE [dbo].[AppInsightsTokens]
     (
@@ -140,4 +140,51 @@ IF NOT EXISTS (
 BEGIN
     ALTER TABLE [dbo].[AppInsightsTokens] ADD [UsageCount] INT NOT NULL DEFAULT 0;
     PRINT 'Column [UsageCount] added';
+END
+
+-- Automatic refresh (contracts-company section 2.2). Every column is added idempotently so the
+-- script stays safe on a database that already holds tokens.
+IF COL_LENGTH('dbo.AppInsightsTokens', 'RefreshMode') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[AppInsightsTokens] ADD [RefreshMode] NVARCHAR(20) NOT NULL
+        CONSTRAINT DF_AppInsightsTokens_RefreshMode DEFAULT 'manual';
+    PRINT 'Column [RefreshMode] added';
+END
+
+IF COL_LENGTH('dbo.AppInsightsTokens', 'AadTenantId') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[AppInsightsTokens] ADD [AadTenantId] NVARCHAR(64) NULL;
+    PRINT 'Column [AadTenantId] added';
+END
+
+IF COL_LENGTH('dbo.AppInsightsTokens', 'ClientId') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[AppInsightsTokens] ADD [ClientId] NVARCHAR(64) NULL;
+    PRINT 'Column [ClientId] added';
+END
+
+-- DataProtection-encrypted with the same protector as EncryptedToken; never returned by any API.
+IF COL_LENGTH('dbo.AppInsightsTokens', 'EncryptedClientSecret') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[AppInsightsTokens] ADD [EncryptedClientSecret] NVARCHAR(MAX) NULL;
+    PRINT 'Column [EncryptedClientSecret] added';
+END
+
+IF COL_LENGTH('dbo.AppInsightsTokens', 'LastRefreshAt') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[AppInsightsTokens] ADD [LastRefreshAt] DATETIME2 NULL;
+    PRINT 'Column [LastRefreshAt] added';
+END
+
+IF COL_LENGTH('dbo.AppInsightsTokens', 'LastRefreshError') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[AppInsightsTokens] ADD [LastRefreshError] NVARCHAR(500) NULL;
+    PRINT 'Column [LastRefreshError] added';
+END
+
+IF COL_LENGTH('dbo.AppInsightsTokens', 'RefreshCount') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[AppInsightsTokens] ADD [RefreshCount] INT NOT NULL
+        CONSTRAINT DF_AppInsightsTokens_RefreshCount DEFAULT 0;
+    PRINT 'Column [RefreshCount] added';
 END

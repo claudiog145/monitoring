@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>arrivia | Agentic Operations Portal</title>
+<title>Agentic Operations Portal</title>
 <link rel="icon" href="assets/logo-placeholder.svg" type="image/svg+xml" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700&display=swap" rel="stylesheet" />
@@ -16,10 +16,9 @@
 <!-- ============================== HEADER ============================== -->
 <header class="app-header" role="banner">
   <div class="app-header__brand">
-    <img src="assets/logo-placeholder.svg" alt="arrivia" class="app-header__logo" />
     <div class="app-header__title">
       <span class="app-header__product">Agentic Operations Portal</span>
-      <span class="app-header__subtitle">Travel Platform Command Center</span>
+      <span class="app-header__company" id="company-name" hidden></span>
     </div>
   </div>
 
@@ -81,8 +80,9 @@
   <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-health" data-tab="health" aria-controls="tab-health">Platform Health</button>
   <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-analytics" data-tab="analytics" aria-controls="tab-analytics">Analytics</button>
   <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-monkeys" data-tab="monkeys" aria-controls="tab-monkeys">Simian Army</button>
-  <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-memory" data-tab="memory" aria-controls="tab-memory">Memory Bank</button>
-  <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-club-map" data-tab="club-map" aria-controls="tab-club-map">Club Map</button>
+  <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-daemons" data-tab="daemons" aria-controls="tab-daemons">Daemons</button>
+  <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-memory" data-tab="memory"   aria-controls="tab-memory">Memory Bank</button>
+    <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-club-map" data-tab="club-map" aria-controls="tab-club-map" hidden>Application Map <span class="tab-nav__badge">Under construction</span></button>
   <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-exceptions" data-tab="exceptions" aria-controls="tab-exceptions">Exceptions</button>
   <button class="tab-nav__item" role="tab" aria-selected="false" id="tab-btn-settings" data-tab="settings" aria-controls="tab-settings">Settings</button>
 
@@ -92,11 +92,9 @@
 <!-- ============================== GLOBAL FILTER BAR ============================== -->
 <section class="filter-bar" aria-label="Global filters">
   <label class="filter-item">
-    <span class="filter-item__label">Domain</span>
+    <span class="filter-item__label" id="filter-domain-label">Service</span>
     <select id="filter-domain" class="control-select control-select--sm">
       <option value="all">All</option>
-      <option value="hotels">Hotels</option>
-      <option value="cruises">Cruises</option>
     </select>
   </label>
   <label class="filter-item" hidden>
@@ -110,9 +108,9 @@
     </select>
   </label>
   <label class="filter-item">
-    <span class="filter-item__label">Club</span>
+    <span class="filter-item__label" id="filter-club-label">Entity</span>
     <select id="filter-club" class="control-select control-select--sm" disabled>
-      <option value="">Select a domain first</option>
+      <option value="">Loading…</option>
     </select>
   </label>
   <label class="filter-item" hidden>
@@ -126,8 +124,8 @@
     </select>
   </label>
   <label class="filter-item filter-item--grow">
-    <span class="filter-item__label">Journey (Correlation ID) / Booking</span>
-    <input id="filter-id" class="control-input" type="search" placeholder="e.g. JNY-AIR-1004, BKG-A40004, corr-…" />
+    <span class="filter-item__label" id="filter-id-label">Journey ID</span>
+    <input id="filter-id" class="control-input" type="search" placeholder="Journey or operation id…" />
   </label>
   <button id="filter-clear" class="btn btn--ghost btn--sm" type="button">Clear filters</button>
 </section>
@@ -140,32 +138,38 @@
     <h1 class="tab-panel__heading">Executive Overview</h1>
     <div id="overview-kpis" class="kpi-grid" aria-label="Key performance indicators"></div>
 
-    <h2 class="section-heading">Domain Health</h2>
+    <h2 class="section-heading" id="overview-domains-heading">Service Health</h2>
     <div id="overview-domains" class="domain-grid"></div>
 
-    <h2 class="section-heading">Recent Operational Events <span class="construction-tag">Under construction</span></h2>
-    <ol id="overview-timeline" class="event-timeline"></ol>
+    <div id="overview-profile" class="overview-profile"></div>
+
+    <div id="overview-timeline-section" hidden>
+      <h2 class="section-heading">Recent Operational Events <span class="construction-tag">Under construction</span></h2>
+      <ol id="overview-timeline" class="event-timeline"></ol>
+    </div>
+
+    <ul id="overview-widget-notes" class="widget-notes" aria-label="Widgets not available for this company" hidden></ul>
   </section>
 
   <!-- CUSTOMER JOURNEYS ----------------------------------------------------->
   <section id="tab-journeys" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-journeys" hidden>
     <h1 class="tab-panel__heading">Customer Journeys</h1>
-    <p class="tab-panel__desc">End-to-end transaction explorer across Hotels and Cruises.</p>
+    <p class="tab-panel__desc" id="journeys-desc">End-to-end transaction explorer.</p>
     <div class="table-wrap">
       <table class="data-table" id="journeys-table">
         <caption class="sr-only">Customer journeys</caption>
-        <thead>
+        <thead id="journeys-thead">
           <tr>
             <th data-sort="correlationId">Journey ID</th>
-            <th data-sort="domain">Domain</th>
-            <th data-sort="customer">Customer</th>
-            <th data-sort="club">Brand/Club</th>
-            <th data-sort="startDate">Start Date</th>
+            <th data-sort="domain">Service</th>
+            <th data-sort="flow">Journey</th>
+            <th data-sort="entity">Entity</th>
+            <th data-sort="startDate">Started</th>
             <th data-sort="status">Status</th>
-            <th data-sort="sessionCount">Session count</th>
+            <th data-sort="stepCount">Steps</th>
+            <th data-sort="lastStepKey">Last step</th>
             <th data-sort="totalDurationMs">Duration</th>
-            <th data-sort="bookingId">Booking ID</th>
-            <th data-sort="timestamp">Timestamp</th>
+            <th data-sort="timestamp">Last seen</th>
           </tr>
         </thead>
         <tbody id="journeys-tbody"></tbody>
@@ -173,76 +177,101 @@
     </div>
   </section>
 
-  <!-- PLATFORM HEALTH -------------------------------------------------------->
+  <!-- PLATFORM HEALTH — Reliability Watch layout, sample figures only -------->
   <section id="tab-health" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-health" hidden>
-    <h1 class="tab-panel__heading">Platform Health</h1>
+    <div class="rw-head">
+      <div>
+        <h1 class="tab-panel__heading" id="reliability-watch-title">Reliability Watch</h1>
+        <p class="tab-panel__desc">Find the affected service → inspect evidence → see Triage Monkey's decision.</p>
+      </div>
+    </div>
 
-    <h2 class="section-heading">Domain Health</h2>
-    <div id="health-domains" class="domain-grid"></div>
+    <h2 class="rw-kicker">01 · Service health · historical versus current</h2>
+    <div class="rw-verticals" id="rw-verticals"></div>
 
-    <h2 class="section-heading">Component Health &amp; Service Map <span class="construction-tag">Under construction</span></h2>
-    <p class="tab-panel__desc">Select a component to inspect metrics, dependencies, incidents and suggested actions.</p>
-    <div id="component-grid" class="component-grid" aria-label="Platform components"></div>
+    <section class="rw-panel" aria-labelledby="rw-pillars-title">
+      <header class="rw-panel__head">
+        <div>
+          <h2 class="rw-panel__title" id="rw-pillars-title">Observability Pillars</h2>
+          <p class="rw-panel__note">Business: same hour and weekday, 7 days ago versus now. Monitored KPIs: latest bucket and consecutive anomalous buckets ("n of m"), evaluated by the backend health monitors. Arrows indicate direction, not severity.</p>
+        </div>
+        <p class="rw-panel__count" id="rw-pillars-count"><span class="rw-muted">— active</span> · 3 offline</p>
+      </header>
+      <div class="rw-pillars" id="rw-pillars"></div>
+    </section>
+
+    <h2 class="rw-kicker">02 · Where is it happening? · journey to component</h2>
+    <div class="rw-lower">
+      <section class="rw-card" aria-labelledby="rw-journey-title">
+        <header class="rw-card__head">
+          <div>
+            <h2 class="rw-card__title" id="rw-journey-title">Journey</h2>
+            <p class="rw-panel__note">Select a stage to compare each underlying component against its reference.</p>
+          </div>
+          <span class="rw-pill rw-pill--ok">Normal</span>
+        </header>
+        <div class="rw-stages" id="rw-stages" role="group" aria-label="Journey stages"></div>
+        <div class="rw-components" id="rw-components"></div>
+        <ul class="rw-legend">
+          <li class="rw-legend--stage">Journey stage</li>
+          <li class="rw-legend--app">App / API</li>
+          <li class="rw-legend--service">Service</li>
+          <li class="rw-legend--partner">Partner / infrastructure</li>
+        </ul>
+      </section>
+
+      <section class="rw-card rw-doctor" aria-labelledby="rw-doctor-title">
+        <header class="rw-card__head">
+          <h2 class="rw-card__title" id="rw-doctor-title">Triage Monkey</h2>
+          <span class="rw-pill rw-pill--idle" id="rw-triage-pill">Idle</span>
+        </header>
+        <p class="rw-doctor__lead">Automatically invoked by the backend health monitors after consecutive anomalous buckets, or manually by an SRE.</p>
+        <p class="rw-doctor__meta" id="rw-triage-meta">0 investigations · Only one Triage Monkey</p>
+        <p class="rw-doctor__rule">Manual: pick a pillar and KPI for <strong id="rw-triage-scope">—</strong> and click Run Triage Monkey investigation.</p>
+        <div class="rw-triage-run">
+          <label class="rw-triage-run__field" for="rw-triage-pillar">Pillar
+            <select id="rw-triage-pillar" class="settings-input">
+              <option value="application">Application Health</option>
+              <option value="business">Business Health</option>
+              <option value="infrastructure">Infrastructure Health</option>
+            </select>
+          </label>
+          <label class="rw-triage-run__field" for="rw-triage-kpi">KPI
+            <select id="rw-triage-kpi" class="settings-input"><option value="">No KPI configured</option></select>
+          </label>
+          <button class="btn btn--sm" id="rw-triage-run" type="button" disabled>Run Triage Monkey investigation</button>
+        </div>
+        <p class="rw-doctor__rule" id="rw-triage-run-status" aria-live="polite"></p>
+        <div class="rw-triage-list" id="rw-triage-list">
+          <div class="rw-investigation">
+            <h3>Investigation not started</h3>
+            <p>No Red Alert decision has been made for this service.</p>
+          </div>
+        </div>
+      </section>
+    </div>
   </section>
 
   <!-- ANALYTICS ------------------------------------------------------------->
   <section id="tab-analytics" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-analytics" hidden>
     <h1 class="tab-panel__heading">Operational Analytics</h1>
 
-    <div class="analytics-grid">
-      <div class="chart-card" data-dashboard-chart="hotels:step_latency_p95">
-        <h2 class="chart-card__title">Hotel T-Mobile — step latency (P95 + Overall)</h2>
-        <svg id="chart-hotel-latency" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
-        <div class="chart-legend" id="legend-hotel-latency"></div>
-      </div>
-      <div class="chart-card" data-dashboard-chart="hotels:exceptions_by_step">
-        <h2 class="chart-card__title">Hotel T-Mobile — exceptions by step</h2>
-        <svg id="chart-hotel-exceptions" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
-        <div class="chart-legend" id="legend-hotel-exceptions"></div>
-      </div>
-      <div class="chart-card" data-dashboard-chart="cruises:step_latency_p95">
-        <h2 class="chart-card__title">Cruise T-Mobile — P95 latency by step</h2>
-        <svg id="chart-cruise-latency" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
-        <div class="chart-legend" id="legend-cruise-latency"></div>
-      </div>
-      <div class="chart-card" data-dashboard-chart="cruises:exceptions_by_step">
-        <h2 class="chart-card__title">Cruise T-Mobile — exceptions by step</h2>
-        <svg id="chart-cruise-exceptions" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
-        <div class="chart-legend" id="legend-cruise-exceptions"></div>
-      </div>
-      <div class="chart-card chart-card--under-construction" data-dashboard-chart="air:step_latency_p95">
-        <h2 class="chart-card__title">Air T-Mobile — step latency (P95 + Overall) <span class="construction-tag">Under construction</span></h2>
-        <svg id="chart-air-latency" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
-        <div class="chart-legend" id="legend-air-latency"></div>
-      </div>
-      <div class="chart-card chart-card--under-construction" data-dashboard-chart="air:exceptions_by_step">
-        <h2 class="chart-card__title">Air T-Mobile — exceptions by step <span class="construction-tag">Under construction</span></h2>
-        <svg id="chart-air-exceptions" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
-        <div class="chart-legend" id="legend-air-exceptions"></div>
-      </div>
-      <div class="chart-card chart-card--under-construction" data-dashboard-chart="cars:step_latency_p95">
-        <h2 class="chart-card__title">Car T-Mobile — step latency (P95 + Overall) <span class="construction-tag">Under construction</span></h2>
-        <svg id="chart-car-latency" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
-        <div class="chart-legend" id="legend-car-latency"></div>
-      </div>
-      <div class="chart-card chart-card--under-construction" data-dashboard-chart="cars:exceptions_by_step">
-        <h2 class="chart-card__title">Car T-Mobile — exceptions by step <span class="construction-tag">Under construction</span></h2>
-        <svg id="chart-car-exceptions" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
-        <div class="chart-legend" id="legend-car-exceptions"></div>
-      </div>
-    </div>
+    <p class="tab-panel__note" id="analytics-note" hidden></p>
+    <div class="analytics-grid" id="analytics-charts"></div>
 
-    <h2 class="section-heading">Domain Comparison</h2>
+    <h2 class="section-heading" id="domain-comparison-heading">Service Comparison</h2>
     <div class="table-wrap">
       <table class="data-table" id="domain-comparison-table">
-        <thead><tr><th>Domain</th><th>Journeys</th><th>Conversion Rate</th><th>P95 Latency</th><th>Exceptions</th></tr></thead>
+        <thead id="domain-comparison-thead"><tr><th>Service</th><th>Journeys</th><th>Completion rate</th><th>P95 duration</th><th>Failed</th><th>Exceptions</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
 
+    <p class="tab-panel__note" id="analytics-legacy-note" hidden>Supplier, component, region and insight breakdowns are not available for this company yet.</p>
+    <div id="analytics-legacy" hidden>
     <div class="analytics-two-col">
       <div>
-        <h2 class="section-heading">Exceptions by Domain <span class="construction-tag">Under construction</span></h2>
+        <h2 class="section-heading">Exceptions by Service <span class="construction-tag">Under construction</span></h2>
         <div id="chart-exceptions-domain" class="bar-list"></div>
         <h2 class="section-heading">Exceptions by Component <span class="construction-tag">Under construction</span></h2>
         <div id="chart-exceptions-component" class="bar-list"></div>
@@ -251,7 +280,7 @@
         <h2 class="section-heading">Supplier Performance <span class="construction-tag">Under construction</span></h2>
         <div class="table-wrap">
           <table class="data-table data-table--compact" id="supplier-table">
-            <thead><tr><th>Supplier</th><th>Domain</th><th>Availability</th><th>P95</th><th>Error Rate</th></tr></thead>
+            <thead><tr><th>Supplier</th><th>Service</th><th>Availability</th><th>P95</th><th>Error Rate</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -282,18 +311,69 @@
 
     <h2 class="section-heading">Operational Insights <span class="construction-tag">Under construction</span></h2>
     <ul id="operational-insights" class="insight-list"></ul>
+    </div>
   </section>
 
   <!-- MONKEYS ---------------------------------------------------------------->
   <section id="tab-monkeys" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-monkeys" hidden>
     <h1 class="tab-panel__heading">Simian Army — Autonomous Operations Agents</h1>
     <p class="tab-panel__desc">“Monkeys” are autonomous or semi-autonomous agents inspired by the Netflix Simian Army concept. They observe, recommend, and — within guardrails — act.</p>
-    
+
     <h2 class="section-heading">What the agents are doing</h2>
-    <div id="overview-pipeline"></div>
-    
+    <div id="agents-pipeline"></div>
+
     <h2 class="section-heading">Agents</h2>
     <div id="monkeys-grid" class="monkeys-grid"></div>
+  </section>
+
+  <!-- DAEMONS ---------------------------------------------------------------->
+  <section id="tab-daemons" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-daemons" hidden>
+    <h1 class="tab-panel__heading">Daemons — What the background monitors are doing now</h1>
+    <p class="tab-panel__desc">KPI ingestion, the three pillar health monitors and the Triage Monkey, as reported by the backend. This tab only shows their activity; it does not evaluate anything.</p>
+
+    <h2 class="section-heading">Status</h2>
+    <div id="daemons-cards" class="daemon-cards" aria-live="polite"></div>
+
+    <h2 class="section-heading">Live console</h2>
+    <div id="daemon-console" class="dconsole">
+      <div class="dconsole__toolbar" role="toolbar" aria-label="Console controls">
+        <label class="dconsole__control">
+          <span class="control-group__label">Daemon</span>
+          <select id="daemon-console-daemon" class="control-select control-select--sm" aria-label="Filter by daemon">
+            <option value="">All daemons</option>
+          </select>
+        </label>
+        <label class="dconsole__control">
+          <span class="control-group__label">Min. level</span>
+          <select id="daemon-console-level" class="control-select control-select--sm" aria-label="Minimum level">
+            <option value="Info">Info</option>
+            <option value="Warning">Warning</option>
+            <option value="Error">Error</option>
+          </select>
+        </label>
+        <label class="dconsole__control dconsole__control--grow">
+          <span class="control-group__label">Search</span>
+          <input id="daemon-console-search" type="search" class="control-input" placeholder="Filter loaded lines…" aria-label="Search loaded lines" autocomplete="off">
+        </label>
+        <div class="dconsole__buttons">
+          <button id="daemon-console-pause" type="button" class="btn btn--sm btn--ghost" aria-pressed="false">Pause</button>
+          <button id="daemon-console-clear" type="button" class="btn btn--sm btn--ghost">Clear</button>
+          <label class="dconsole__toggle"><input id="daemon-console-autoscroll" type="checkbox" checked> Auto-scroll</label>
+          <button id="daemon-console-fullscreen" type="button" class="btn btn--sm btn--ghost" aria-pressed="false">Full screen</button>
+        </div>
+        <div class="dconsole__status">
+          <span id="daemon-console-run-chip" class="dconsole__chip" hidden>
+            <span id="daemon-console-run-label"></span>
+            <button id="daemon-console-run-clear" type="button" class="dconsole__chip-x" aria-label="Show all runs">&times;</button>
+          </span>
+          <span id="daemon-console-count" class="dconsole__count">0 lines</span>
+          <span class="dconsole__tz" title="Console and card times are UTC, like the times quoted in daemon messages. Hover a line's time for your local time.">Times in UTC</span>
+          <span id="daemon-console-conn" class="daemon-conn daemon-conn--idle" role="status">Idle</span>
+          <button id="daemon-console-retry" type="button" class="btn btn--sm btn--ghost" hidden>Retry</button>
+        </div>
+      </div>
+      <div id="daemon-console-body" class="dconsole__body" role="log" aria-live="off" aria-label="Daemon activity"></div>
+    </div>
   </section>
 
   <!-- MEMORY BANK ------------------------------------------------------------>
@@ -303,12 +383,75 @@
     <div id="memory-bank"></div>
   </section>
 
-  <!-- CLUB MAP -------------------------------------------------------------->
+  <!-- APPLICATION MAP ------------------------------------------------------>
   <section id="tab-club-map" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-club-map" hidden>
-    <h1 class="tab-panel__heading">Club and Fusion application map</h1>
-    <p class="tab-panel__desc">Source of truth for which clubs we observe. Read-only. Data from <code>brand.ClubInventory</code>.</p>
+    <h1 class="tab-panel__heading">Application Map <span class="pill pill--warn">Under construction</span></h1>
+    <p class="tab-panel__desc">Source of truth for which clubs we observe. Read-only. Data from <code>brand.ClubInventory</code> (Fusion, Hybrid, SOR, NG).</p>
     <p class="tab-panel__note" id="club-map-note">Loading club inventory…</p>
-    <div class="filter-bar filter-bar--inline" aria-label="Club map filters">
+
+    <div id="club-map-overview" class="club-map-overview" aria-label="Observability overview">
+      <div class="club-map-overview__total" id="club-map-overview-total">— clubs</div>
+      <div class="club-map-overview__grid" id="club-map-overview-grid">
+        <article class="kpi-card club-map-overview__card" data-platform="Fusion">
+          <div class="kpi-card__label">Fusion</div>
+          <div class="kpi-card__value" data-role="value">—</div>
+          <div class="club-map-chart" data-role="chart" aria-hidden="true"></div>
+          <div class="kpi-card__meta" data-role="meta">Loading…</div>
+          <ul class="club-map-chart__legend" aria-hidden="true">
+            <li><span class="club-map-chart__swatch club-map-chart__swatch--observed"></span> Observed</li>
+            <li><span class="club-map-chart__swatch club-map-chart__swatch--not-observed"></span> Not observed</li>
+            <li class="club-map-chart__legend-partial" hidden><span class="club-map-chart__swatch club-map-chart__swatch--partial"></span> Partial</li>
+          </ul>
+        </article>
+        <article class="kpi-card club-map-overview__card" data-platform="Hybrid">
+          <div class="kpi-card__label">Hybrid</div>
+          <div class="kpi-card__value" data-role="value">—</div>
+          <div class="club-map-chart" data-role="chart" aria-hidden="true"></div>
+          <div class="kpi-card__meta" data-role="meta">Loading…</div>
+          <ul class="club-map-chart__legend" aria-hidden="true">
+            <li><span class="club-map-chart__swatch club-map-chart__swatch--observed"></span> Observed</li>
+            <li><span class="club-map-chart__swatch club-map-chart__swatch--not-observed"></span> Not observed</li>
+            <li class="club-map-chart__legend-partial" hidden><span class="club-map-chart__swatch club-map-chart__swatch--partial"></span> Partial</li>
+          </ul>
+        </article>
+        <article class="kpi-card club-map-overview__card" data-platform="SOR">
+          <div class="kpi-card__label">SOR</div>
+          <div class="kpi-card__value" data-role="value">—</div>
+          <div class="club-map-chart" data-role="chart" aria-hidden="true"></div>
+          <div class="kpi-card__meta" data-role="meta">Loading…</div>
+          <ul class="club-map-chart__legend" aria-hidden="true">
+            <li><span class="club-map-chart__swatch club-map-chart__swatch--observed"></span> Observed</li>
+            <li><span class="club-map-chart__swatch club-map-chart__swatch--not-observed"></span> Not observed</li>
+            <li class="club-map-chart__legend-partial" hidden><span class="club-map-chart__swatch club-map-chart__swatch--partial"></span> Partial</li>
+          </ul>
+        </article>
+        <article class="kpi-card club-map-overview__card" data-platform="NG">
+          <div class="kpi-card__label">NG</div>
+          <div class="kpi-card__value" data-role="value">—</div>
+          <div class="club-map-chart" data-role="chart" aria-hidden="true"></div>
+          <div class="kpi-card__meta" data-role="meta">Loading…</div>
+          <ul class="club-map-chart__legend" aria-hidden="true">
+            <li><span class="club-map-chart__swatch club-map-chart__swatch--observed"></span> Observed</li>
+            <li><span class="club-map-chart__swatch club-map-chart__swatch--not-observed"></span> Not observed</li>
+            <li class="club-map-chart__legend-partial" hidden><span class="club-map-chart__swatch club-map-chart__swatch--partial"></span> Partial</li>
+          </ul>
+        </article>
+      </div>
+      <p class="club-map-overview__error" id="club-map-overview-error" hidden>Data unavailable</p>
+    </div>
+
+    <aside class="maturity-legend" aria-label="About maturity levels">
+      <h2 class="maturity-legend__title">About maturity levels</h2>
+      <p class="maturity-legend__hint">Levels 0–3 (colors below) are the maturity model. Product badges → the product's ClubId workbook (products without a workbook stay unlinked). <strong>Telemetry</strong> column → that App Insights Logs blade only (free query, not the workbook). Until observability maturity is live, product badges show <strong>0</strong> only — colors/levels activate when real status lands.</p>
+      <ul class="maturity-legend__list">
+        <li><span class="maturity-badge maturity-badge--0" aria-hidden="true">0</span> <strong>Not Observed</strong> — No telemetry exists or not centralized.</li>
+        <li><span class="maturity-badge maturity-badge--1" aria-hidden="true">1</span> <strong>Observed</strong> — Telemetry available. Basic dashboards and metrics.</li>
+        <li><span class="maturity-badge maturity-badge--2" aria-hidden="true">2</span> <strong>Agentically Observed</strong> — Correlated analysis with agentic insights (RCA, patterns, anomalies).</li>
+        <li><span class="maturity-badge maturity-badge--3" aria-hidden="true">3</span> <strong>Alerting &amp; Self-Healing</strong> — Proactive alerts with automated remediation.</li>
+      </ul>
+    </aside>
+
+    <div class="filter-bar filter-bar--inline" aria-label="Application map filters">
       <label class="filter-item">
         <span class="filter-item__label">Brand</span>
         <select id="club-map-filter-brand" class="control-select control-select--sm">
@@ -337,6 +480,8 @@
           <option value="">All</option>
           <option value="Fusion">Fusion</option>
           <option value="Hybrid">Hybrid</option>
+          <option value="SOR">SOR</option>
+          <option value="NG">NG</option>
         </select>
       </label>
       <label class="filter-item">
@@ -347,46 +492,54 @@
     <div class="table-wrap">
       <table class="data-table" id="club-map-table">
         <colgroup>
-          <col class="club-map-col--product" />
-          <col class="club-map-col--product" />
-          <col class="club-map-col--product" />
-          <col class="club-map-col--product" />
+          <col class="club-map-col--clientid" />
           <col class="club-map-col--brand" />
           <col class="club-map-col--clubid" />
           <col class="club-map-col--clubname" />
-          <col class="club-map-col--clientid" />
           <col class="club-map-col--site" />
           <col class="club-map-col--platform" />
           <col class="club-map-col--telemetry" />
-          <col class="club-map-col--environment" />
+          <col class="club-map-col--product" />
+          <col class="club-map-col--product" />
+          <col class="club-map-col--product" />
+          <col class="club-map-col--product" />
         </colgroup>
         <thead>
           <tr>
-            <th colspan="4" class="club-map-th--products-group">Products</th>
+            <th rowspan="2" data-sort="clientId">Client ID</th>
             <th rowspan="2" data-sort="brandName">Brand</th>
             <th rowspan="2" data-sort="clubId">Club ID</th>
-            <th rowspan="2" data-sort="clubName">Club name</th>
-            <th rowspan="2" data-sort="clientId">Client ID</th>
+            <th rowspan="2" data-sort="clubName">Club</th>
             <th rowspan="2" data-sort="site">Site</th>
             <th rowspan="2" data-sort="fusionPlatform">Platform</th>
             <th rowspan="2" data-sort="telemetryLocation">Telemetry</th>
-            <th rowspan="2" data-sort="environment">Environment</th>
+            <th colspan="4" class="club-map-th--products-group">Products</th>
           </tr>
-          <tr>
-            <th data-sort="productCars" class="club-map-th--product">Cars</th>
-            <th data-sort="productCruises" class="club-map-th--product">Cruises</th>
-            <th data-sort="productHotels" class="club-map-th--product">Hotels</th>
-            <th data-sort="productFlights" class="club-map-th--product">Flights</th>
-          </tr>
+          <tr id="club-map-product-headers"></tr>
         </thead>
         <tbody id="club-map-tbody">
           <tr>
-            <td colspan="12">
+            <td colspan="11">
               <div class="state-block" role="status">No inventory loaded yet. The API will fill this table next.</div>
             </td>
           </tr>
         </tbody>
       </table>
+    </div>
+    <div class="club-map-pagination" id="club-map-pagination" hidden>
+      <label class="club-map-pagination__size">
+        <span>Rows</span>
+        <select id="club-map-page-size" class="control-select control-select--sm" aria-label="Rows per page">
+          <option value="25">25</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
+        </select>
+      </label>
+      <div class="club-map-pagination__nav">
+        <button type="button" class="btn btn--sm" id="club-map-page-prev" aria-label="Previous page">Previous</button>
+        <span class="club-map-pagination__label" id="club-map-page-label">Page 1 of 1</span>
+        <button type="button" class="btn btn--sm" id="club-map-page-next" aria-label="Next page">Next</button>
+      </div>
     </div>
   </section>
 
@@ -397,14 +550,16 @@
 
     <div class="settings-layout">
       <nav class="settings-subnav" aria-label="Settings sections">
-        <button class="settings-subnav__item" type="button" data-settings-section="latency" hidden>Latency Thresholds</button>
+        <button class="settings-subnav__item" type="button" data-settings-section="latency">Latency Thresholds</button>
         <button class="settings-subnav__item is-active" type="button" data-settings-section="llm">LLM Client</button>
-        <button class="settings-subnav__item" type="button" data-settings-section="slo" hidden>SLO Definitions</button>
+        <button class="settings-subnav__item" type="button" data-settings-section="slo">SLO Definitions</button>
         <button class="settings-subnav__item" type="button" data-settings-section="notifications">Notifications</button>
-        <button class="settings-subnav__item" type="button" data-settings-section="kql" hidden>KQL Queries</button>
-        <button class="settings-subnav__item" type="button" data-settings-section="sources" hidden>Telemetry Sources</button>
-        <button class="settings-subnav__item" type="button" data-settings-section="budgets" hidden>Agent Budgets</button>
+        <button class="settings-subnav__item" type="button" data-settings-section="kpis">KPIs</button>
+        <button class="settings-subnav__item" type="button"         data-settings-section="kql">KQL Queries</button>
+                <button class="settings-subnav__item" type="button" data-settings-section="sources">Telemetry Sources</button>
+                <button class="settings-subnav__item" type="button" data-settings-section="budgets">Agent Budgets</button>
         <button class="settings-subnav__item" type="button" data-settings-section="company">Company Profiles</button>
+        <button class="settings-subnav__item" type="button" data-settings-section="tokens">Access Tokens</button>
       </nav>
 
       <div class="settings-content">
@@ -580,9 +735,9 @@
             <h3 class="settings-card__group-title">Add or update a definition</h3>
             <div class="form-grid">
               <div class="form-field">
-                <label for="slo-add-domain" data-tooltip="Which vertical this SLO applies to.">Domain</label>
+                <label for="slo-add-domain" id="slo-add-domain-label" data-tooltip="Which service of the active company this SLO applies to.">Service</label>
                 <select id="slo-add-domain" class="settings-input">
-                  <option value="hotels">Hotels</option><option value="cars">Cars</option><option value="cruises">Cruises</option><option value="air">Air</option>
+                  <option value="">Loading…</option>
                 </select>
               </div>
               <div class="form-field">
@@ -592,8 +747,8 @@
                 </select>
               </div>
               <div class="form-field form-field--wide">
-                <label for="slo-add-stage" data-tooltip="Required for Latency (must match a real journey stage name exactly, e.g. '07 Booking'). Leave blank for Exception rate - that signal is domain-level.">Stage (blank for exception_rate)</label>
-                <input type="text" id="slo-add-stage" class="settings-input" placeholder="e.g. 01 Login">
+                <label for="slo-add-stage" data-tooltip="Required for Latency (must match a step name of the active company's profile exactly, as shown in Customer Journeys). Leave blank for Exception rate - that signal is domain-level.">Stage (blank for exception_rate)</label>
+                <input type="text" id="slo-add-stage" class="settings-input" placeholder="step name, as in the profile">
               </div>
               <div class="form-field">
                 <label for="slo-add-threshold" data-tooltip="A single Latency sample above this value (ms) counts as 'bad' for the error budget. Ignored for Exception rate.">Target threshold (ms, latency only)</label>
@@ -616,7 +771,7 @@
             <table class="data-table" id="slo-definitions-table">
               <thead>
                 <tr>
-                  <th data-tooltip="Vertical this SLO applies to.">Domain</th>
+                  <th data-tooltip="Service this SLO applies to.">Service</th>
                   <th data-tooltip="Journey stage for a Latency SLO; blank for the domain-level Exception rate signal.">Stage</th>
                   <th data-tooltip="Latency (per-stage duration) or Exception rate (domain-wide error occurrences).">Signal</th>
                   <th data-tooltip="A single sample above this value (ms) counts as 'bad'. Latency only.">Target threshold (ms)</th>
@@ -656,7 +811,7 @@
             </label>
             <div class="form-field form-field--wide">
               <label for="notif-email-recipients">Recipients (comma-separated)</label>
-              <input type="text" id="notif-email-recipients" class="settings-input" placeholder="alice@arrivia.com, bob@arrivia.com">
+              <input type="text" id="notif-email-recipients" class="settings-input" placeholder="oncall@example.com, sre-team@example.com">
             </div>
 
             <h3 class="settings-card__group-title">Email provider — SMTP</h3>
@@ -722,7 +877,7 @@
 
           <div class="settings-help">
             <strong>Queries reference telemetry by alias, never by subscription.</strong>
-            Write <code>app('{{SOURCE:cruise-core}}')</code> and register the resource under
+            Write <code>app('{{SOURCE:web-api}}')</code> and register the resource under
             <em>Telemetry Sources</em>. A literal <code>/subscriptions/...</code> path is rejected on save —
             that is what keeps the source catalog an allow-list of everything a stored query can read.
           </div>
@@ -777,7 +932,7 @@
 
           <div class="settings-help">
             <strong>To move an agent to a different subscription, edit the row here — not the query.</strong>
-            Queries name a source by alias, so changing <code>cruise-core</code> once repoints every query that uses it.
+            Queries name a source by alias, so changing <code>web-api</code> once repoints every query that uses it.
             The <em>Used by</em> column shows exactly which ones that is.
           </div>
 
@@ -785,7 +940,7 @@
             <h3 class="settings-card__group-title">Add or update a source</h3>
             <div class="llm-client-settings__status" id="sources-status" aria-live="polite"></div>
             <div class="form-grid">
-              <div class="form-field"><label for="source-alias">Alias</label><input type="text" id="source-alias" class="settings-input" placeholder="cruise-core"></div>
+              <div class="form-field"><label for="source-alias">Alias</label><input type="text" id="source-alias" class="settings-input" placeholder="web-api"></div>
               <div class="form-field">
                 <label for="source-environment">Environment</label>
                 <select id="source-environment" class="settings-input">
@@ -941,6 +1096,199 @@
             </table>
           </div>
         </section>
+
+        <section class="settings-section" data-settings-section="kpis" hidden>
+          <h2 class="settings-section__title">KPI Definitions</h2>
+          <p class="tab-panel__desc">The rules the backend health monitors evaluate for each pillar and domain. The portal only edits them; detection runs in the Functions host on its own timers. Every change is audited below.</p>
+          <div class="llm-client-settings__status" id="kpi-settings-status" aria-live="polite"></div>
+          <div class="table-wrap">
+            <table class="data-table" id="kpi-settings-table">
+              <thead>
+                <tr>
+                  <th>Pillar</th>
+                  <th>KPI</th>
+                  <th>Domain</th>
+                  <th>Grain</th>
+                  <th>Direction</th>
+                  <th>Aggregation</th>
+                  <th>Method</th>
+                  <th>Consecutive</th>
+                  <th>Cooldown (min)</th>
+                  <th>Enabled</th>
+                  <th>Last updated</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="kpi-settings-tbody"></tbody>
+            </table>
+          </div>
+
+          <div class="settings-card" id="kpi-editor" hidden>
+            <h3 class="settings-card__group-title" id="kpi-editor-title">Edit KPI</h3>
+            <div class="llm-client-settings__status" id="kpi-editor-status" aria-live="polite"></div>
+            <ul class="kpi-editor__errors" id="kpi-editor-errors" hidden></ul>
+            <div class="form-grid">
+              <div class="form-field">
+                <label for="kpi-edit-direction">Direction</label>
+                <select id="kpi-edit-direction" class="settings-input">
+                  <option value="increase">Increase</option>
+                  <option value="decrease">Decrease</option>
+                  <option value="either">Either</option>
+                </select>
+                <small class="form-field__hint">Which movement is unhealthy. Static threshold does not accept Either.</small>
+              </div>
+              <div class="form-field">
+                <label for="kpi-edit-frequency">Evaluation frequency</label>
+                <input type="text" id="kpi-edit-frequency" class="settings-input" placeholder="00:05:00">
+                <small class="form-field__hint">hh:mm:ss or d.hh:mm:ss</small>
+              </div>
+              <div class="form-field">
+                <label for="kpi-edit-bucket">Bucket size</label>
+                <input type="text" id="kpi-edit-bucket" class="settings-input" placeholder="01:00:00">
+                <small class="form-field__hint">hh:mm:ss or d.hh:mm:ss</small>
+              </div>
+              <div class="form-field">
+                <label for="kpi-edit-lookback">Lookback window</label>
+                <input type="text" id="kpi-edit-lookback" class="settings-input" placeholder="1.00:00:00">
+                <small class="form-field__hint">At least one bucket.</small>
+              </div>
+              <div class="form-field">
+                <label for="kpi-edit-sample">Sample size</label>
+                <input type="number" id="kpi-edit-sample" class="settings-input" min="0" max="100000">
+                <small class="form-field__hint">Samples stored per bucket (0..100000).</small>
+              </div>
+              <div class="form-field">
+                <label for="kpi-edit-min-obs">Minimum observations</label>
+                <input type="number" id="kpi-edit-min-obs" class="settings-input" min="0">
+                <small class="form-field__hint">Buckets with fewer are not evaluated.</small>
+              </div>
+              <div class="form-field">
+                <label for="kpi-edit-grain">Grain</label>
+                <select id="kpi-edit-grain" class="settings-input">
+                  <option value="domain">Domain (one aggregate series)</option>
+                  <option value="entity">Entity (one series per entity)</option>
+                </select>
+                <small class="form-field__hint">Entity KPIs only feed the Scout shadow; they never change pillar status.</small>
+              </div>
+              <div class="form-field">
+                <label for="kpi-edit-max-entities">Max entities per bucket</label>
+                <input type="number" id="kpi-edit-max-entities" class="settings-input" min="1" max="5000">
+                <small class="form-field__hint">Entity grain only: series kept per bucket (1..5000).</small>
+              </div>
+              <div class="form-field">
+                <label for="kpi-edit-method">Detection method</label>
+                <select id="kpi-edit-method" class="settings-input">
+                  <option value="staticThreshold">Static threshold</option>
+                  <option value="baselinePercent">Baseline percent</option>
+                  <option value="robustZScore">Robust z-score</option>
+                </select>
+              </div>
+              <div class="form-field form-field--wide">
+                <label for="kpi-edit-params">Method parameters (JSON)</label>
+                <textarea id="kpi-edit-params" class="settings-input" rows="2" spellcheck="false"></textarea>
+                <small class="form-field__hint" id="kpi-edit-params-hint"></small>
+              </div>
+              <div class="form-field">
+                <label for="kpi-edit-consecutive">Consecutive buckets</label>
+                <input type="number" id="kpi-edit-consecutive" class="settings-input" min="1" max="48">
+                <small class="form-field__hint">Anomalous buckets in a row before Triage is triggered (1..48).</small>
+              </div>
+              <div class="form-field">
+                <label for="kpi-edit-cooldown">Cooldown (minutes)</label>
+                <input type="number" id="kpi-edit-cooldown" class="settings-input" min="0" max="10080">
+                <small class="form-field__hint">0..10080</small>
+              </div>
+              <div class="form-field form-field--checkbox">
+                <label><input type="checkbox" id="kpi-edit-enabled"> Enabled</label>
+              </div>
+              <div class="form-field"><label for="kpi-edit-changed-by">Changed by</label><input type="text" id="kpi-edit-changed-by" class="settings-input" placeholder="your name"></div>
+            </div>
+            <div class="llm-client-settings__actions">
+              <button class="btn btn--sm" id="kpi-editor-save" type="button">Save</button>
+              <button class="btn btn--sm btn--ghost" id="kpi-editor-close" type="button">Close</button>
+            </div>
+          </div>
+
+          <h3 class="settings-section__subtitle">Change History <span class="settings-help" id="kpi-audit-caption">Select a KPI to see its history.</span></h3>
+          <div class="table-wrap">
+            <table class="data-table" id="kpi-audit-table">
+              <thead>
+                <tr><th>Changed at</th><th>Changed by</th><th>Direction</th><th>Method</th><th>Parameters</th><th>Consecutive</th><th>Cooldown</th><th>Enabled</th></tr>
+              </thead>
+              <tbody id="kpi-audit-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="settings-section" data-settings-section="tokens" hidden>
+          <h2 class="settings-section__title">AppInsights Access Tokens</h2>
+          <p class="tab-panel__desc">Tokens the agents use to query Application Insights (and Azure DevOps search) in each Entra tenant. Responses never include a token or a client secret — only metadata.</p>
+
+          <div class="settings-help">
+            <strong>How tokens are kept fresh.</strong>
+            <b>manual</b>: paste a token from <code>az account get-access-token --tenant TENANT-ID --scope https://api.applicationinsights.io/.default --query accessToken -o tsv</code>; it lasts about one hour.
+            <b>azure-cli</b>: the token-refresh daemon renews it with the Functions host <code>az login</code> for the given Entra tenant id.
+            <b>service-principal</b>: the daemon renews it with the client id and secret (stored encrypted, never shown again).
+            The daemon mints App Insights tokens, except for the <code>azure-devops</code> key, which it mints for Azure DevOps (scope <code>499b84ac-1321-427f-aa17-267ca6975798/.default</code>).
+          </div>
+
+          <div class="settings-card">
+            <h3 class="settings-card__group-title">Add or update a token</h3>
+            <div class="form-grid">
+              <div class="form-field">
+                <label for="token-tenant-key">Tenant key *</label>
+                <input type="text" id="token-tenant-key" class="settings-input" list="token-tenant-keys" placeholder="e.g. main">
+                <datalist id="token-tenant-keys"></datalist>
+                <small class="form-field__hint">An existing key updates that row.</small>
+              </div>
+              <div class="form-field">
+                <label for="token-email">Email *</label>
+                <input type="email" id="token-email" class="settings-input" placeholder="user@company.com">
+              </div>
+              <div class="form-field">
+                <label for="token-refresh-mode">Auto-refresh mode</label>
+                <select id="token-refresh-mode" class="settings-input">
+                  <option value="manual">manual (paste a new token when it expires)</option>
+                  <option value="azure-cli">azure-cli (Functions host az login)</option>
+                  <option value="service-principal">service-principal (client id + secret)</option>
+                </select>
+              </div>
+              <div class="form-field" id="token-aad-tenant-field">
+                <label for="token-aad-tenant">Entra tenant id</label>
+                <input type="text" id="token-aad-tenant" class="settings-input" placeholder="00000000-0000-0000-0000-000000000000">
+              </div>
+              <div class="form-field" id="token-client-id-field">
+                <label for="token-client-id">Client id *</label>
+                <input type="text" id="token-client-id" class="settings-input" placeholder="Service principal application id">
+              </div>
+              <div class="form-field" id="token-client-secret-field">
+                <label for="token-client-secret">Client secret</label>
+                <input type="password" id="token-client-secret" class="settings-input" autocomplete="new-password" placeholder="Leave blank to keep the stored secret">
+                <small class="form-field__hint">Write-only: stored encrypted and never returned.</small>
+              </div>
+              <div class="form-field form-field--wide">
+                <label for="token-value">Access token <span id="token-value-required">*</span></label>
+                <textarea id="token-value" class="settings-input" rows="4" spellcheck="false" placeholder="Paste only the accessToken value (long JWT string)"></textarea>
+                <small class="form-field__hint" id="token-value-hint">Paste only the accessToken value, not the entire JSON output.</small>
+              </div>
+            </div>
+            <div class="llm-client-settings__actions">
+              <button class="btn btn--sm" id="token-save" type="button">Save token</button>
+              <span class="llm-client-settings__status" id="token-save-status" aria-live="polite"></span>
+            </div>
+          </div>
+
+          <h3 class="settings-section__subtitle">Stored tokens</h3>
+          <div class="llm-client-settings__status" id="token-table-status" aria-live="polite"></div>
+          <div class="table-wrap">
+            <table class="data-table" id="tokens-table">
+              <thead>
+                <tr><th>Tenant</th><th>Auto-refresh</th><th>Expires</th><th>Last refresh</th><th>Status</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="tokens-tbody"></tbody>
+            </table>
+          </div>
+        </section>
       </div>
     </div>
   </section>
@@ -956,10 +1304,11 @@
             <th data-sort="id">Exception ID</th>
             <th data-sort="timestamp">Timestamp</th>
             <th data-sort="severity">Severity</th>
-            <th data-sort="domain">Domain</th>
-            <th data-sort="clubName">Club</th>
-            <th data-sort="component">Stage</th>
+            <th data-sort="domain" id="exceptions-th-domain">Service</th>
+            <th data-sort="clubName" id="exceptions-th-entity">Entity</th>
+            <th data-sort="component" id="exceptions-th-stage">Step</th>
             <th data-sort="type">Type</th>
+            <th data-sort="source">Source</th>
             <th data-sort="occurrenceCount">Occurrences</th>
             <th data-sort="usersAffected">Users Affected</th>
             <th data-sort="status">Status</th>
@@ -1001,5 +1350,6 @@
 <script src="domain-health.js"></script>
 <script src="domain-comparison.js"></script>
 <script src="app.js"></script>
+<script src="daemons.js"></script>
 </body>
 </html>

@@ -20,6 +20,8 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
+    <!-- Fabric warehouse sign-in reads the service principal from Key Vault. -->
+    <PackageReference Include="Azure.Security.KeyVault.Secrets" Version="4.8.0" />
     <!-- Notifications tab's "Email" channel option for Azure Communication Services - the only
          one of the 3 email providers whose auth (HMAC-signed requests) is impractical to
          reimplement by hand, unlike SMTP (built-in SmtpClient) and SendGrid (plain REST+API key) -

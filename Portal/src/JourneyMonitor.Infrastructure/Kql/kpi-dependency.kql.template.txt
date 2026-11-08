@@ -1,0 +1,41 @@
+// KPI ingestion - dependency calls to the partners of a company profile (Spec 1000 contract v4 section 5,
+// SourceKey appinsights:dependency, AppInsightsKpiSource).
+//
+// Nothing in this file names a company, a partner or a host. CompanyKqlTemplater fills the
+// dependency source union (the dependencies table of every telemetry source alias of the
+// definition's service, its Domain) and the partner classifier (the profile's Partners, first declared
+// partner whose matcher hits wins) for the definition's ProfileKey. IKqlSourceResolver then turns
+// each source alias into a resource id. (Placeholders are never written inside a comment: a
+// multi-line fragment would end the comment.) AppInsightsKpiSource validates and formats every
+// other token: from/to as datetime literals, bucket as a timespan and maxEntities as an integer.
+//
+// Entity grain only: one kind "bucket" row per partner x bucket, EntityKey = partner key, keeping
+// the maxEntities partners with the most calls per bucket. Dependency rows no partner claims are
+// dropped. The scope is the service's telemetry sources: a source shared by two services reports
+// the same partner calls for both. A dependency call carries no stage, so the definition's Stage
+// must be empty.
+// TotalCount = sum(itemCount) of calls, FailedCount = calls with success == false (itemCount),
+// P50/P95/Mean = duration in ms, Value = failed calls as a percentage of calls. No samples.
+let fromTs = {{from}};
+let toTs = {{to}};
+let bucketSize = {{bucket}};
+let maxEntities = {{maxEntities}};
+let historyStart = fromTs;
+let tEnd = toTs;
+union
+{{DEPENDENCY_SOURCE_UNION}}
+| where timestamp >= fromTs and timestamp < toTs
+{{PARTNER_CLASSIFIER}}
+| where isnotempty(Partner)
+| extend BucketStart = bin_at(timestamp, bucketSize, datetime(1970-01-01)), Ms = todouble(duration)
+| summarize TotalCount = sum(itemCount), FailedCount = sumif(itemCount, success == false),
+            P50 = percentile(Ms, 50), P95 = percentile(Ms, 95), Mean = avg(Ms)
+            by BucketStart, Partner
+| sort by BucketStart asc, TotalCount desc, Partner asc
+| extend EntityRank = row_number(1, prev(BucketStart) != BucketStart)
+| where EntityRank <= maxEntities
+| project ['kind'] = "bucket", BucketStart, EntityKey = Partner,
+          TotalCount = tolong(TotalCount),
+          Value = iff(TotalCount > 0, 100.0 * todouble(FailedCount) / todouble(TotalCount), real(null)),
+          P50, P95, Mean, FailedCount = tolong(FailedCount),
+          Timestamp = datetime(null), OperationId = ""

@@ -5,6 +5,7 @@ using JourneyMonitor.Core.Abstractions;
 using JourneyMonitor.Core.Configuration;
 using JourneyMonitor.Core.Domain;
 using JourneyMonitor.Core.Options;
+using JourneyMonitor.Core.UseCases;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -167,7 +168,8 @@ public abstract class LogsAgentTool(
     IOptions<InsightsOptions> insightsOptions,
     IOptions<ScoutOptions> scoutOptions,
     IOptions<InspectorOptions> inspectorOptions,
-    ILogger logger) : IAgentTool
+    ILogger logger,
+    ProfileTelemetrySourceResolver? profileSources = null) : IAgentTool
 {
     protected static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -208,7 +210,45 @@ public abstract class LogsAgentTool(
 
     public abstract Task<AgentToolResult> ExecuteAsync(string argumentsJson, InspectorContext context, CancellationToken ct = default);
 
-    protected async Task<AgentToolResult> RunQueryAsync(string kql, int maxRows, CancellationToken ct)
+    /// <summary>
+    /// FX4: the case's profile decides which sources the query may read. The incumbent runs the
+    /// query as written; another profile runs it over its own owned aliases only, and a profile with
+    /// none gets no query at all.
+    /// </summary>
+    protected async Task<AgentToolResult> RunQueryAsync(string kql, int maxRows, InspectorContext context, CancellationToken ct)
+    {
+        var profileKey = !string.IsNullOrWhiteSpace(context.Case.ProfileKey) ? context.Case.ProfileKey : context.Package.ProfileKey;
+        ProfileTelemetrySources sources;
+        if (ProfileTelemetrySourceResolver.IsIncumbent(profileKey))
+        {
+            sources = ProfileTelemetrySources.Incumbent();
+        }
+        else
+        {
+            sources = profileSources is null
+                ? ProfileTelemetrySources.None(profileKey.Trim())
+                : await profileSources.ResolveAsync(profileKey, ct);
+        }
+
+        if (!sources.CanQuery)
+        {
+            return AgentToolResult.Failed(sources.Reason ?? ProfileTelemetrySources.NoSourcesMessage(sources.ProfileKey));
+        }
+
+        try
+        {
+            kql = sources.Apply(kql);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "[InspectorMonkey] tool {Tool} could not scope its query to profile {ProfileKey}.", Name, sources.ProfileKey);
+            return AgentToolResult.Failed(InspectorKqlGuards.Truncate(ex.Message, 500));
+        }
+
+        return await ExecuteQueryAsync(kql, maxRows, ct);
+    }
+
+    private async Task<AgentToolResult> ExecuteQueryAsync(string kql, int maxRows, CancellationToken ct)
     {
         try
         {
@@ -403,8 +443,9 @@ public sealed class DrillDownEventsTool(
     IOptions<InsightsOptions> insightsOptions,
     IOptions<ScoutOptions> scoutOptions,
     IOptions<InspectorOptions> inspectorOptions,
-    ILogger<DrillDownEventsTool> logger)
-    : LogsAgentTool(telemetrySource, kqlProvider, sourceResolver, insightsOptions, scoutOptions, inspectorOptions, logger)
+    ILogger<DrillDownEventsTool> logger,
+    ProfileTelemetrySourceResolver? profileSources = null)
+    : LogsAgentTool(telemetrySource, kqlProvider, sourceResolver, insightsOptions, scoutOptions, inspectorOptions, logger, profileSources)
 {
     public override string Name => "drill_down_events";
 
@@ -436,7 +477,7 @@ public sealed class DrillDownEventsTool(
             return AgentToolResult.Failed($"the drill-down query could not be built: {InspectorKqlGuards.Truncate(ex.Message, 300)}");
         }
 
-        return await RunQueryAsync(kql, limit, ct);
+        return await RunQueryAsync(kql, limit, context, ct);
     }
 
     /// <summary>
@@ -533,8 +574,9 @@ public sealed class ClubBaselineTool(
     IOptions<InsightsOptions> insightsOptions,
     IOptions<ScoutOptions> scoutOptions,
     IOptions<InspectorOptions> inspectorOptions,
-    ILogger<ClubBaselineTool> logger)
-    : LogsAgentTool(telemetrySource, kqlProvider, sourceResolver, insightsOptions, scoutOptions, inspectorOptions, logger)
+    ILogger<ClubBaselineTool> logger,
+    ProfileTelemetrySourceResolver? profileSources = null)
+    : LogsAgentTool(telemetrySource, kqlProvider, sourceResolver, insightsOptions, scoutOptions, inspectorOptions, logger, profileSources)
 {
     public const int DefaultLookbackDays = 7;
 
@@ -572,7 +614,7 @@ public sealed class ClubBaselineTool(
             return AgentToolResult.Failed($"the baseline query could not be built: {InspectorKqlGuards.Truncate(ex.Message, 300)}");
         }
 
-        return await RunQueryAsync(kql, Limits.ResolvedMaxToolRows, ct);
+        return await RunQueryAsync(kql, Limits.ResolvedMaxToolRows, context, ct);
     }
 
     /// <summary>
@@ -610,8 +652,9 @@ public sealed class SignatureBreakdownTool(
     IOptions<InsightsOptions> insightsOptions,
     IOptions<ScoutOptions> scoutOptions,
     IOptions<InspectorOptions> inspectorOptions,
-    ILogger<SignatureBreakdownTool> logger)
-    : LogsAgentTool(telemetrySource, kqlProvider, sourceResolver, insightsOptions, scoutOptions, inspectorOptions, logger)
+    ILogger<SignatureBreakdownTool> logger,
+    ProfileTelemetrySourceResolver? profileSources = null)
+    : LogsAgentTool(telemetrySource, kqlProvider, sourceResolver, insightsOptions, scoutOptions, inspectorOptions, logger, profileSources)
 {
     public const int DefaultTop = 10;
 
@@ -646,7 +689,7 @@ public sealed class SignatureBreakdownTool(
             return AgentToolResult.Failed($"the signature query could not be built: {InspectorKqlGuards.Truncate(ex.Message, 300)}");
         }
 
-        return await RunQueryAsync(kql, InspectorKqlGuards.Clamp(top, 1, Limits.ResolvedMaxToolRows), ct);
+        return await RunQueryAsync(kql, InspectorKqlGuards.Clamp(top, 1, Limits.ResolvedMaxToolRows), context, ct);
     }
 
     /// <summary>Shared by both window-scoped breakdowns - identical placeholders, different aggregation.</summary>
@@ -680,8 +723,9 @@ public sealed class ClientBreakdownTool(
     IOptions<InsightsOptions> insightsOptions,
     IOptions<ScoutOptions> scoutOptions,
     IOptions<InspectorOptions> inspectorOptions,
-    ILogger<ClientBreakdownTool> logger)
-    : LogsAgentTool(telemetrySource, kqlProvider, sourceResolver, insightsOptions, scoutOptions, inspectorOptions, logger)
+    ILogger<ClientBreakdownTool> logger,
+    ProfileTelemetrySourceResolver? profileSources = null)
+    : LogsAgentTool(telemetrySource, kqlProvider, sourceResolver, insightsOptions, scoutOptions, inspectorOptions, logger, profileSources)
 {
     public const int DefaultTop = 10;
 
@@ -716,6 +760,6 @@ public sealed class ClientBreakdownTool(
             return AgentToolResult.Failed($"the client query could not be built: {InspectorKqlGuards.Truncate(ex.Message, 300)}");
         }
 
-        return await RunQueryAsync(kql, InspectorKqlGuards.Clamp(top, 1, Limits.ResolvedMaxToolRows), ct);
+        return await RunQueryAsync(kql, InspectorKqlGuards.Clamp(top, 1, Limits.ResolvedMaxToolRows), context, ct);
     }
 }

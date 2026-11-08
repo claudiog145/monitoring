@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using JourneyMonitor.Core.Abstractions;
+using JourneyMonitor.Core.Company;
 using JourneyMonitor.Core.Domain;
+using JourneyMonitor.Core.Monitoring.Kpi;
 using JourneyMonitor.Core.Options;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -31,7 +33,9 @@ public sealed class GetInspectorFunction(
     INotificationLogRepository notificationLog,
     IOptions<InspectorOptions> inspectorOptions,
     IOptions<MonitoringOptions> monitoringOptions,
-    ILogger<GetInspectorFunction> logger)
+    ILogger<GetInspectorFunction> logger,
+    KpiProfileResolver? profileResolver = null,
+    IInvestigationPackageRepository? packages = null)
 {
     private const int DefaultTop = 25;
     private const int MaxTop = 200;
@@ -52,12 +56,17 @@ public sealed class GetInspectorFunction(
     {
         try
         {
-            var items = await cases.GetRecentAsync(ReadTop(req), ReadQuery(req, "domain"), ReadQuery(req, "club"), ReadQuery(req, "profileKey"), ct);
+            var (scope, error) = await ReadScopeAsync(req, ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error });
+
+            var items = (await cases.GetRecentAsync(ReadTop(req), ReadQuery(req, "domain"), ReadQuery(req, "club"), scope.ProfileKey, ct))
+                .Where(c => scope.Includes(c.ProfileKey))
+                .ToList();
             return await WriteJsonAsync(req, HttpStatusCode.OK, new
             {
                 cases = items.Select(ToSummary).ToList(),
                 // Echoed so a short list reads as "scoped" rather than as "the agent did nothing".
-                appliedFilter = new { domain = ReadQuery(req, "domain"), club = ReadQuery(req, "club"), profileKey = ReadQuery(req, "profileKey") },
+                appliedFilter = new { domain = ReadQuery(req, "domain"), club = ReadQuery(req, "club"), profileKey = scope.ProfileKey },
             });
         }
         catch (Exception ex)
@@ -89,8 +98,12 @@ public sealed class GetInspectorFunction(
 
         try
         {
+            var (scope, error) = await ReadScopeAsync(req, ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error });
+
             var forensicCase = await cases.GetByIdAsync(caseId, ct);
-            if (forensicCase is null)
+            // Another company's case does not exist for this one.
+            if (forensicCase is null || !scope.Includes(forensicCase.ProfileKey))
             {
                 return await WriteJsonAsync(req, HttpStatusCode.NotFound, new { error = $"No forensic case with id '{id}'." });
             }
@@ -196,7 +209,10 @@ public sealed class GetInspectorFunction(
         try
         {
             var limits = inspectorOptions.Value;
-            var queued = await queue.GetQueuedAsync(AgentWorkPayloadType.InvestigationPackage, ReadTop(req), ct);
+            var (scope, error) = await ReadScopeAsync(req, ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error });
+
+            var queued = await FilterQueuedAsync(await queue.GetQueuedAsync(AgentWorkPayloadType.InvestigationPackage, ReadTop(req), ct), scope, ct);
             var queueStats = await queue.GetStatsAsync(AgentWorkPayloadType.InvestigationPackage, ct);
             // Deliberately unscoped: these counters are read against the daily investigation cap,
             // which is a limit on the deployment and not on one company.
@@ -204,6 +220,8 @@ public sealed class GetInspectorFunction(
 
             return await WriteJsonAsync(req, HttpStatusCode.OK, new
             {
+                // The queued items are the company's; stats and limits below stay deployment-wide (the cap is).
+                profileKey = scope.Label,
                 queued = queued.Select(i => new
                 {
                     id = i.Id,
@@ -257,12 +275,22 @@ public sealed class GetInspectorFunction(
     {
         try
         {
+            var (scope, error) = await ReadScopeAsync(req, ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error });
+
             // Scoped to this agent's own notifications: the toast channel is shared with every other
             // monkey, so returning the whole channel from an /inspector/ route would credit the
             // Inspector for work the SLO Burn-Rate Monkey did.
-            var toasts = (await notificationLog.GetUndeliveredToastsAsync(ReadSince(req), ct))
-                .Where(t => t.SourceType == NotificationSourceType.ForensicCase)
-                .ToList();
+            var toasts = new List<NotificationLogEntry>();
+            foreach (var toast in (await notificationLog.GetUndeliveredToastsAsync(ReadSince(req), ct))
+                .Where(t => t.SourceType == NotificationSourceType.ForensicCase))
+            {
+                // Contract v6 §5: a toast is the company's whose case raised it.
+                if (scope.IsEverything || (await cases.GetByIdAsync(toast.SourceId, ct)) is { } owner && scope.Includes(owner.ProfileKey))
+                {
+                    toasts.Add(toast);
+                }
+            }
 
             return await WriteJsonAsync(req, HttpStatusCode.OK, new
             {
@@ -330,6 +358,35 @@ public sealed class GetInspectorFunction(
         c.CompletedAt?.ToString("O"),
         c.Phase,
         c.ErrorMessage);
+
+    /// <summary>
+    /// Contract v6 §5: <c>?profileKey=</c> missing → the active company, "*" → every company, unknown → 400.
+    /// A case stored without a profile is the incumbent's.
+    /// </summary>
+    private Task<(ProfileReadScope? Scope, string? Error)> ReadScopeAsync(HttpRequestData req, CancellationToken ct) =>
+        ProfileReadScope.ResolveAsync(profileResolver, System.Web.HttpUtility.ParseQueryString(req.Url.Query)["profileKey"], ct);
+
+    /// <summary>
+    /// A queued item is the company's whose investigation package it carries. Without the package
+    /// repository the owner cannot be told, so a scoped read shows nothing rather than guessing.
+    /// </summary>
+    private async Task<IReadOnlyList<AgentWorkItem>> FilterQueuedAsync(IReadOnlyList<AgentWorkItem> queued, ProfileReadScope scope, CancellationToken ct)
+    {
+        if (scope.IsEverything) return queued;
+        if (packages is null) return [];
+
+        var kept = new List<AgentWorkItem>(queued.Count);
+        foreach (var item in queued)
+        {
+            if (Guid.TryParse(item.PayloadId, out var packageId)
+                && await packages.GetByIdAsync(packageId, ct) is { } package
+                && scope.Includes(package.ProfileKey))
+            {
+                kept.Add(item);
+            }
+        }
+        return kept;
+    }
 
     /// <summary>Blank is treated as absent: an empty filter value must mean "no filter", not "match nothing".</summary>
     private static string? ReadQuery(HttpRequestData req, string key)

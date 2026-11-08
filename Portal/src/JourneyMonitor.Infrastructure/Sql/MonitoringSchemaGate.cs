@@ -139,6 +139,68 @@ internal static class MonitoringSchemaGate
     }
 
     /// <summary>
+    /// Specification 1000 KPI and Triage tables (Sql/monitoring/CreateMonitoringKpi.sql and
+    /// CreateMonitoringTriage.sql) ship later than everything above - same late-migration reasoning.
+    /// Both are required: the KPI daemons open triage investigations, so half a schema is no schema.
+    /// </summary>
+    internal static bool IsKpiSchemaPresent(string connectionString)
+    {
+        using var connection = new SqlConnection(connectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandTimeout = 5;
+        command.CommandText = "SELECT OBJECT_ID(N'monitoring.KpiDefinition', N'U'), OBJECT_ID(N'monitoring.TriageInvestigation', N'U')";
+        using var reader = command.ExecuteReader();
+        return reader.Read() && !reader.IsDBNull(0) && !reader.IsDBNull(1);
+    }
+
+    /// <summary>
+    /// The daemon activity log (Sql/monitoring/CreateMonitoringDaemonActivity.sql) ships after the KPI schema - same
+    /// late-migration reasoning. Missing it only costs durability: activity falls back to an in-memory log.
+    /// </summary>
+    internal static bool IsDaemonActivitySchemaPresent(string connectionString)
+    {
+        using var connection = new SqlConnection(connectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandTimeout = 5;
+        command.CommandText = "SELECT OBJECT_ID(N'monitoring.DaemonActivity', N'U')";
+        using var reader = command.ExecuteReader();
+        return reader.Read() && !reader.IsDBNull(0);
+    }
+
+    /// <summary>
+    /// Contract v6 §3 (Sql/monitoring/CreateMonitoringProfileJourney.sql) ships after everything above - same
+    /// late-migration reasoning. Both tables are required: a journey without its steps cannot be shown.
+    /// </summary>
+    internal static bool IsProfileJourneyProvisioned(string connectionString)
+    {
+        using var connection = new SqlConnection(connectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandTimeout = 5;
+        command.CommandText = "SELECT OBJECT_ID(N'monitoring.ProfileJourney', N'U'), OBJECT_ID(N'monitoring.ProfileJourneyStep', N'U')";
+        using var reader = command.ExecuteReader();
+        return reader.Read() && !reader.IsDBNull(0) && !reader.IsDBNull(1);
+    }
+
+    /// <summary>
+    /// Contract v6 §3: incident.Incident and dashboard.MetricPoint carry ProfileKey once
+    /// incident/CreateIncidentSchema.sql and dashboard/CreateDashboardMetrics.sql have been re-applied. Before that,
+    /// per-company writes would land in the incumbent's rows, so profile-scoped ingestion must not start.
+    /// </summary>
+    internal static bool IsProfileKeyProvisioned(string connectionString)
+    {
+        using var connection = new SqlConnection(connectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandTimeout = 5;
+        command.CommandText = "SELECT COL_LENGTH(N'incident.Incident', N'ProfileKey'), COL_LENGTH(N'dashboard.MetricPoint', N'ProfileKey')";
+        using var reader = command.ExecuteReader();
+        return reader.Read() && !reader.IsDBNull(0) && !reader.IsDBNull(1);
+    }
+
+    /// <summary>
     /// The company profile table (Sql/monitoring/CreateMonitoringCompanyProfile.sql) ships last of
     /// all - same late-migration reasoning as the gates above. Missing it degrades the same way
     /// the telemetry catalog does, one level worse: the profile falls back to whatever the
@@ -155,5 +217,46 @@ internal static class MonitoringSchemaGate
         command.CommandText = "SELECT OBJECT_ID(N'monitoring.CompanyProfile', N'U')";
         using var reader = command.ExecuteReader();
         return reader.Read() && !reader.IsDBNull(0);
+    }
+
+    /// <summary>
+    /// Contract v4 (Sql/monitoring/CreateMonitoringScoutShadow.sql) ships after the KPI schema. That script
+    /// migrates the KPI tables to the entity grain (EntityKey, FailedCount, Grain), owns the v4 KPI
+    /// procedures the Sql*Kpi* stores call and creates monitoring.ScoutShadowComparison. Unlike the gates
+    /// above, a KPI schema without it is not "not provisioned": the v3 tables hold durable data, so
+    /// AddKpiPersistence fails startup instead of falling back (see KpiSchemaStatus). The procedure
+    /// signatures are checked too, because re-running the v3 KPI script after v4 leaves v4 columns with v3
+    /// procedures, and every store call would then fail with "too many arguments".
+    /// </summary>
+    internal static DependencyInjection.KpiSchemaStatus GetKpiSchemaStatus(string connectionString)
+    {
+        using var connection = new SqlConnection(connectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandTimeout = 5;
+        command.CommandText =
+            """
+            SELECT
+                CASE WHEN OBJECT_ID(N'monitoring.KpiDefinition', N'U') IS NOT NULL
+                      AND OBJECT_ID(N'monitoring.TriageInvestigation', N'U') IS NOT NULL THEN 1 ELSE 0 END,
+                CASE WHEN OBJECT_ID(N'monitoring.ScoutShadowComparison', N'U') IS NOT NULL
+                      AND COL_LENGTH(N'monitoring.KpiBucket', N'EntityKey') IS NOT NULL
+                      AND COL_LENGTH(N'monitoring.KpiBucket', N'FailedCount') IS NOT NULL
+                      AND COL_LENGTH(N'monitoring.KpiDetectionState', N'EntityKey') IS NOT NULL
+                      AND COL_LENGTH(N'monitoring.KpiAnomaly', N'EntityKey') IS NOT NULL
+                      AND COL_LENGTH(N'monitoring.KpiDefinition', N'Grain') IS NOT NULL
+                      AND EXISTS (SELECT 1 FROM sys.parameters WHERE object_id = OBJECT_ID(N'monitoring.usp_GetKpiBuckets') AND name = N'@EntityKey')
+                      AND EXISTS (SELECT 1 FROM sys.parameters WHERE object_id = OBJECT_ID(N'monitoring.usp_SaveKpiDetectionState') AND name = N'@EntityKey')
+                      AND EXISTS (SELECT 1 FROM sys.parameters WHERE object_id = OBJECT_ID(N'monitoring.usp_GetRecentKpiAnomalies') AND name = N'@EntityKey')
+                      AND EXISTS (SELECT 1 FROM sys.parameters WHERE object_id = OBJECT_ID(N'monitoring.usp_UpsertKpiDefinition') AND name = N'@Grain')
+                      AND OBJECT_ID(N'monitoring.usp_GetKpiEntityBuckets', N'P') IS NOT NULL
+                      AND OBJECT_ID(N'monitoring.usp_AddScoutShadowComparisons', N'P') IS NOT NULL THEN 1 ELSE 0 END
+            """;
+        using var reader = command.ExecuteReader();
+        if (!reader.Read() || reader.GetInt32(0) == 0)
+        {
+            return DependencyInjection.KpiSchemaStatus.Absent;
+        }
+        return reader.GetInt32(1) == 1 ? DependencyInjection.KpiSchemaStatus.V4 : DependencyInjection.KpiSchemaStatus.V4MigrationMissing;
     }
 }

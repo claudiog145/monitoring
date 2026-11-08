@@ -130,7 +130,7 @@ public static class HotelJourneyMapper
             var correlationId = row.GetString("CorrelationId");
             if (!string.IsNullOrEmpty(correlationId))
             {
-                list.Add(new JourneySessionRef { Session = 1, CorrelationId = correlationId, ChangeReason = "Latest session" });
+                list.Add(new JourneySessionRef { Session = 1, CorrelationId = correlationId, ChangeReason = "This session" });
             }
         }
         return list;
@@ -212,9 +212,8 @@ public static class HotelJourneyMapper
         return new CustomerJourney
         {
             Source = "v6",
-            Id = domain is "cruises" or "cars"
-                ? (!string.IsNullOrEmpty(correlationId) ? correlationId : (!string.IsNullOrEmpty(sessionId) ? sessionId : userId))
-                : userId,
+            Id = !string.IsNullOrEmpty(correlationId) ? correlationId
+                : (!string.IsNullOrEmpty(sessionId) ? sessionId : userId),
             CorrelationId = !string.IsNullOrEmpty(correlationId) ? correlationId : userId,
             Domain = domain,
             Customer = userId,

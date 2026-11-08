@@ -104,6 +104,7 @@ public sealed class SqlJourneyStore(IOptions<JourneyStoreOptions> storeOptions) 
             .Cast<IDictionary<string, object?>>()
             .Select(record => KqlRowAssembler.Assemble(domain, record))
             .ToList();
+        await StampHotelClubIdsAsync(connection, domain, rows, cancellationToken);
 
         return new StoredJourneys(
             queryRunId.Value,
@@ -143,6 +144,7 @@ public sealed class SqlJourneyStore(IOptions<JourneyStoreOptions> storeOptions) 
             .Cast<IDictionary<string, object?>>()
             .Select(record => KqlRowAssembler.Assemble(query.Domain, record))
             .ToList();
+        await StampHotelClubIdsAsync(connection, query.Domain, rows, cancellationToken);
 
         return new JourneySnapshot(
             query.Domain,
@@ -158,4 +160,44 @@ public sealed class SqlJourneyStore(IOptions<JourneyStoreOptions> storeOptions) 
         SchemaByDomain.TryGetValue(domain, out var schema)
             ? schema
             : throw new ArgumentOutOfRangeException(nameof(domain), domain, "Unknown journey domain.");
+
+    /// <summary>
+    /// Hotel reads on the deployed databases omit ClubId. The column is already stored per member.
+    /// A missing column leaves the rows unlabeled instead of failing the page.
+    /// </summary>
+    private static async Task StampHotelClubIdsAsync(
+        SqlConnection connection,
+        string domain,
+        List<TelemetryJourneyRow> rows,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(domain, "hotels", StringComparison.OrdinalIgnoreCase) || rows.Count == 0) return;
+
+        var userIds = rows
+            .Where(row => string.IsNullOrEmpty(row.GetString("ClubId")))
+            .Select(row => row.GetString("UserId"))
+            .Where(id => id.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (userIds.Length == 0) return;
+
+        try
+        {
+            var stored = await connection.QueryAsync<HotelJourneyClub>(
+                new CommandDefinition(
+                    """
+                    SELECT UserId, ClubId
+                    FROM hotel.Journey
+                    WHERE UserId IN (SELECT [value] FROM OPENJSON(@UserIdsJson))
+                      AND NULLIF(ClubId, N'') IS NOT NULL
+                    """,
+                    new { UserIdsJson = JsonSerializer.Serialize(userIds) },
+                    cancellationToken: cancellationToken));
+            HotelJourneyClubIds.Apply(rows, stored);
+        }
+        catch (SqlException)
+        {
+            // Older databases have no hotel.Journey.ClubId. The portal keeps its previous label.
+        }
+    }
 }

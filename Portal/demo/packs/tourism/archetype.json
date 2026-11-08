@@ -1,0 +1,408 @@
+{
+  "companyKey": "tourism",
+  "profileKey": "arrivia",
+  "displayName": "Arrivia (demo)",
+  "apps": [
+    { "appId": "demo-tourism-sor-frontend", "database": "tourism-sor-frontend", "roleName": "sor-frontend", "host": "www.travel-demo.example" },
+    { "appId": "demo-tourism-club", "database": "tourism-club", "roleName": "club-frontend", "host": "members.travel-demo.example" },
+    { "appId": "demo-tourism-cruise-core", "database": "tourism-cruise-core", "roleName": "cruise-core", "host": "cruises.travel-demo.example" },
+    { "appId": "demo-tourism-cruise-api", "database": "tourism-cruise-api", "roleName": "cruise-web-api", "host": "cruise-api.travel-demo.example" },
+    { "appId": "demo-tourism-air-ui", "database": "tourism-air-ui", "roleName": "air-ui", "host": "air.travel-demo.example" },
+    { "appId": "demo-tourism-air-api", "database": "tourism-air-api", "roleName": "air-api", "host": "air-api.travel-demo.example" }
+  ],
+  "entities": { "kind": "club", "dimension": "VacationClubId", "count": 60, "zipf": 1.05, "idFormat": "9{0:000}", "hostTemplate": "club{0}.travel-demo.example" },
+  "traffic": {
+    "requestsPerDay": 200000,
+    "hourlyCurve": [10, 8, 6, 5, 4, 4, 4, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 14, 14, 13, 13, 12, 12, 11],
+    "weekendFactor": 0.8
+  },
+  "steps": [
+    {
+      "app": "demo-tourism-sor-frontend", "name": "POST /login.json", "url": "/login.json", "weight": 0.05,
+      "p50Ms": 180, "p95Ms": 900, "errorRate": 0.004,
+      "exceptions": [ { "type": "System.Security.Authentication.AuthenticationException", "message": "Member credentials were rejected by the identity provider", "method": "MemberSession.SignIn", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "identity-provider", "target": "auth.idp-demo.example", "type": "HTTP", "name": "POST /oauth2/token", "p50Ms": 60, "p95Ms": 300, "failureRate": 0.001 }
+      ]
+    },
+    {
+      "app": "demo-tourism-sor-frontend", "name": "GET /hotels/search.json", "url": "/hotels/search.json?destination=orlando&rooms=1", "weight": 0.08,
+      "p50Ms": 900, "p95Ms": 3500, "errorRate": 0.005,
+      "exceptions": [ { "type": "System.TimeoutException", "message": "Hotel availability search exceeded 30 s", "method": "HotelSearch.Availability", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "hotel-hub", "target": "content.hotel-hub-demo.example", "type": "HTTP", "name": "POST /availability/search", "p50Ms": 600, "p95Ms": 2800, "failureRate": 0.003 }
+      ]
+    },
+    {
+      "app": "demo-tourism-sor-frontend", "name": "GET /hotels/backgroundhotelsearch", "url": "/hotels/backgroundhotelsearch?page=1", "weight": 0.07,
+      "p50Ms": 1400, "p95Ms": 5200, "errorRate": 0.005,
+      "exceptions": [ { "type": "System.TimeoutException", "message": "Background hotel result page timed out", "method": "HotelSearch.Page", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "hotel-hub", "target": "content.hotel-hub-demo.example", "type": "HTTP", "name": "POST /availability/page", "p50Ms": 900, "p95Ms": 4200, "failureRate": 0.003 }
+      ]
+    },
+    {
+      "app": "demo-tourism-sor-frontend", "name": "GET /hotels/hoteldetails", "url": "/hotels/hoteldetails?propertyId=48213", "weight": 0.05,
+      "p50Ms": 450, "p95Ms": 1800, "errorRate": 0.003,
+      "exceptions": [ { "type": "System.Collections.Generic.KeyNotFoundException", "message": "Property content was not found for the requested hotel", "method": "HotelContent.Load", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "hotel-hub", "target": "content.hotel-hub-demo.example", "type": "HTTP", "name": "GET /content/property", "p50Ms": 250, "p95Ms": 1200, "failureRate": 0.002 }
+      ]
+    },
+    {
+      "app": "demo-tourism-sor-frontend", "name": "POST /hotels/book.json", "url": "/hotels/book.json", "weight": 0.015,
+      "p50Ms": 1200, "p95Ms": 4500, "errorRate": 0.008,
+      "exceptions": [
+        { "type": "System.InvalidOperationException", "message": "Rate changed during the pre-book recheck", "method": "HotelPreBook.Recheck", "weight": 3 },
+        { "type": "System.UnauthorizedAccessException", "message": "Supplier rejected the booking token: audience does not match the configured client", "method": "HotelPreBook.Authorize", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "hotel-hub", "target": "content.hotel-hub-demo.example", "type": "HTTP", "name": "POST /rates/recheck", "p50Ms": 700, "p95Ms": 3000, "failureRate": 0.004 }
+      ],
+      "businessEvent": { "name": "HotelPreBooked", "onSuccessOnly": true, "measurements": { "Amount": { "min": 90, "max": 3200 }, "Nights": { "min": 1, "max": 14 } } }
+    },
+    {
+      "app": "demo-tourism-sor-frontend", "name": "GET /rental/carlocationsearch", "url": "/rental/carlocationsearch?term=airport", "weight": 0.03,
+      "p50Ms": 220, "p95Ms": 900, "errorRate": 0.002,
+      "dependencies": [
+        { "partner": "car-gds", "target": "rates.car-gds-demo.example", "type": "HTTP", "name": "GET /locations", "p50Ms": 120, "p95Ms": 600, "failureRate": 0.001 }
+      ]
+    },
+    {
+      "app": "demo-tourism-sor-frontend", "name": "GET /rental/backgroundcarsearch", "url": "/rental/backgroundcarsearch?pickup=airport", "weight": 0.03,
+      "p50Ms": 1600, "p95Ms": 6000, "errorRate": 0.006,
+      "exceptions": [ { "type": "System.TimeoutException", "message": "Car availability request exceeded 25 s", "method": "CarSearch.Availability", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "car-gds", "target": "rates.car-gds-demo.example", "type": "HTTP", "name": "POST /vehicles/availability", "p50Ms": 1100, "p95Ms": 4800, "failureRate": 0.004 }
+      ]
+    },
+    {
+      "app": "demo-tourism-sor-frontend", "name": "POST /rental/carbooking", "url": "/rental/carbooking", "weight": 0.006,
+      "p50Ms": 1300, "p95Ms": 5000, "errorRate": 0.007,
+      "exceptions": [ { "type": "System.InvalidOperationException", "message": "Vehicle is no longer available at the selected location", "method": "CarBooking.Reserve", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "car-gds", "target": "rates.car-gds-demo.example", "type": "HTTP", "name": "POST /vehicles/reserve", "p50Ms": 900, "p95Ms": 3800, "failureRate": 0.004 }
+      ]
+    },
+    {
+      "app": "demo-tourism-sor-frontend", "name": "GET /reservations/purchase", "url": "/reservations/purchase", "weight": 0.02,
+      "p50Ms": 350, "p95Ms": 1400, "errorRate": 0.003,
+      "exceptions": [ { "type": "System.NullReferenceException", "message": "Checkout cart was not found in the member session", "method": "Checkout.LoadCart", "weight": 1 } ]
+    },
+    {
+      "app": "demo-tourism-sor-frontend", "name": "GET /checkout/travelerprofile", "url": "/checkout/travelerprofile", "weight": 0.015,
+      "p50Ms": 250, "p95Ms": 900, "errorRate": 0.002,
+      "dependencies": [
+        { "partner": "club-membership", "target": "members.club-registry-demo.example", "type": "HTTP", "name": "GET /members/profile", "p50Ms": 80, "p95Ms": 400, "failureRate": 0.001 }
+      ]
+    },
+    {
+      "app": "demo-tourism-sor-frontend", "name": "POST /checkout/completepurchase", "url": "/checkout/completepurchase", "weight": 0.035,
+      "p50Ms": 2200, "p95Ms": 8000, "errorRate": 0.006,
+      "exceptions": [
+        { "type": "Travel.Payments.PaymentAuthorizationException", "message": "Card authorization was declined by the payment gateway", "method": "Checkout.Authorize", "weight": 2 },
+        { "type": "Travel.Booking.PartnerBookingException", "message": "Distribution partner did not confirm the reservation", "method": "Checkout.Reserve", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "payment-gateway", "target": "api.paygateway-demo.example", "type": "HTTP", "name": "POST /v2/authorize", "p50Ms": 700, "p95Ms": 3000, "failureRate": 0.004 },
+        { "partner": "booking-partner", "target": "reservations.partner-bookings-demo.example", "type": "HTTP", "name": "POST /reservations", "p50Ms": 900, "p95Ms": 4000, "failureRate": 0.003 }
+      ],
+      "businessEvent": { "name": "BookingCompleted", "onSuccessOnly": true, "measurements": { "Amount": { "min": 120, "max": 4800 } } }
+    },
+    {
+      "app": "demo-tourism-sor-frontend", "name": "GET /checkout/purchasecomplete", "url": "/checkout/purchasecomplete", "weight": 0.03,
+      "p50Ms": 300, "p95Ms": 1100, "errorRate": 0.002
+    },
+    {
+      "app": "demo-tourism-sor-frontend", "name": "POST /reservations/cancel", "url": "/reservations/cancel", "weight": 0.002,
+      "p50Ms": 900, "p95Ms": 3500, "errorRate": 0.01,
+      "exceptions": [ { "type": "Travel.Booking.PartnerBookingException", "message": "Distribution partner refused the cancellation", "method": "Reservations.Cancel", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "booking-partner", "target": "reservations.partner-bookings-demo.example", "type": "HTTP", "name": "POST /reservations/cancel", "p50Ms": 600, "p95Ms": 2800, "failureRate": 0.004 }
+      ]
+    },
+    {
+      "app": "demo-tourism-club", "name": "GET /club/logincheck", "url": "/club/logincheck", "weight": 0.03,
+      "p50Ms": 120, "p95Ms": 500, "errorRate": 0.002,
+      "exceptions": [ { "type": "System.Security.Authentication.AuthenticationException", "message": "Member session has expired", "method": "ClubSession.Check", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "club-membership", "target": "members.club-registry-demo.example", "type": "HTTP", "name": "GET /members/status", "p50Ms": 40, "p95Ms": 250, "failureRate": 0.001 }
+      ]
+    },
+    {
+      "app": "demo-tourism-club", "name": "POST /club/login.json", "url": "/club/login.json", "weight": 0.01,
+      "p50Ms": 200, "p95Ms": 950, "errorRate": 0.004,
+      "exceptions": [ { "type": "System.Security.Authentication.AuthenticationException", "message": "Member credentials were rejected by the identity provider", "method": "ClubSession.SignIn", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "identity-provider", "target": "auth.idp-demo.example", "type": "HTTP", "name": "POST /oauth2/token", "p50Ms": 60, "p95Ms": 300, "failureRate": 0.001 }
+      ]
+    },
+    {
+      "app": "demo-tourism-club", "name": "GET /club/hoteldetails", "url": "/club/hoteldetails?propertyId=48213", "weight": 0.02,
+      "p50Ms": 500, "p95Ms": 2000, "errorRate": 0.003,
+      "exceptions": [ { "type": "System.Collections.Generic.KeyNotFoundException", "message": "Property content was not found for the requested hotel", "method": "ClubHotelContent.Load", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "hotel-hub", "target": "content.hotel-hub-demo.example", "type": "HTTP", "name": "GET /content/property", "p50Ms": 250, "p95Ms": 1200, "failureRate": 0.002 }
+      ]
+    },
+    {
+      "app": "demo-tourism-cruise-core", "name": "GET /cruisesearch.do", "url": "/cruisesearch.do?region=caribbean&nights=7", "weight": 0.06,
+      "p50Ms": 800, "p95Ms": 3200, "errorRate": 0.004,
+      "exceptions": [ { "type": "System.TimeoutException", "message": "Sailing search exceeded 30 s", "method": "CruiseSearch.Sailings", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "cruise-line-gds", "target": "sailings.cruiseline-gds-demo.example", "type": "HTTP", "name": "GET /sailings/search", "p50Ms": 450, "p95Ms": 2000, "failureRate": 0.003 }
+      ]
+    },
+    {
+      "app": "demo-tourism-cruise-core", "name": "GET /cruiseitinerary.do", "url": "/cruiseitinerary.do?sailingId=CS-2207", "weight": 0.035,
+      "p50Ms": 400, "p95Ms": 1500, "errorRate": 0.002,
+      "dependencies": [
+        { "partner": "cruise-core-db", "target": "cruisecore-sql.demo.internal", "type": "SQL", "name": "SELECT itinerary", "p50Ms": 15, "p95Ms": 120, "failureRate": 0.0005 }
+      ]
+    },
+    {
+      "app": "demo-tourism-cruise-core", "name": "GET /cruisecategory.do", "url": "/cruisecategory.do?sailingId=CS-2207", "weight": 0.025,
+      "p50Ms": 900, "p95Ms": 3500, "errorRate": 0.004,
+      "exceptions": [ { "type": "System.InvalidOperationException", "message": "Timeout expired. The timeout period elapsed prior to obtaining a connection from the pool", "method": "CategoryRates.Load", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "cruise-line-gds", "target": "sailings.cruiseline-gds-demo.example", "type": "HTTP", "name": "GET /sailings/categories", "p50Ms": 500, "p95Ms": 2200, "failureRate": 0.003 },
+        { "partner": "cruise-core-db", "target": "cruisecore-sql.demo.internal", "type": "SQL", "name": "SELECT category_rates", "p50Ms": 20, "p95Ms": 150, "failureRate": 0.0005 }
+      ]
+    },
+    {
+      "app": "demo-tourism-cruise-core", "name": "POST /cruisecabinonhold.do", "url": "/cruisecabinonhold.do", "weight": 0.008,
+      "p50Ms": 1500, "p95Ms": 5000, "errorRate": 0.008,
+      "exceptions": [ { "type": "Travel.Cruise.CabinHoldException", "message": "Cruise line refused the cabin hold", "method": "CabinHold.Place", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "cruise-line-gds", "target": "sailings.cruiseline-gds-demo.example", "type": "HTTP", "name": "POST /cabins/hold", "p50Ms": 900, "p95Ms": 3500, "failureRate": 0.004 },
+        { "partner": "cruise-core-db", "target": "cruisecore-sql.demo.internal", "type": "SQL", "name": "INSERT cabin_hold", "p50Ms": 10, "p95Ms": 90, "failureRate": 0.0005 }
+      ]
+    },
+    {
+      "app": "demo-tourism-cruise-core", "name": "POST /cruisecabin.do", "url": "/cruisecabin.do?step=totalprice", "weight": 0.012,
+      "p50Ms": 1100, "p95Ms": 4200, "errorRate": 0.005,
+      "exceptions": [
+        { "type": "System.InvalidOperationException", "message": "Timeout expired. The timeout period elapsed prior to obtaining a connection from the pool", "method": "TotalPrice.Quote", "weight": 1 },
+        { "type": "Travel.Cruise.PricingException", "message": "Cruise line returned no price for the selected category", "method": "TotalPrice.Quote", "weight": 2 }
+      ],
+      "dependencies": [
+        { "partner": "cruise-core-db", "target": "cruisecore-sql.demo.internal", "type": "SQL", "name": "EXEC price_quote", "p50Ms": 60, "p95Ms": 400, "failureRate": 0.001 },
+        { "partner": "cruise-line-gds", "target": "sailings.cruiseline-gds-demo.example", "type": "HTTP", "name": "POST /pricing/quote", "p50Ms": 500, "p95Ms": 2200, "failureRate": 0.003 }
+      ]
+    },
+    {
+      "app": "demo-tourism-cruise-core", "name": "GET /secure/cruisetravelwith.jsp", "url": "/secure/cruisetravelwith.jsp", "weight": 0.024,
+      "p50Ms": 350, "p95Ms": 1300, "errorRate": 0.002
+    },
+    {
+      "app": "demo-tourism-cruise-core", "name": "GET /secure/cruisesummary.jsp", "url": "/secure/cruisesummary.jsp", "weight": 0.022,
+      "p50Ms": 450, "p95Ms": 1600, "errorRate": 0.002
+    },
+    {
+      "app": "demo-tourism-cruise-core", "name": "POST /cruisepayment.do", "url": "/cruisepayment.do", "weight": 0.021,
+      "p50Ms": 2000, "p95Ms": 7000, "errorRate": 0.008,
+      "exceptions": [ { "type": "Travel.Payments.PaymentAuthorizationException", "message": "Card authorization was declined by the payment gateway", "method": "CruisePayment.Authorize", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "payment-gateway", "target": "api.paygateway-demo.example", "type": "HTTP", "name": "POST /v2/authorize", "p50Ms": 700, "p95Ms": 3000, "failureRate": 0.004 },
+        { "partner": "cruise-core-db", "target": "cruisecore-sql.demo.internal", "type": "SQL", "name": "INSERT payment", "p50Ms": 12, "p95Ms": 100, "failureRate": 0.0005 }
+      ]
+    },
+    {
+      "app": "demo-tourism-cruise-core", "name": "POST /cruiseconfirm.do", "url": "/cruiseconfirm.do", "weight": 0.02,
+      "p50Ms": 1800, "p95Ms": 6500, "errorRate": 0.008,
+      "exceptions": [ { "type": "Travel.Cruise.BookingException", "message": "Cruise line did not return a confirmation number", "method": "CruiseBooking.Confirm", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "cruise-line-gds", "target": "sailings.cruiseline-gds-demo.example", "type": "HTTP", "name": "POST /bookings", "p50Ms": 1200, "p95Ms": 5000, "failureRate": 0.004 }
+      ],
+      "businessEvent": { "name": "CruiseBooked", "onSuccessOnly": true, "measurements": { "Amount": { "min": 600, "max": 14000 }, "Guests": { "min": 1, "max": 6 } } }
+    },
+    {
+      "app": "demo-tourism-cruise-api", "name": "GET /api/cruise/searchmatrix", "url": "/api/cruise/searchmatrix?region=caribbean", "weight": 0.03,
+      "p50Ms": 600, "p95Ms": 2400, "errorRate": 0.003,
+      "exceptions": [ { "type": "System.Fabric.FabricTransientException", "message": "Service partition is not ready; the request was not processed", "method": "SearchMatrix.Build", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "cruise-line-gds", "target": "sailings.cruiseline-gds-demo.example", "type": "HTTP", "name": "GET /sailings/matrix", "p50Ms": 350, "p95Ms": 1600, "failureRate": 0.002 }
+      ]
+    },
+    {
+      "app": "demo-tourism-cruise-api", "name": "GET /api/cruise/getcustomerid", "url": "/api/cruise/getcustomerid", "weight": 0.02,
+      "p50Ms": 90, "p95Ms": 400, "errorRate": 0.001,
+      "exceptions": [ { "type": "System.Fabric.FabricTransientException", "message": "Service partition is not ready; the request was not processed", "method": "Customer.Resolve", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "club-membership", "target": "members.club-registry-demo.example", "type": "HTTP", "name": "GET /members/lookup", "p50Ms": 40, "p95Ms": 250, "failureRate": 0.001 }
+      ]
+    },
+    {
+      "app": "demo-tourism-cruise-api", "name": "GET /api/guest/get-guests", "url": "/api/guest/get-guests", "weight": 0.012,
+      "p50Ms": 160, "p95Ms": 700, "errorRate": 0.002,
+      "exceptions": [ { "type": "System.Fabric.FabricTransientException", "message": "Service partition is not ready; the request was not processed", "method": "Guests.Load", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "cruise-core-db", "target": "cruisecore-sql.demo.internal", "type": "SQL", "name": "SELECT guests", "p50Ms": 10, "p95Ms": 80, "failureRate": 0.0005 }
+      ]
+    },
+    {
+      "app": "demo-tourism-cruise-api", "name": "GET /api/cruise/featuresandoptions", "url": "/api/cruise/featuresandoptions", "weight": 0.01,
+      "p50Ms": 300, "p95Ms": 1200, "errorRate": 0.002,
+      "exceptions": [ { "type": "System.Fabric.FabricTransientException", "message": "Service partition is not ready; the request was not processed", "method": "Options.Load", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "cruise-line-gds", "target": "sailings.cruiseline-gds-demo.example", "type": "HTTP", "name": "GET /sailings/options", "p50Ms": 200, "p95Ms": 900, "failureRate": 0.002 }
+      ]
+    },
+    {
+      "app": "demo-tourism-cruise-api", "name": "GET /api/cruise/insurance", "url": "/api/cruise/insurance", "weight": 0.006,
+      "p50Ms": 450, "p95Ms": 1800, "errorRate": 0.003,
+      "exceptions": [ { "type": "System.Fabric.FabricTransientException", "message": "Service partition is not ready; the request was not processed", "method": "Insurance.Quote", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "travel-insurance", "target": "quotes.insure-demo.example", "type": "HTTP", "name": "POST /quotes", "p50Ms": 300, "p95Ms": 1400, "failureRate": 0.003 }
+      ]
+    },
+    {
+      "app": "demo-tourism-air-ui", "name": "GET /air/search", "url": "/air/search", "weight": 0.04,
+      "p50Ms": 300, "p95Ms": 1200, "errorRate": 0.002
+    },
+    {
+      "app": "demo-tourism-air-ui", "name": "GET /air/results", "url": "/air/results?trip=roundtrip", "weight": 0.03,
+      "p50Ms": 2500, "p95Ms": 9000, "errorRate": 0.006,
+      "exceptions": [ { "type": "System.Net.Http.HttpRequestException", "message": "Air API answered 503 to the shopping request", "method": "AirResults.Load", "weight": 1 } ]
+    },
+    {
+      "app": "demo-tourism-air-ui", "name": "GET /air/farerules", "url": "/air/farerules", "weight": 0.01,
+      "p50Ms": 400, "p95Ms": 1500, "errorRate": 0.003
+    },
+    {
+      "app": "demo-tourism-air-api", "name": "POST /api/air/search", "url": "/api/air/search", "weight": 0.04,
+      "p50Ms": 2200, "p95Ms": 8500, "errorRate": 0.006,
+      "exceptions": [ { "type": "System.TimeoutException", "message": "Air shopping request exceeded 20 s", "method": "AirShopping.Search", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "air-gds", "target": "shop.airfare-gds-demo.example", "type": "HTTP", "name": "POST /shopping/offers", "p50Ms": 1800, "p95Ms": 7500, "failureRate": 0.004 }
+      ]
+    },
+    {
+      "app": "demo-tourism-air-api", "name": "POST /api/air/price", "url": "/api/air/price", "weight": 0.028,
+      "p50Ms": 1500, "p95Ms": 5500, "errorRate": 0.008,
+      "exceptions": [ { "type": "Travel.Air.FareChangedException", "message": "Fare is no longer available at the quoted price", "method": "AirPricing.Reprice", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "air-gds", "target": "shop.airfare-gds-demo.example", "type": "HTTP", "name": "POST /offers/price", "p50Ms": 1100, "p95Ms": 4500, "failureRate": 0.004 }
+      ]
+    },
+    {
+      "app": "demo-tourism-air-api", "name": "POST /api/air/book", "url": "/api/air/book", "weight": 0.02,
+      "p50Ms": 3000, "p95Ms": 11000, "errorRate": 0.01,
+      "exceptions": [ { "type": "Travel.Air.TicketingException", "message": "Order was created but ticketing did not complete", "method": "AirBooking.Ticket", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "air-gds", "target": "shop.airfare-gds-demo.example", "type": "HTTP", "name": "POST /orders", "p50Ms": 2000, "p95Ms": 8000, "failureRate": 0.005 },
+        { "partner": "payment-gateway", "target": "api.paygateway-demo.example", "type": "HTTP", "name": "POST /v2/authorize", "p50Ms": 700, "p95Ms": 3000, "failureRate": 0.004 }
+      ],
+      "businessEvent": { "name": "FlightBooked", "onSuccessOnly": true, "measurements": { "Amount": { "min": 120, "max": 2600 }, "Passengers": { "min": 1, "max": 6 } } }
+    }
+  ],
+  "scenarios": [
+    {
+      "key": "cruise-pool-exhaustion", "title": "Cruise Core connection pool exhausted (Total Price > 100 s)",
+      "description": "A configuration deploy pinned the Cruise Core SQL pool to a fixed 20 connections with a 5 s checkout timeout. Under normal evening load the pool saturates: 05 Total Price waits more than 100 s and most of its requests fail with pool-timeout exceptions; 03 Detail, 04 Rooms & Rates and 06 Cabin Selection slow down or fail too, so few members reach payment and CruiseBooked events drop.",
+      "defaultDurationMinutes": 45,
+      "effects": [
+        { "kind": "latency-multiplier", "step": "POST /cruisecabin.do", "factor": 100 },
+        { "kind": "error-rate", "step": "POST /cruisecabin.do", "rate": 0.6, "exceptionType": "System.InvalidOperationException" },
+        { "kind": "latency-multiplier", "step": "GET /cruisecategory.do", "factor": 6 },
+        { "kind": "error-rate", "step": "GET /cruisecategory.do", "rate": 0.35, "exceptionType": "System.InvalidOperationException" },
+        { "kind": "latency-multiplier", "step": "POST /cruisecabinonhold.do", "factor": 5 },
+        { "kind": "error-rate", "step": "POST /cruisecabinonhold.do", "rate": 0.3, "exceptionType": "System.InvalidOperationException" },
+        { "kind": "error-rate", "step": "GET /cruiseitinerary.do", "rate": 0.15, "exceptionType": "System.InvalidOperationException" },
+        { "kind": "traffic-multiplier", "step": "POST /cruisepayment.do", "factor": 0.3 },
+        { "kind": "traffic-multiplier", "step": "POST /cruiseconfirm.do", "factor": 0.2 }
+      ]
+    },
+    {
+      "key": "air-search-outage", "title": "Air search outage (fare provider down)",
+      "description": "The air fare provider stops answering shopping requests. Air API search, price and book calls fail; the Air UI results page shows errors and FlightBooked events collapse.",
+      "defaultDurationMinutes": 40,
+      "effects": [
+        { "kind": "dependency-failure", "partner": "air-gds", "rate": 0.9 },
+        { "kind": "latency-multiplier", "partner": "air-gds", "factor": 3 },
+        { "kind": "error-rate", "step": "GET /air/results", "rate": 0.6, "exceptionType": "System.Net.Http.HttpRequestException" }
+      ]
+    },
+    {
+      "key": "hotel-prebook-exceptions", "title": "Hotel PreBook exception storm after a deploy",
+      "description": "A release changed the supplier authentication configuration. Hotel 05 PreBook throws UnauthorizedAccessException for nine attempts out of ten, so HotelPreBooked events collapse, while search and details stay healthy.",
+      "defaultDurationMinutes": 35,
+      "effects": [
+        { "kind": "error-rate", "step": "POST /hotels/book.json", "rate": 0.9, "exceptionType": "System.UnauthorizedAccessException" },
+        { "kind": "latency-multiplier", "step": "POST /hotels/book.json", "factor": 1.6 }
+      ]
+    },
+    {
+      "key": "club-degraded", "title": "One club degraded (club 9002)",
+      "description": "Only the members of club 9002 (the second-largest club) are affected: a broken branding/routing rule for club9002.travel-demo.example makes every page five times slower and 40 % of the requests time out. All other clubs are healthy.",
+      "defaultDurationMinutes": 60,
+      "effects": [
+        { "kind": "entity-only", "entities": ["9002"] },
+        { "kind": "latency-multiplier", "factor": 5 },
+        { "kind": "error-rate", "rate": 0.4, "exceptionType": "System.TimeoutException" }
+      ]
+    },
+    {
+      "key": "partner-bookings-failing", "title": "Distribution partner bookings failing",
+      "description": "The hotel and car distribution partner returns errors on reservation calls. 07 Booking (complete purchase) and cancellations fail and BookingCompleted events drop; search is unaffected.",
+      "defaultDurationMinutes": 45,
+      "effects": [
+        { "kind": "dependency-failure", "partner": "booking-partner", "rate": 0.85 },
+        { "kind": "latency-multiplier", "partner": "booking-partner", "factor": 3 }
+      ]
+    },
+    {
+      "key": "payment-declines", "title": "Payment gateway authorization errors",
+      "description": "The payment gateway rejects a large share of authorizations. Hotel/car checkout, cruise payment and air booking all fail at the payment call.",
+      "defaultDurationMinutes": 30,
+      "effects": [
+        { "kind": "dependency-failure", "partner": "payment-gateway", "rate": 0.5 },
+        { "kind": "latency-multiplier", "partner": "payment-gateway", "factor": 2 }
+      ]
+    },
+    {
+      "key": "silent-bookings-drop", "title": "Bookings drop with no technical error",
+      "description": "A promotional banner covers the purchase button on several pages. Fewer members reach the booking steps; nothing fails and latency is normal, so only the business KPIs move.",
+      "defaultDurationMinutes": 60,
+      "effects": [
+        { "kind": "traffic-multiplier", "step": "POST /checkout/completepurchase", "factor": 0.15 },
+        { "kind": "traffic-multiplier", "step": "GET /checkout/purchasecomplete", "factor": 0.15 },
+        { "kind": "traffic-multiplier", "step": "POST /cruiseconfirm.do", "factor": 0.15 },
+        { "kind": "traffic-multiplier", "step": "POST /api/air/book", "factor": 0.15 }
+      ]
+    },
+    {
+      "key": "cluster-node-loss", "title": "Cruise API cluster node loss",
+      "description": "One node of the cluster hosting the Cruise API goes down; partitions move and the remaining nodes answer up to 15x slower and about 30 % of the Cruise API calls fail with transient errors until the cluster rebalances.",
+      "defaultDurationMinutes": 30,
+      "effects": [
+        { "kind": "latency-multiplier", "step": "GET /api/cruise/searchmatrix", "factor": 15 },
+        { "kind": "error-rate", "step": "GET /api/cruise/searchmatrix", "rate": 0.3, "exceptionType": "System.Fabric.FabricTransientException" },
+        { "kind": "latency-multiplier", "step": "GET /api/cruise/getcustomerid", "factor": 15 },
+        { "kind": "error-rate", "step": "GET /api/cruise/getcustomerid", "rate": 0.3, "exceptionType": "System.Fabric.FabricTransientException" },
+        { "kind": "latency-multiplier", "step": "GET /api/guest/get-guests", "factor": 15 },
+        { "kind": "error-rate", "step": "GET /api/guest/get-guests", "rate": 0.3, "exceptionType": "System.Fabric.FabricTransientException" },
+        { "kind": "latency-multiplier", "step": "GET /api/cruise/featuresandoptions", "factor": 15 },
+        { "kind": "error-rate", "step": "GET /api/cruise/featuresandoptions", "rate": 0.3, "exceptionType": "System.Fabric.FabricTransientException" },
+        { "kind": "latency-multiplier", "step": "GET /api/cruise/insurance", "factor": 15 },
+        { "kind": "error-rate", "step": "GET /api/cruise/insurance", "rate": 0.3, "exceptionType": "System.Fabric.FabricTransientException" }
+      ]
+    },
+    {
+      "key": "holiday-sale-peak", "title": "Holiday sale traffic peak (legitimate, must not alert)",
+      "description": "A marketing sale doubles traffic on every vertical. Latency and error rates stay normal and bookings rise: the platform should not raise an incident.",
+      "defaultDurationMinutes": 90,
+      "effects": [
+        { "kind": "traffic-multiplier", "factor": 2 }
+      ]
+    }
+  ],
+  "historicalIncidents": [
+    { "scenario": "cruise-pool-exhaustion", "hoursAgo": 54, "durationMinutes": 50 },
+    { "scenario": "partner-bookings-failing", "hoursAgo": 44, "durationMinutes": 30 },
+    { "scenario": "hotel-prebook-exceptions", "hoursAgo": 31, "durationMinutes": 40 },
+    { "scenario": "air-search-outage", "hoursAgo": 20, "durationMinutes": 35 },
+    { "scenario": "club-degraded", "hoursAgo": 9, "durationMinutes": 60 },
+    { "scenario": "holiday-sale-peak", "hoursAgo": 66, "durationMinutes": 90 }
+  ]
+}

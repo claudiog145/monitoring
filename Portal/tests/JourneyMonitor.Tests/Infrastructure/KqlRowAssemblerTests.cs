@@ -13,6 +13,7 @@ public class KqlRowAssemblerTests
         {
             ["UserId"] = "14001001",
             ["CorrelationId"] = "8a1c2d3e-4f56-4789-a012-111111111001",
+            ["ClubId"] = "15668",
             ["Outcome"] = "Booked",
             ["LastStep"] = 8,
             ["FailReason"] = "",
@@ -38,6 +39,7 @@ public class KqlRowAssemblerTests
         });
 
         Assert.Equal("14001001", row.GetString("UserId"));
+        Assert.Equal("15668", row.GetString("ClubId"));
         Assert.Equal("Booked", row.GetString("Outcome"));
         Assert.Equal(8, row.GetInt("LastStep"));
         Assert.Equal(312, row.GetInt("SearchToConfirm_s"));

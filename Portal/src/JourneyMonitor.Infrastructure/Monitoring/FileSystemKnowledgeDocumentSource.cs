@@ -10,13 +10,40 @@ namespace JourneyMonitor.Infrastructure.Monitoring;
 /// docker-compose). Streams rather than loading 257 documents into memory at once, since the
 /// import embeds them one at a time anyway.
 /// </summary>
-public sealed class FileSystemKnowledgeDocumentSource(IOptions<KnowledgeImportOptions> options) : IKnowledgeDocumentSource
+public sealed class FileSystemKnowledgeDocumentSource : IKnowledgeDocumentSource
 {
-    private string Root => options.Value.ResolvedCorpusPath;
+    private readonly Func<string> _root;
+
+    public FileSystemKnowledgeDocumentSource(IOptions<KnowledgeImportOptions> options)
+    {
+        _root = () => options.Value.ResolvedCorpusPath;
+    }
+
+    private FileSystemKnowledgeDocumentSource(string root)
+    {
+        _root = () => root;
+    }
+
+    private string Root => _root();
 
     public bool IsAvailable => !string.IsNullOrWhiteSpace(Root) && Directory.Exists(Root);
 
     public string Location => string.IsNullOrWhiteSpace(Root) ? "(not configured)" : Root;
+
+    /// <inheritdoc />
+    public IKnowledgeDocumentSource? Scope(string subPath)
+    {
+        if (!IsAvailable || string.IsNullOrWhiteSpace(subPath)) return null;
+
+        var root = Path.GetFullPath(Root);
+        var scoped = Path.GetFullPath(Path.Combine(root, subPath.Replace('\\', '/').Replace('/', Path.DirectorySeparatorChar)));
+
+        // Defence in depth: the caller already rejected '..', but a sub-folder must never resolve outside the corpus.
+        var rootWithSeparator = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
+        if (!scoped.StartsWith(rootWithSeparator, StringComparison.Ordinal) || !Directory.Exists(scoped)) return null;
+
+        return new FileSystemKnowledgeDocumentSource(scoped);
+    }
 
     public async IAsyncEnumerable<KnowledgeDocumentFile> ReadAllAsync([EnumeratorCancellation] CancellationToken cancellationToken)
     {

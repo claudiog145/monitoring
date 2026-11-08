@@ -1,4 +1,4 @@
--- Normalized Product catalog + Maturity Status for the Club Map (US 239295 / bridge to 235561).
+-- Normalized Product catalog + Maturity Status for the Application Map (US 239295 / bridge to 235561).
 -- brand.ClubInventory stays one row per ClubId (identity).
 -- brand.ClubProductMaturityStatus holds Product links and Status 0-3 per club x product.
 -- Idempotent for docker init / re-apply.

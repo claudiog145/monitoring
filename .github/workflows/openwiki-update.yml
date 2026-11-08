@@ -1,0 +1,21 @@
+name: OpenWiki Update
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'openwiki/**'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    uses: arriviainc-softeng/shared-workflows/.github/workflows/openwiki-update.yml@openwiki-v2
+    secrets:
+      APP_ID: ${{ secrets.APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+      COPILOT_API_KEY: ${{ secrets.OPENWIKI_COPILOT_OAUTH }}

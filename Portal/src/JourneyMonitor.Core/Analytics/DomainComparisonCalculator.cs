@@ -13,9 +13,10 @@ public sealed class DomainComparison
 
 /// <summary>
 /// Builds Domain Comparison rows (Analytics tab) from mapped KQL journeys.
-/// Direct port of domain-comparison.js. Conversion is search-to-booking for every
-/// vertical, but each vertical has its own "reached search" predicate and Cruise uses a
-/// different P95 formula (average, not sample-percentile) - preserve exactly, do not unify.
+/// Direct port of domain-comparison.js. Conversion is bookings divided by searches.
+/// A booking session counts even when its search was an earlier session. Each vertical
+/// keeps its own "reached search" predicate, and Cruise uses a different P95 formula
+/// (average, not sample-percentile) - preserve exactly, do not unify.
 /// </summary>
 public static class DomainComparisonCalculator
 {
@@ -46,7 +47,9 @@ public static class DomainComparisonCalculator
         Func<CustomerJourney, bool> booked, bool sampleP95)
     {
         var searched = rows.Where(reachedSearch).ToList();
-        var successful = searched.Where(booked).ToList();
+        // A booking session counts even when its search was an earlier session.
+        // Those earlier sessions stay out of this numerator.
+        var converted = rows.Count(booked);
         var latencies = rows.Where(j => j.OverallP95Ms is not null).Select(j => j.OverallP95Ms!.Value).ToList();
         double? p95 = sampleP95
             ? SamplePercentile(latencies, 95)
@@ -56,7 +59,7 @@ public static class DomainComparisonCalculator
         {
             Domain = domain,
             Journeys = rows.Count,
-            ConversionRate = searched.Count > 0 ? (double)successful.Count / searched.Count : null,
+            ConversionRate = searched.Count > 0 ? (double)converted / searched.Count : null,
             P95LatencyMs = p95,
             Exceptions = rows.Sum(j => Math.Max(0, j.Exceptions)),
         };

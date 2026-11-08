@@ -1,0 +1,6 @@
+[
+  { "alias": "fixture-web", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/fixture-web",
+    "appId": "demo-fixture-web", "ownerProfileKey": "fixture-demo", "enabled": true, "notes": "Synthetic demo source (test fixture)." },
+  { "alias": "fixture-api", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/fixture-api",
+    "appId": "demo-fixture-api", "ownerProfileKey": "fixture-demo", "enabled": true, "notes": "Synthetic demo source (test fixture)." }
+]

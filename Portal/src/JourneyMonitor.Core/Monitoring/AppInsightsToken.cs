@@ -1,4 +1,5 @@
 using System;
+using JourneyMonitor.Core.Monitoring.TokenRefresh;
 
 namespace JourneyMonitor.Core.Monitoring
 {
@@ -56,6 +57,37 @@ namespace JourneyMonitor.Core.Monitoring
         /// Optional notes for audit (e.g., "Generated on 2024-10-30")
         /// </summary>
         public string Notes { get; set; }
+
+        /// <summary>
+        /// How the token is renewed: manual (pasted), azure-cli or service-principal (see AppInsightsTokenRefreshModes).
+        /// </summary>
+        public string RefreshMode { get; set; } = AppInsightsTokenRefreshModes.Manual;
+
+        /// <summary>
+        /// Entra tenant GUID used to acquire the token (azure-cli and service-principal).
+        /// </summary>
+        public string? AadTenantId { get; set; }
+
+        /// <summary>
+        /// Service principal application id (service-principal only).
+        /// </summary>
+        public string? ClientId { get; set; }
+
+        /// <summary>
+        /// Service principal secret ENCRYPTED with the same protector as the token. Never returned by any API.
+        /// </summary>
+        public string? EncryptedClientSecret { get; set; }
+
+        public DateTime? LastRefreshAt { get; set; }
+
+        /// <summary>
+        /// Last automatic refresh failure (redacted, max 500 chars). Cleared by a successful refresh.
+        /// </summary>
+        public string? LastRefreshError { get; set; }
+
+        public int RefreshCount { get; set; }
+
+        public bool HasClientSecret => !string.IsNullOrEmpty(EncryptedClientSecret);
 
         /// <summary>
         /// Check if token has expired

@@ -38,7 +38,7 @@ public class SyncIncidentsServiceTests
     }
 
     [Fact]
-    public async Task HotelsAndCarsShareOneAppInsightsQuery()
+    public async Task HotelAndCarPassesSplitTheSharedApp()
     {
         var telemetry = new CapturingTelemetrySource
         {
@@ -64,17 +64,24 @@ public class SyncIncidentsServiceTests
 
         var passes = await service.SyncAllAsync(CancellationToken.None);
 
-        Assert.Equal(1, telemetry.QueryCount);
-        Assert.Equal("hotel-app", telemetry.AppId);
-        Assert.Contains("| where ClubId in (\"15639\")", telemetry.Kql);
-        Assert.Contains("RequestUrl !has \"/cars/\"", telemetry.Kql);
-        Assert.Equal(["hotels", "cruises"], passes.Select(pass => pass.Domain).ToArray());
+        Assert.Equal(2, telemetry.QueryCount);
+        Assert.All(telemetry.AppIds, appId => Assert.Equal("hotel-app", appId));
+        Assert.Contains("RequestUrl !has \"/cars/\"", telemetry.Kqls[0]);
+        Assert.Contains("RequestUrl has \"/cars/\"", telemetry.Kqls[1]);
+        Assert.Equal(["hotels", "cruises", "cars"], passes.Select(pass => pass.Domain).ToArray());
         Assert.True(passes.Single(pass => pass.Domain == "hotels").Stored);
         Assert.False(passes.Single(pass => pass.Domain == "cruises").Stored);
+        Assert.True(passes.Single(pass => pass.Domain == "cars").Stored);
 
-        var hotel = Assert.Single(store.Requests.Single().Incidents);
+        var hotel = Assert.Single(store.Requests[0].Incidents);
+        Assert.Equal("hotels", store.Requests[0].Domain);
         Assert.Equal("System.Threading.ThreadAbortException", hotel.ExceptionType);
         Assert.Equal("01 Login", hotel.Component);
+
+        var car = Assert.Single(store.Requests[1].Incidents);
+        Assert.Equal("cars", store.Requests[1].Domain);
+        Assert.Equal("System.TimeoutException", car.ExceptionType);
+        Assert.Equal("/cars/search.json", Assert.Single(car.Occurrences).Url);
     }
 
     [Fact]
@@ -116,7 +123,7 @@ public class SyncIncidentsServiceTests
     }
 
     [Fact]
-    public async Task AirAndCarsAreNotQueried()
+    public async Task AirIsNotQueried()
     {
         var telemetry = new CapturingTelemetrySource();
         var store = new CapturingIncidentStore();
@@ -126,13 +133,135 @@ public class SyncIncidentsServiceTests
             store,
             new FakeBrandCatalog([new BrandClub("T-Mobile", "15639", "308", "stays.tmobiletravel.com")]),
             Options.Create(new InsightsOptions { AppInsightsAppId = "hotel-app" }),
-            Options.Create(new JourneySyncOptions { Domains = "cars,air", Window = "15m", Environment = "production" }));
+            Options.Create(new JourneySyncOptions { Domains = "air", Window = "15m", Environment = "production" }));
 
         var passes = await service.SyncAllAsync(CancellationToken.None);
 
         Assert.Empty(passes);
         Assert.Equal(0, telemetry.QueryCount);
         Assert.Null(store.Request);
+    }
+
+    [Fact]
+    public async Task CarExceptionsKeepCarMarkersOnTheHotelApp()
+    {
+        var telemetry = new CapturingTelemetrySource
+        {
+            Rows =
+            [
+                Row("/vacationclub/logincheck.aspx", "hotel-item", "System.NullReferenceException"),
+                Row("/cars/search.json", "car-item", "System.TimeoutException", source: "Browser"),
+            ],
+        };
+        var store = new CapturingIncidentStore();
+        var service = new SyncIncidentsService(
+            telemetry,
+            new KqlQueryTextProvider(),
+            store,
+            new FakeBrandCatalog([new BrandClub("T-Mobile", "15639", "308", "stays.tmobiletravel.com")]),
+            Options.Create(new InsightsOptions { AppInsightsAppId = "hotel-app" }),
+            Options.Create(new JourneySyncOptions
+            {
+                Domains = "cars",
+                Window = "15m",
+                Environment = "production",
+            }));
+
+        var pass = await service.SyncAsync("cars", CancellationToken.None);
+
+        Assert.True(pass.Stored);
+        Assert.Equal("cars", pass.Domain);
+        Assert.Equal(1, telemetry.QueryCount);
+        Assert.Equal("hotel-app", telemetry.AppId);
+        Assert.Contains("| where ClubId in (\"15639\") or isempty(ClubId)", telemetry.Kql);
+        Assert.Contains("Url has \"CarSearch\"", telemetry.Kql);
+        Assert.Contains("RequestUrl has \"/cars/\"", telemetry.Kql);
+        Assert.Contains("client_Type", telemetry.Kql);
+        Assert.Equal(ExceptionSource.Browser, Assert.Single(store.Request!.Incidents).Occurrences.Single().Source);
+        Assert.DoesNotContain("!has", telemetry.Kql);
+        Assert.Equal("cars", store.Request!.Domain);
+        var car = Assert.Single(store.Request.Incidents);
+        Assert.Equal("System.TimeoutException", car.ExceptionType);
+        Assert.Equal("/cars/search.json", Assert.Single(car.Occurrences).Url);
+    }
+
+    [Fact]
+    public async Task CarExceptionsWithoutAClubOrHostAreDropped()
+    {
+        var telemetry = new CapturingTelemetrySource
+        {
+            Rows =
+            [
+                Row("/api/CarSearch", "known", "System.TimeoutException", "15639"),
+                Row("/api/CarSearch", "blank-1", "System.NullReferenceException", ""),
+                Row("/api/CarSearch", "blank-2", "System.NullReferenceException", ""),
+                Row("/vacationclub/logincheck.aspx", "hotel-blank", "System.Exception", ""),
+                Row("/api/CarBooking", "other-club", "System.Exception", "99999"),
+            ],
+        };
+        var store = new CapturingIncidentStore();
+        var service = new SyncIncidentsService(
+            telemetry,
+            new KqlQueryTextProvider(),
+            store,
+            new FakeBrandCatalog([new BrandClub("T-Mobile", "15639", "308", "stays.tmobiletravel.com")]),
+            Options.Create(new InsightsOptions { AppInsightsAppId = "hotel-app" }),
+            Options.Create(new JourneySyncOptions
+            {
+                Domains = "cars",
+                Window = "15m",
+                Environment = "production",
+            }));
+
+        var pass = await service.SyncAsync("cars", CancellationToken.None);
+
+        Assert.True(pass.Stored);
+        var known = Assert.Single(store.Request!.Incidents);
+        Assert.Equal("15639", known.ClubId);
+        Assert.Equal("System.TimeoutException", known.ExceptionType);
+    }
+
+    [Fact]
+    public async Task CarExceptionHostMatchesTheBrandClub()
+    {
+        var telemetry = new CapturingTelemetrySource
+        {
+            Rows =
+            [
+                Row("http://stays.tmobiletravel.com/api/CarSearch", "tmobile-1", "System.NullReferenceException", ""),
+                Row("http://stays.tmobiletravel.com/api/CarSearch", "tmobile-2", "System.NullReferenceException", ""),
+                Row("http://unknown.example/api/CarSearch", "unknown-host", "System.Exception", ""),
+                Row("https://cdn.example/loader.js", "request-host", "System.TimeoutException", "", requestUrl: "http://book.wesalute.com/api/CarBooking"),
+            ],
+        };
+        var store = new CapturingIncidentStore();
+        var service = new SyncIncidentsService(
+            telemetry,
+            new KqlQueryTextProvider(),
+            store,
+            new FakeBrandCatalog(
+            [
+                new BrandClub("WeSalute", "15827", "333", "book.wesalute.com"),
+                new BrandClub("WeSalute", "15811", "332", "book.wesalute.com"),
+                new BrandClub("T-Mobile", "15639", "308", "stays.tmobiletravel.com"),
+            ]),
+            Options.Create(new InsightsOptions { AppInsightsAppId = "hotel-app" }),
+            Options.Create(new JourneySyncOptions
+            {
+                Domains = "cars",
+                Window = "15m",
+                Environment = "production",
+            }));
+
+        var pass = await service.SyncAsync("cars", CancellationToken.None);
+
+        Assert.True(pass.Stored);
+        Assert.Equal(2, pass.IncidentCount);
+        var tmobile = Assert.Single(store.Request!.Incidents, incident => incident.ClubId == "15639");
+        Assert.Equal("System.NullReferenceException", tmobile.ExceptionType);
+        Assert.Equal(2, tmobile.Occurrences.Count);
+        var wesalute = Assert.Single(store.Request.Incidents, incident => incident.ClubId == "15811");
+        Assert.Equal("System.TimeoutException", wesalute.ExceptionType);
     }
 
     [Fact]
@@ -167,9 +296,10 @@ public class SyncIncidentsServiceTests
         var hotel = Assert.Single(store.Request!.Incidents);
         Assert.Equal("System.NullReferenceException", hotel.ExceptionType);
         Assert.Equal("/vacationclub/logincheck.aspx", Assert.Single(hotel.Occurrences).Url);
+        Assert.Equal(ExceptionSource.Server, Assert.Single(hotel.Occurrences).Source);
     }
 
-    private static TelemetryJourneyRow Row(string url, string itemId, string exceptionType, string clubId = "15639", string partnerId = "", string requestUrl = "")
+    private static TelemetryJourneyRow Row(string url, string itemId, string exceptionType, string clubId = "15639", string partnerId = "", string requestUrl = "", string source = "")
     {
         var row = new TelemetryJourneyRow();
         using var document = JsonDocument.Parse($$"""
@@ -185,7 +315,8 @@ public class SyncIncidentsServiceTests
               "OccurredAt": "2026-09-28T16:16:00Z",
               "MemberId": "8812345",
               "Url": "{{url}}",
-              "RequestUrl": "{{requestUrl}}"
+              "RequestUrl": "{{requestUrl}}",
+              "Source": "{{source}}"
             }
             """);
         foreach (var property in document.RootElement.EnumerateObject())
@@ -200,6 +331,8 @@ public class SyncIncidentsServiceTests
     {
         public string? Kql { get; private set; }
         public string? AppId { get; private set; }
+        public List<string> Kqls { get; } = [];
+        public List<string> AppIds { get; } = [];
         public int QueryCount { get; private set; }
         public IReadOnlyList<TelemetryJourneyRow> Rows { get; init; } = [];
 
@@ -209,6 +342,8 @@ public class SyncIncidentsServiceTests
             QueryCount++;
             Kql = request.Kql;
             AppId = request.AppInsightsAppId;
+            Kqls.Add(request.Kql);
+            AppIds.Add(request.AppInsightsAppId);
             return Task.FromResult(Rows);
         }
     }

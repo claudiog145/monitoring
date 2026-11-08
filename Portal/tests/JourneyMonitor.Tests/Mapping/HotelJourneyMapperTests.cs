@@ -96,6 +96,22 @@ public class HotelJourneyMapperTests
     }
 
     [Fact]
+    public void HotelRowsUseTheSessionKeyAsTheUniqueJourneyId()
+    {
+        var rows = new[]
+        {
+            RowFromJson("""{"UserId":"21061035","CorrelationId":"abc-1","Outcome":"Dropped at step 2","Journey":[]}"""),
+            RowFromJson("""{"UserId":"21061035","CorrelationId":"abc-2","Outcome":"Booked","IsBookSuccessful":true,"PassedSearch":true,"Journey":[]}"""),
+        };
+        var journeys = HotelJourneyMapper.MapRows(rows, "T-Mobile / T Life", "hotels", "production");
+        Assert.Equal(["abc-1", "abc-2"], journeys.Select(j => j.Id));
+        Assert.Equal(["abc-1", "abc-2"], journeys.Select(j => j.CorrelationId));
+        Assert.Equal(["21061035", "21061035"], journeys.Select(j => j.Customer));
+        Assert.False(journeys[0].IsBookSuccessful);
+        Assert.True(journeys[1].IsBookSuccessful);
+    }
+
+    [Fact]
     public void CarsRowsUseCorrelationIdAsTheUniqueJourneyId()
     {
         var rows = new[]

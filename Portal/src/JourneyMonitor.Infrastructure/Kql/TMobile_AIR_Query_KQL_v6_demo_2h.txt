@@ -16,7 +16,9 @@
 // IN_PROGRESS covers FunnelStep = 0, including API-side correlation ids that never had a
 // 01 Flight Search of their own.
 // IsBookSuccessful is true when BookOk > 0. PassedSearch is true when StepsCompleted > 0.
-// Exceptions is FailedCalls for that CorrelationId (already the per-journey sum of first-party failures).
+// Exceptions is FailedCalls for that session (already the per-journey sum of first-party failures).
+// A correlation id splits when consecutive steps are more than 30 minutes apart.
+// CorrelationId on the row is rawId-seq (ABC123-1). Book Success counts only in the session that fired it.
 // Journey is an ordered collection, one entry per completed journey step:
 //   stepNo, step, offsetMs, durationMs, sumCallMs, sumApiMs, sumUiMs, maxCallMs, p95Ms, wallMs,
 //   callCount, fails, calls
@@ -297,13 +299,22 @@ let scored = materialize(
             extract(@"(?:^|[^\w])[Bb]ooking[Ii]d\\?""?\s*:\s*\\?""?\s*([^""\\]+)", 1, Dims),
             extract(@"/confirmation/[^/]+/([^/?""#]+)", 1, Path),
             extract(@"/confirmation/[^/]+/([^/?""#]+)", 1, OpName)));
-let journeyStarts = materialize(
+// Session key is rawId-seq. Numbering restarts on each correlation id, and again when the
+// gap since the previous step of that id exceeds 30 minutes.
+let sessionized = materialize(
     scored
+    | extend RawCorrelationId = CorrelationId
+    | sort by RawCorrelationId asc, timestamp asc
+    | extend SessionStartTs = row_window_session(timestamp, 365d, 30m, prev(RawCorrelationId) != RawCorrelationId)
+    | extend SessionSeq = row_rank_dense(SessionStartTs, prev(RawCorrelationId) != RawCorrelationId)
+    | extend CorrelationId = strcat(RawCorrelationId, "-", tostring(SessionSeq)));
+let journeyStarts = materialize(
+    sessionized
     | summarize JourneyStart = min(timestamp) by CorrelationId);
 // One row per completed step. durationMs prefers summed call latency and falls back to the
 // wall-clock span of the step, so a step whose events carry no elapsedMs still reports a number.
 let callStats =
-    scored
+    sessionized
     | where StageNo > 0 and IsExternal and isnotnull(Ms)
     | summarize MaxMs = round(max(Ms)),
                 P50Ms = round(percentile(Ms, 50)),
@@ -312,7 +323,7 @@ let callStats =
                 P99Ms = round(percentile(Ms, 99))
       by CorrelationId, StageNo, CallName, Kind;
 let stepCalls =
-    scored
+    sessionized
     | where StageNo > 0 and IsExternal
     | join hint.strategy=broadcast kind=leftouter journeyStarts on CorrelationId
     | extend OffsetMs = todouble(datetime_diff("millisecond", timestamp, JourneyStart)),
@@ -343,7 +354,7 @@ let stepCalls =
             "path", Path), 80)
       by CorrelationId, StageNo;
 let stepRows =
-    scored
+    sessionized
     | where StageNo > 0
     | summarize StepStart = min(timestamp),
                 StepEnd = max(timestamp),
@@ -407,7 +418,7 @@ let steps =
         not(set_has_element(StepSet, 6)), 5,
         6)
     | project-away StepSet;
-scored
+sessionized
 | summarize FirstSeen = min(timestamp),
             LastSeen = max(timestamp),
             Items = count(),
@@ -453,5 +464,5 @@ scored
 | project Status, BookingId, BookOk, BookFail, FailedCalls, IsBookSuccessful, PassedSearch, Exceptions = FailedCalls, JourneyTotalMs, OverallP95, SlowestCallMs, UserId, ClubId, Route, CorrelationId, StepsCompleted, FunnelStep, LastStep, FirstSeen, LastSeen, Sources, Steps, Journey
 | top 50 by LastSeen desc
 // For the waterfall as a table (one row per step) instead of the card, replace everything from
-// the "scored | summarize" line above with:
+// the "sessionized | summarize" line above with:
 //   stepRows | sort by CorrelationId asc, StageNo asc | project CorrelationId, Stage, DurationMs, OffsetMs, SumCallMs, MaxCallMs, Calls, Fails

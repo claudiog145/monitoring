@@ -1,7 +1,14 @@
 <Solution>
+  <Folder Name="/demo/">
+    <Project Path="demo/DemoGenerator/DemoGenerator.csproj" />
+    <Project Path="demo/DemoGenerator.Tests/DemoGenerator.Tests.csproj" />
+    <Project Path="demo/FakeAppInsights/FakeAppInsights.csproj" />
+    <Project Path="demo/FakeAppInsights.Tests/FakeAppInsights.Tests.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/JourneyMonitor.Core/JourneyMonitor.Core.csproj" />
     <Project Path="src/JourneyMonitor.Functions/JourneyMonitor.Functions.csproj" />
+    <Project Path="src/JourneyMonitor.HealthConsole/JourneyMonitor.HealthConsole.csproj" />
     <Project Path="src/JourneyMonitor.Infrastructure/JourneyMonitor.Infrastructure.csproj" />
     <Project Path="src/JourneyMonitor.Web/JourneyMonitor.Web.csproj" />
   </Folder>

@@ -382,7 +382,8 @@ public sealed class InspectorMonkeyRunner(
     IAgentPauseResolver pauseResolver,
     IAgentBudgetResolver budgetResolver,
     IOptions<InspectorOptions> options,
-    ILogger<InspectorMonkeyRunner> logger)
+    ILogger<InspectorMonkeyRunner> logger,
+    TriageMonkeyService? triage = null)
 {
     // Same single-instance overlap guard as LatencySpikeMonkeyRunner - see its RunLock comment.
     // The queue's atomic claim already prevents two INSTANCES taking the same item; this prevents
@@ -421,11 +422,22 @@ public sealed class InspectorMonkeyRunner(
         var limits = options.Value;
         await runTracker.RecordRunAsync(MonkeyKey.InspectorMonkey, DateTimeOffset.UtcNow, ct);
 
+        // Triage signals take priority over Scout packages. Gated by Triage:Mode inside the
+        // service, not by Inspector:Enabled or the forensic-case cap.
+        // Inspector:RunPackagesAfterTriage (default false) lets the same cycle go on to Scout packages: with
+        // several companies the triage queue is never empty, and packages would otherwise never be reached.
+        MonkeyRunSummary? triageDone = null;
+        if (triage is not null && await TryRunTriageAsync(triage, limits, ct) is { } triageSummary)
+        {
+            if (!limits.ResolvedRunPackagesAfterTriage) return triageSummary;
+            triageDone = triageSummary;
+        }
+
         if (!limits.ResolvedEnabled)
         {
             // The Scout keeps producing while this is off, so the backlog is waiting rather than lost.
             logger.LogInformation("[InspectorMonkey] Inspector:Enabled is false - nothing leased; the queue keeps filling.");
-            return Nothing();
+            return triageDone ?? Nothing();
         }
 
         // Named argument: GetStatsAsync now leads with an optional profile filter, and the cap
@@ -440,7 +452,7 @@ public sealed class InspectorMonkeyRunner(
             logger.LogWarning(
                 "[InspectorMonkey] daily cap reached ({Today} of {Cap} investigations today) - leasing nothing until the UTC day rolls over.",
                 stats.InvestigationsToday, budget.MaxInvestigationsPerDay);
-            return Nothing();
+            return triageDone ?? Nothing();
         }
 
         await ReportBacklogAsync(ct);
@@ -462,7 +474,7 @@ public sealed class InspectorMonkeyRunner(
         if (leased.Count == 0)
         {
             logger.LogInformation("[InspectorMonkey] nothing to investigate this cycle.");
-            return Nothing();
+            return triageDone ?? Nothing();
         }
 
         var outcomes = await Task.WhenAll(leased.Select(item => InvestigateOneAsync(item, leasedBy, ct)));
@@ -472,7 +484,8 @@ public sealed class InspectorMonkeyRunner(
             "[InspectorMonkey] {Investigated} of {Leased} leased item(s) investigated ({Today} of {Cap} used today).",
             investigated, leased.Count, stats.InvestigationsToday + leased.Count, limits.ResolvedMaxInvestigationsPerDay);
 
-        return new MonkeyRunSummary(MonkeyKey.InspectorMonkey, leased.Count, investigated, Notified: 0, DateTimeOffset.UtcNow);
+        return new MonkeyRunSummary(MonkeyKey.InspectorMonkey,
+            leased.Count + (triageDone?.NewFindings ?? 0), investigated + (triageDone?.Diagnosed ?? 0), Notified: 0, DateTimeOffset.UtcNow);
     }
 
     private async Task<bool> InvestigateOneAsync(AgentWorkItem item, string leasedBy, CancellationToken ct)
@@ -512,6 +525,43 @@ public sealed class InspectorMonkeyRunner(
             logger.LogError(ex, "[InspectorMonkey] work item {ItemId} ({DedupKey}) failed.", item.Id, item.DedupKey);
             await ReleaseAsFailedAsync(item, leasedBy, ex.Message, CancellationToken.None);
             return false;
+        }
+    }
+
+    /// <summary>Null when there was no triage signal to lease, so the run continues with packages.</summary>
+    private async Task<MonkeyRunSummary?> TryRunTriageAsync(TriageMonkeyService triageService, InspectorOptions limits, CancellationToken ct)
+    {
+        var leasedBy = $"{Environment.MachineName}:{Guid.NewGuid():N}";
+        AgentWorkItem? item;
+        try
+        {
+            item = await queue.TryLeaseAsync(AgentWorkPayloadType.TriageSignal, leasedBy, TimeSpan.FromMinutes(limits.ResolvedLeaseMinutes), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "[InspectorMonkey] could not lease a triage signal; continuing with investigation packages.");
+            return null;
+        }
+        if (item is null) return null;
+
+        try
+        {
+            if (!Guid.TryParse(item.PayloadId, out var investigationId))
+            {
+                await ReleaseAsFailedAsync(item, leasedBy, $"PayloadId \"{item.PayloadId}\" is not a triage investigation id.", ct);
+                return new MonkeyRunSummary(MonkeyKey.InspectorMonkey, 1, Diagnosed: 0, Notified: 0, DateTimeOffset.UtcNow);
+            }
+
+            var result = await triageService.InvestigateAsync(investigationId, ct);
+            await queue.CompleteAsync(item.Id, leasedBy, ct);
+            return new MonkeyRunSummary(MonkeyKey.InspectorMonkey, 1, result is null ? 0 : 1, Notified: 0, DateTimeOffset.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            // Same lease hygiene as InvestigateOneAsync, cancellation included.
+            logger.LogError(ex, "[InspectorMonkey] triage work item {ItemId} ({DedupKey}) failed.", item.Id, item.DedupKey);
+            await ReleaseAsFailedAsync(item, leasedBy, ex.Message, CancellationToken.None);
+            return new MonkeyRunSummary(MonkeyKey.InspectorMonkey, 1, Diagnosed: 0, Notified: 0, DateTimeOffset.UtcNow);
         }
     }
 

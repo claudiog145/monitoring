@@ -198,6 +198,8 @@ internal sealed class FakeKnowledgeDocumentSource(bool available, params Knowled
 
     public string Location => "/fake-corpus";
 
+    public IKnowledgeDocumentSource? Scope(string subPath) => null;
+
     public async IAsyncEnumerable<KnowledgeDocumentFile> ReadAllAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
         foreach (var file in files)

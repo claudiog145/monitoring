@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using JourneyMonitor.Core.Company;
 
@@ -35,6 +36,20 @@ public static class ProfileDraftDefaults
     /// reviewer do it.
     /// </summary>
     public const string UnspecifiedEntityKind = "unspecified";
+
+    /// <summary>
+    /// Share of sampled dependency calls a target needs before the draft proposes it as a partner.
+    /// Below it the target is still listed in the proposals, with the share that rejected it.
+    /// </summary>
+    public const double MinPartnerSharePercent = 5.0;
+
+    public const int MaxPartners = 10;
+
+    /// <summary>In-process spans are the application talking to itself, never an external partner.</summary>
+    public const string InProcDependencyType = "InProc";
+
+    /// <summary>A service key is a KPI domain, and monitoring.KpiDefinition.Domain is nvarchar(32).</summary>
+    public const int MaxServiceKeyLength = JourneyMonitor.Core.Monitoring.Kpi.KpiDomainPolicy.MaxStoredLength;
 }
 
 /// <summary>Knobs a caller may set when asking for a draft. Everything else is measured.</summary>
@@ -85,7 +100,12 @@ public sealed record CompanyProfileDraft(
     string SourceEnvironment,
     DateTimeOffset WindowFrom,
     DateTimeOffset WindowTo,
-    DateTimeOffset GeneratedAt);
+    DateTimeOffset GeneratedAt,
+    /// <summary>
+    /// Contract v4 §5 (AG7): KPIs proposed for this profile, every one disabled. Carried on the wire
+    /// as the top-level <c>suggestedKpis</c> of the draft response, not inside the draft.
+    /// </summary>
+    [property: JsonIgnore] IReadOnlyList<SuggestedKpi>? SuggestedKpis = null);
 
 /// <summary>
 /// There is no <c>Ready</c> member on purpose. Every draft needs a human, because the one thing
@@ -126,6 +146,10 @@ public static class DraftWarningCode
     public const string HostsNeedAssignment = "hosts-need-assignment";
     public const string ProfileDisabled = "profile-disabled";
     public const string LabelsArePlaceholders = "labels-are-placeholders";
+    public const string PartnersNeedReview = "partners-need-review";
+    public const string NoPartnersProposed = "no-partners-proposed";
+    public const string SuggestedKpisDisabled = "suggested-kpis-disabled";
+    public const string SuggestedKpiNote = "suggested-kpi-note";
 
     /// <summary>A warning the discovery report produced, carried into the draft verbatim.</summary>
     public const string DiscoveryNote = "discovery-note";
@@ -136,6 +160,7 @@ public static class DraftProposalKind
     public const string EntityIdentitySource = "entity-identity-source";
     public const string Service = "service";
     public const string HostFilter = "host-filter";
+    public const string Partner = "partner";
 }
 
 /// <summary>
@@ -202,14 +227,11 @@ public sealed class StructuralProfileWriteValidator : IProfileWriteValidator
     /// <summary>Compiling a pattern does not run it; the timeout is what the adapter will enforce at match time.</summary>
     private static readonly TimeSpan RegexCompileTimeout = TimeSpan.FromMilliseconds(100);
 
-    private static readonly string[] KnownMatcherKinds =
-    [
-        StepMatcherKind.UrlContains,
-        StepMatcherKind.OperationEquals,
-        StepMatcherKind.OperationContains,
-        StepMatcherKind.PageNameContains,
-        StepMatcherKind.Regex,
-    ];
+    /// <summary>
+    /// Every kind <see cref="StepMatcherKind"/> declares, from the same list <see cref="CompanyProfileValidator"/>
+    /// uses: a kind the model defines must never be one this save path refuses.
+    /// </summary>
+    private static readonly IReadOnlyList<string> KnownMatcherKinds = CompanyProfileValidator.StepMatcherKinds;
 
     private static readonly string[] KnownIdentityKinds =
     [

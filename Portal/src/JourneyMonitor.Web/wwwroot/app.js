@@ -27,16 +27,103 @@
  *   - An incident-management system (e.g. ServiceNow, PagerDuty) for status
  *   - An agent orchestration service for Monkey state and actions
  */
-/** Verticals the Domain filter exposes; "All" expands to exactly this list. */
-const JOURNEY_DOMAINS = ['hotels', 'cruises'];
-// Same values as JourneySync__InitialRowCap and JourneySync__FilteredRowCap on the Functions app.
+// Same caps as the per-company journey read: first paint asks for 50, a filter change for 200.
 const INIT_ROW_CAP = 50;
 const FILTER_ROW_CAP = 200;
+let lastOverviewWarningToast = '';
 
-function selectedJourneyDomains() {
-  const selectedDomain = state.filters.domain;
-  if (selectedDomain === 'all') return JOURNEY_DOMAINS;
-  return JOURNEY_DOMAINS.includes(selectedDomain) ? [selectedDomain] : [];
+/* --- Active company profile (contract v6 §2, §6) ---------------------------------------------
+   Every company word the portal shows - service names, the entity filter, column titles - comes
+   from the active profile. Nothing below names a particular company's services. */
+
+const PROFILE_LABEL_DEFAULTS = { service: 'Service', flow: 'Journey', step: 'Step', entity: 'Entity' };
+
+/** What the active company calls each role; the journey read's own labels win when present. */
+function profileLabels() {
+  const fromProfile = (state.activeProfile && state.activeProfile.labels) || {};
+  const fromJourneys = state.journeyLabels || {};
+  const pick = (role) => String(fromJourneys[role] || fromProfile[role] || PROFILE_LABEL_DEFAULTS[role]).trim()
+    || PROFILE_LABEL_DEFAULTS[role];
+  return { service: pick('service'), flow: pick('flow'), step: pick('step'), entity: pick('entity') };
+}
+
+const PROFILE_GLOSSARY_NOUNS = { service: 'serviceNoun', flow: 'flowNoun', step: 'stepNoun', entity: 'entityNoun' };
+
+/** The role's word for running text, lower case ("club", "sucursal"): glossary first, then the label. */
+function profileNoun(role) {
+  const glossary = (state.activeProfile && state.activeProfile.glossary) || {};
+  const word = String(glossary[PROFILE_GLOSSARY_NOUNS[role]] || profileLabels()[role] || role).trim();
+  return (word || role).toLowerCase();
+}
+
+/** "Sucursal: 12" - a count of entities that needs no plural of the company's own word. */
+function entityTally(count) {
+  return `${profileLabels().entity}: ${formatCount(count || 0)}`;
+}
+
+/** The mocked roster (data/monkeys.json) is written with {service}/{flow}/{step}/{entity} placeholders,
+ *  filled here with the active company's words so no company's vocabulary is baked into it. */
+function localizeMockMonkeys(mock) {
+  if (!Array.isArray(mock)) return [];
+  const services = profileServices();
+  return mock.map((monkey, index) => {
+    const words = {
+      service: services.length ? services[index % services.length].label : profileNoun('service'),
+      flow: profileNoun('flow'),
+      step: profileNoun('step'),
+      entity: profileNoun('entity'),
+    };
+    const fill = (value) => {
+      if (typeof value === 'string') return value.replace(/\{(service|flow|step|entity)\}/g, (_, role) => words[role]);
+      if (Array.isArray(value)) return value.map(fill);
+      if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v)]));
+      return value;
+    };
+    return fill(monkey);
+  });
+}
+
+/** The active company's services as { key, label, flows }, in profile order. */
+function profileServices() {
+  const services = (state.activeProfile && Array.isArray(state.activeProfile.services)) ? state.activeProfile.services : [];
+  return services
+    .filter((s) => s && s.key)
+    .map((s) => ({ key: String(s.key), label: String(s.displayName || s.key), flows: Array.isArray(s.flows) ? s.flows : [] }));
+}
+
+function profileService(key) {
+  const wanted = String(key || '').toLowerCase();
+  return profileServices().find((s) => s.key.toLowerCase() === wanted) || null;
+}
+
+/** Steps of one service (every flow), ordered, first definition of a key wins. */
+function profileServiceSteps(serviceKey) {
+  const service = profileService(serviceKey);
+  if (!service) return [];
+  const seen = new Set();
+  return service.flows
+    .flatMap((flow) => (Array.isArray(flow.steps) ? flow.steps : []))
+    .filter((step) => step && step.key && !seen.has(String(step.key).toLowerCase()) && seen.add(String(step.key).toLowerCase()))
+    .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0))
+    .map((step) => ({ key: String(step.key), label: String(step.displayName || step.key), order: Number(step.order) || 0 }));
+}
+
+function profileFlowLabel(serviceKey, flowKey) {
+  if (!flowKey) return '';
+  const service = profileService(serviceKey);
+  const flow = service && service.flows.find((f) => String(f.key).toLowerCase() === String(flowKey).toLowerCase());
+  return flow ? String(flow.displayName || flow.key) : String(flowKey);
+}
+
+function profileStepLabel(serviceKey, stepKey) {
+  if (!stepKey) return '';
+  const step = profileServiceSteps(serviceKey).find((s) => s.key.toLowerCase() === String(stepKey).toLowerCase());
+  return step ? step.label : String(stepKey);
+}
+
+/** Every service of the active company; "All" in the filter means exactly these. */
+function journeyDomains() {
+  return profileServices().map((s) => s.key);
 }
 
 /** The global Domain/Club filters, for the endpoints that scope by them. Club is the id the
@@ -63,30 +150,6 @@ async function reloadMonkeysForFilters() {
   }
 }
 
-function journeyQueryParams(domain, { includeReadFilters, rowCap = state.rowCap } = {}) {
-  const qs = new URLSearchParams({
-    win: headerQueryWin(),
-    domain,
-    env: state.filters.environment || 'production',
-    top: String(rowCap || INIT_ROW_CAP),
-  });
-  if (state.filters.domain === domain && state.filters.club) {
-    qs.set('club', state.filters.club);
-    const selected = (state.clubOptions || []).find((c) => c.value === state.filters.club);
-    if (selected && selected.host) qs.set('host', selected.host);
-    if (selected && selected.partnerId) qs.set('partner', selected.partnerId);
-  }
-  if (includeReadFilters) {
-    if (state.filters.status && state.filters.status !== 'all') {
-      qs.set('status', state.filters.status);
-    }
-    if (state.filters.id) {
-      qs.set('id', state.filters.id);
-    }
-  }
-  return qs;
-}
-
 async function fetchJsonPayload(url, { method = 'GET', domain } = {}) {
   let response;
   try {
@@ -106,102 +169,87 @@ async function fetchJsonPayload(url, { method = 'GET', domain } = {}) {
   return payload;
 }
 
-async function refreshDomainJourneys(domain) {
-  // SQL must retain enough rows for later filtering. The 50-row cap is only a first-paint
-  // presentation optimization applied by GET /api/journeys/db.
-  const qs = journeyQueryParams(domain, { rowCap: FILTER_ROW_CAP });
-  return fetchJsonPayload(`/api/journeys/refresh?${qs.toString()}`, { method: 'POST', domain });
+/** Contract v6 §4.1 state → the health vocabulary the shared helpers (domain-health.js) read. */
+function profileJourneyOutcome(status, failed) {
+  const text = String(status || '');
+  if (failed || text === 'Failed') return 'failed';
+  if (text === 'Completed') return 'success';
+  if (text.startsWith('Dropped')) return 'dropped';
+  return 'unknown';
 }
 
-async function pullLatestJourneysFromAzure() {
-  const domains = selectedJourneyDomains();
-  if (domains.length === 0) return [];
-  const settled = await Promise.allSettled(domains.map((domain) => refreshDomainJourneys(domain)));
-  return settled
-    .filter((result) => result.status === 'rejected')
-    .map((result) => result.reason);
-}
-
-async function fetchDomainJourneys(domain) {
-  const qs = journeyQueryParams(domain, { includeReadFilters: true });
-  const payload = await fetchJsonPayload(`/api/journeys/db?${qs.toString()}`, { domain });
-
-  const rows = payload.rows || [];
-  const environment = payload.environment || state.filters.environment || 'production';
-  const label = currentClubLabel();
-  const clubLabels = domain === 'cruises' ? await cruiseClubLabels() : null;
+/** One row of GET /api/profile-journeys in the shape every journey renderer reads. */
+function mapProfileJourney(row) {
+  const stepCount = Number(row.stepCount) || 0;
   return {
-    journeys: domain === 'air'
-      ? mapAirRowsToJourneys(rows, label, environment)
-      : mapV6RowsToJourneys(rows, label, payload.domain || domain, environment, clubLabels),
-    meta: {
-      source: payload.source || 'unknown',
-      rowCount: payload.rowCount ?? rows.length,
-      warning: payload.warning || '',
-      cached: !!payload.cached,
-      fetchedAt: payload.fetchedAt || '',
-      clubId: payload.clubId || '',
-      host: payload.host || '',
-      domain: payload.domain || domain,
-      win: payload.win || headerQueryWin(),
-      environment,
-      rowCap: payload.rowCap || state.rowCap || INIT_ROW_CAP,
-    },
+    id: String(row.journeyId),
+    correlationId: row.sampleOperationId || String(row.journeyId),
+    profileKey: row.profileKey || '',
+    domain: row.serviceKey || '',
+    flow: row.flowKey || '',
+    entity: row.entityKey || '',
+    club: row.entityKey || '',
+    status: row.status || 'Unknown',
+    outcome: profileJourneyOutcome(row.status, row.failed),
+    startDate: row.startedAt,
+    timestamp: row.endedAt || row.startedAt,
+    totalDurationMs: Math.round(Number(row.durationMs) || 0),
+    stepCount,
+    lastStepOrder: row.lastStepOrder ?? null,
+    lastStepKey: row.lastStepKey || '',
+    totalCalls: stepCount,
+    failedCalls: row.failed ? 1 : 0,
+    failed: !!row.failed,
+    stages: [],
   };
 }
 
+function profileJourneyQuery() {
+  const qs = new URLSearchParams({
+    win: headerQueryWin(),
+    top: String(state.rowCap || INIT_ROW_CAP),
+  });
+  if (state.filters.domain && state.filters.domain !== 'all') qs.set('service', state.filters.domain);
+  if (state.filters.club) qs.set('entity', state.filters.club);
+  return qs;
+}
+
 const dataProvider = {
+  /** Contract v6 §4.1: the same generic journeys for every company, the incumbent included. */
   async getJourneys() {
-    const selectedDomain = state.filters.domain;
-    const domains = selectedJourneyDomains();
-    if (domains.length === 0) {
+    const qs = profileJourneyQuery();
+    try {
+      const payload = await fetchJsonPayload(withActiveCompany(`/api/profile-journeys?${qs.toString()}`));
+      state.journeyLabels = payload.labels || null;
+      const rows = Array.isArray(payload.journeys) ? payload.journeys : [];
       state.journeysMeta = {
-        source: 'none', rowCount: 0, warning: '', cached: false, fetchedAt: '',
+        source: 'sql',
+        rowCount: rows.length,
+        warning: '',
+        cached: false,
+        fetchedAt: '',
+        domain: state.filters.domain,
+        win: headerQueryWin(),
+        environment: state.filters.environment,
+        rowCap: state.rowCap || INIT_ROW_CAP,
+        profileKey: payload.profileKey || activeCompanyKey(),
+      };
+      return rows.map(mapProfileJourney);
+    } catch (err) {
+      console.warn('/api/profile-journeys unreachable.', err);
+      state.journeysMeta = {
+        source: 'error',
+        rowCount: 0,
+        warning: err.message || 'Could not load journeys.',
+        cached: false,
+        fetchedAt: '',
+        domain: state.filters.domain,
+        win: headerQueryWin(),
+        environment: state.filters.environment,
+        rowCap: state.rowCap || INIT_ROW_CAP,
       };
       return [];
     }
-
-    const settled = await Promise.allSettled(domains.map((domain) => fetchDomainJourneys(domain)));
-    const loaded = settled.filter((result) => result.status === 'fulfilled').map((result) => result.value);
-    const failed = settled.filter((result) => result.status === 'rejected').map((result) => result.reason);
-
-    // A direct file:// launch or stopped server can still show the committed
-    // Hotel fixture. HTTP errors never fall back to another club's data.
-    if (loaded.length === 0 && failed.every((err) => err.networkFailure) && domains.includes('hotels')) {
-      console.warn('/api/journeys unreachable, reading demo fixture directly.', failed[0]);
-      const fixture = await fetchJson('data/demo-journeys.json');
-      const rows = fixture.rows || [];
-      state.journeysMeta = {
-        source: 'demo',
-        rowCount: rows.length,
-        warning: 'Demo mode: anonymized Hotel fixture. Start `node server.js` and run `az login` for all live verticals.',
-        cached: false,
-        fetchedAt: '',
-        win: headerQueryWin(),
-        environment: state.filters.environment,
-      };
-      return mapV6RowsToJourneys(rows, 'T-Mobile / T Life', 'hotels');
-    }
-
-    const warnings = [
-      ...loaded.map(({ meta }) => meta.warning).filter(Boolean),
-      ...failed.map((err) => `${domainLabel(err.domain)}: ${err.message || err}`),
-    ];
-    const metas = loaded.map(({ meta }) => meta);
-    const sources = new Set(metas.map((meta) => meta.source));
-    state.journeysMeta = {
-      source: loaded.length === 0 ? 'error' : failed.length > 0 || sources.size > 1 ? 'mixed' : metas[0].source,
-      rowCount: metas.reduce((sum, meta) => sum + meta.rowCount, 0),
-      warning: warnings.join(' '),
-      cached: loaded.length > 0 && metas.every((meta) => meta.cached),
-      fetchedAt: metas.map((meta) => meta.fetchedAt).filter(Boolean).sort().at(-1) || '',
-      domain: selectedDomain,
-      win: headerQueryWin(),
-      environment: state.filters.environment,
-      rowCap: state.rowCap || INIT_ROW_CAP,
-      domains: metas,
-    };
-    return loaded.flatMap(({ journeys }) => journeys);
   },
   async getTraces() {
     // Future: Azure Application Insights end-to-end transaction API
@@ -214,9 +262,9 @@ const dataProvider = {
   async getMonkeys() {
     // The real agents come from GetMonkeysFunction; the rest of the roster is still the original
     // mock (data/monkeys.json), merged here so the UI shows both. Never breaks if the API is down.
-    const mock = await fetchJson('data/monkeys.json');
+    const mock = localizeMockMonkeys(await fetchJson('data/monkeys.json'));
     try {
-      const response = await fetch(`/api/monkeys${monkeyFilterQuery()}`);
+      const response = await fetch(withActiveCompany(`/api/monkeys${monkeyFilterQuery()}`));
       if (response.ok) {
         const real = await response.json();
         return [...real, ...mock];
@@ -238,13 +286,14 @@ const dataProvider = {
     if (state.filters.club) qs.set('club', state.filters.club);
     if (state.filters.id) qs.set('id', state.filters.id);
     try {
-      const payload = await fetchJsonPayload(`/api/exceptions?${qs.toString()}`);
+      const payload = await fetchJsonPayload(withActiveCompany(`/api/exceptions?${qs.toString()}`));
       const exceptions = payload.exceptions || [];
       state.exceptionsMeta = {
         source: payload.source || 'sql',
         warning: payload.warning || '',
-        rowCount: payload.rowCount ?? exceptions.length,
+        rowCount: exceptions.length,
         win: payload.win || headerQueryWin(),
+        baselineCounts: payload.baselineCounts || null,
       };
       return exceptions;
     } catch (err) {
@@ -268,7 +317,7 @@ const dataProvider = {
     if (state.filters.club) qs.set('club', state.filters.club);
     if (state.filters.id) qs.set('id', state.filters.id);
     try {
-      return await fetchJsonPayload(`/api/overview?${qs.toString()}`);
+      return await fetchJsonPayload(withActiveCompany(`/api/overview?${qs.toString()}`));
     } catch (err) {
       console.warn('/api/overview unreachable.', err);
       return { source: 'error', platformStatus: 'unknown', tiles: [], warning: err.message || 'Could not load overview.' };
@@ -299,11 +348,19 @@ const dataProvider = {
       });
       if (state.filters.domain && state.filters.domain !== 'all') qs.set('domain', state.filters.domain);
       if (state.filters.club) qs.set('club', state.filters.club);
-      const response = await fetch(`/api/analytics/metrics?${qs.toString()}`);
+      const response = await fetch(withActiveCompany(`/api/analytics/metrics?${qs.toString()}`));
       const payload = await response.json().catch(() => ({}));
+      // Contract v6 §4.4: the response names the company's services, their charts and steps.
+      state.dashboardMeta = {
+        profileKey: payload.profileKey || '',
+        labels: payload.labels || null,
+        services: Array.isArray(payload.services) ? payload.services : null,
+        warning: payload.warning || (response.ok ? '' : payload.error || `Request failed: ${response.status}`),
+      };
       if (!response.ok) return [];
       return payload.points || [];
-    } catch {
+    } catch (err) {
+      state.dashboardMeta = { profileKey: '', labels: null, services: null, warning: err.message || 'Analytics unavailable.' };
       return [];
     }
   },
@@ -505,7 +562,11 @@ const state = {
   /** Mock journey catalog used only to label exception → journey links when live rows are absent. */
   demoJourneysById: {},
   selectedExceptionId: null,
-  events: [], analytics: null, dashboardMetrics: [], hotelDomainComparison: null, airDomainComparison: null, cruiseDomainComparison: null, carsDomainComparison: null,
+  events: [], analytics: null, dashboardMetrics: [],
+  /** GET /api/analytics/metrics description of the company's services, charts and steps (contract v6 §4.4). */
+  dashboardMeta: null,
+  /** One comparison row per service of the active company, rebuilt on the Analytics tab. */
+  serviceComparison: [],
   latencySettings: [], latencySettingsAudit: [],
   llmClientSetting: null, llmClientSettingAudit: [],
   sloDefinitions: [], sloDefinitionsAudit: [],
@@ -520,6 +581,10 @@ const state = {
   /** Set by a 503 from PUT .../active - monitoring.ActiveCompanyProfile is not provisioned on
    *  this deployment's database, so the switch is refused rather than faked. */
   companySwitchUnavailable: false,
+  /** Full profile of the active company: theme, labels and services drive every company word on screen. */
+  activeProfile: null,
+  /** labels of the last GET /api/profile-journeys (service, flow, step, entity). */
+  journeyLabels: null,
   /** RCA per investigation id. undefined = never asked, null = none written yet, object = the document. */
   rcaByCase: {},
   /** Inventory of the imported corpus. Fetched on demand - it changes only when an import runs. */
@@ -531,12 +596,15 @@ const state = {
   filters: { domain: 'all', status: 'all', region: 'all', club: '', id: '', timeRange: '15m', environment: 'production' },
   /** Club dropdown rows for the current domain, including host and ICE partner id. */
   clubOptions: [],
-  sort: { journeys: { key: 'timestamp', dir: 'desc' }, exceptions: { key: 'severity', dir: 'desc' }, clubMap: { key: 'clubId', dir: 'asc' } },
+  sort: { journeys: { key: 'timestamp', dir: 'desc' }, exceptions: { key: 'severity', dir: 'desc' }, clubMap: { key: 'clientId', dir: 'asc' } },
   clubInventory: [],
   clubInventoryMeta: { source: '', warning: '', rowCount: 0 },
   clubInventoryLoaded: false,
   clubMapFilters: { brand: '', product: '', status: '', platform: '', q: '' },
   clubMapFiltersWired: false,
+  /** Client-side table paging for Application Map (full filtered set stays in memory). */
+  clubMapPagination: { page: 1, pageSize: 50 },
+  clubMapPaginationWired: false,
   autoRefreshTimer: null,
   /** Scout cycle whose handoffs the Activity Timeline is pinned to, or null for all of them. */
   scoutCycleFilter: null,
@@ -612,8 +680,11 @@ function formatClock(date) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+/** A service key named the way the active company names it; unknown keys are shown as they are. */
 function domainLabel(domain) {
-  return { hotels: 'Hotels', air: 'Air', cruises: 'Cruises', cars: 'Cars', shared: 'Shared Platform' }[domain] || domain;
+  if (!domain || domain === 'all') return `All (${profileLabels().service})`;
+  const service = profileService(domain);
+  return service ? service.label : domain;
 }
 
 /** Normalizes a component/domain health status into one of 4 canonical states. */
@@ -649,6 +720,22 @@ function showToast(title, message, tone = 'info') {
     toast.style.transition = 'opacity 200ms ease';
     setTimeout(() => toast.remove(), 220);
   }, 4200);
+}
+
+function showOverviewWarningToast(overview) {
+  const warning = String(overview?.warning || '').trim();
+  if (!warning) {
+    lastOverviewWarningToast = '';
+    return;
+  }
+
+  if (warning === lastOverviewWarningToast) return;
+  lastOverviewWarningToast = warning;
+
+  const fabricOnlyWarning = overview?.source === 'sql' && warning.startsWith('Fabric warehouse configuration is missing:');
+  const tone = fabricOnlyWarning ? 'warning' : 'critical';
+  const title = fabricOnlyWarning ? 'Fabric configuration warning' : 'Overview warning';
+  showToast(title, warning, tone);
 }
 
 function openSidePanel(title, bodyHtml) {
@@ -854,10 +941,21 @@ function activateTab(tabName) {
     panel.classList.toggle('is-active', active);
     panel.hidden = !active;
   });
+  // Application Map has its own filters. Platform Health does not use Domain / Club / Journey.
+  document.body.classList.toggle('is-club-map-tab', tabName === 'club-map');
+  document.body.classList.toggle('is-health-tab', tabName === 'health');
+  document.body.classList.toggle('is-daemons-tab', tabName === 'daemons');
   if (ensureDomainComparison()) renderAnalyticsTab();
   // Loaded on first visit only: the corpus changes when an import runs, not while browsing.
   if (tabName === 'memory') renderMemoryBankTab();
   if (tabName === 'club-map') ensureClubMapTab();
+  // A fetch, not just a re-render: all three agent pollers skip the request while this tab is
+  // hidden, so state.monkeys can be minutes old by the time someone comes back to it.
+  if (tabName === 'monkeys') reloadMonkeysForFilters();
+  // Pillar health and Triage are only polled while this tab is visible, so re-read on entry.
+  if (tabName === 'health' && rwWatch.ready) rwRefreshBackend();
+  // daemons.js polls only while its panel is visible; entering the tab re-reads immediately.
+  if (tabName === 'daemons' && window.DaemonsTab) window.DaemonsTab.onActivate();
 }
 
 /** Attaches generic click-to-sort behaviour to a table's <th data-sort>. */
@@ -903,7 +1001,7 @@ function matchesGlobalFilters(item, options) {
   const ignoreId = !!(options && typeof options === 'object' && options.ignoreId);
   if (!ignoreId && f.id) {
     const needle = f.id.toLowerCase();
-    const haystack = [item.id, item.bookingId, item.correlationId].filter(Boolean).join(' ').toLowerCase();
+    const haystack = [item.id, item.customer, item.bookingId, item.correlationId, item.entity].filter(Boolean).join(' ').toLowerCase();
     if (!haystack.includes(needle)) return false;
   }
   if (!ignoreTime) {
@@ -916,95 +1014,76 @@ function matchesGlobalFilters(item, options) {
   return true;
 }
 
-/** T-Mobile stays the default so the demo opens on the club we know. */
-const DEFAULT_CLUB_ID = '15639';
-
 function currentClubLabel() {
   const select = document.getElementById('filter-club');
   const opt = select && select.selectedOptions ? select.selectedOptions[0] : null;
   if (opt && opt.value) return opt.textContent;
-  return 'T-Mobile / T Life';
+  return '';
 }
 
-/** Partner id → dropdown label, so an unfiltered cruise list can name each row's own brand. */
-const cruiseClubLabelCache = new Map();
-
-async function cruiseClubLabels() {
-  if (state.filters.domain === 'cruises' && state.clubOptions.length > 0) {
-    return Object.fromEntries(
-      state.clubOptions
-        .filter((club) => club && club.value)
-        .map((club) => [String(club.value), club.label || String(club.value)]),
-    );
-  }
-
-  const key = state.filters.environment || 'production';
-  if (cruiseClubLabelCache.has(key)) return cruiseClubLabelCache.get(key);
-
-  try {
-    const envQuery = key !== 'production' ? `&env=${encodeURIComponent(key)}` : '';
-    const payload = await fetchJson(`/api/clubs?domain=cruises&win=2h${envQuery}`);
-    const labels = {};
-    for (const club of payload.clubs || []) {
-      if (club && club.value) labels[String(club.value)] = club.label || String(club.value);
-    }
-    if (payload.source === 'database' && Object.keys(labels).length > 0) cruiseClubLabelCache.set(key, labels);
-    return labels;
-  } catch (err) {
-    console.warn('/api/clubs cruise label lookup unavailable', err);
-    return {};
-  }
-}
-
-function renderClubSelect(payload) {
-  const select = document.getElementById('filter-club');
+/** Contract v6 §6: the Domain filter lists the active company's services, named with labels.service. */
+function renderDomainFilter() {
+  const select = document.getElementById('filter-domain');
+  const label = document.getElementById('filter-domain-label');
+  const labels = profileLabels();
+  if (label) label.textContent = labels.service;
   if (!select) return;
-  const clubs = payload.clubs || [];
-  const placeholder = payload.placeholder || 'All hotel clubs';
-  state.clubSelectDisabled = !!payload.disabled;
+  const services = profileServices();
+  const keep = services.some((s) => s.key === state.filters.domain) ? state.filters.domain : 'all';
+  select.innerHTML = [
+    '<option value="all">All</option>',
+    ...services.map((s) => `<option value="${escapeHtml(s.key)}">${escapeHtml(s.label)}</option>`),
+  ].join('');
+  select.value = keep;
+  state.filters.domain = keep;
+}
+
+/** Entity dropdown rows: { value, label } from GET /api/entities. */
+function renderClubSelect({ entities, disabled, placeholder }) {
+  const select = document.getElementById('filter-club');
+  const label = document.getElementById('filter-club-label');
+  const entityLabel = profileLabels().entity;
+  if (label) label.textContent = entityLabel;
+  if (!select) return;
+  const rows = Array.isArray(entities) ? entities : [];
+  state.clubSelectDisabled = !!disabled;
   select.disabled = state.tablesLoading || state.clubSelectDisabled;
-
-  state.clubOptions = clubs;
-  if (clubs.length === 0) {
-    select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>`;
-    state.filters.club = '';
-    return;
-  }
-
-  const domainDefault = ['air', 'cruises'].includes(state.filters.domain) ? '308' : DEFAULT_CLUB_ID;
-  const wanted = clubs.some((c) => c.value === state.filters.club)
-    ? state.filters.club
-    : clubs.some((c) => c.value === domainDefault) ? domainDefault : clubs[0].value;
-
-  select.innerHTML = clubs
+  state.clubOptions = rows;
+  const blank = `<option value="">${escapeHtml(placeholder || 'All')}</option>`;
+  const keep = rows.some((c) => c.value === state.filters.club) ? state.filters.club : '';
+  select.innerHTML = blank + rows
     .map((c) => `<option value="${escapeHtml(c.value)}">${escapeHtml(c.label)}</option>`)
     .join('');
-  select.value = wanted;
-  state.filters.club = wanted;
+  select.value = keep;
+  state.filters.club = keep;
 }
 
+/** Contract v6 §4.2: the entity filter is the active company's busiest entities in the window. */
 async function loadClubsForDomain(domain) {
+  const qs = new URLSearchParams({ win: headerQueryWin(), top: '100' });
+  if (domain && domain !== 'all') qs.set('service', domain);
+  const company = activeCompanyKey();
   try {
-    const payload = await fetchJson(`/api/clubs?domain=${encodeURIComponent(domain)}&win=${
-      usesHeaderWin(domain) ? encodeURIComponent(headerQueryWin()) : '2h'
-    }${
-      state.filters.environment && state.filters.environment !== 'production'
-        ? `&env=${encodeURIComponent(state.filters.environment)}`
-        : ''
-    }&fresh=1`);
-    renderClubSelect(payload);
+    const payload = await fetchJsonPayload(withActiveCompany(`/api/entities?${qs.toString()}`));
+    if (activeCompanyKey() !== company) return;
+    if (payload.entityLabel) {
+      state.journeyLabels = { ...(state.journeyLabels || {}), entity: payload.entityLabel };
+    }
+    const entities = (payload.entities || [])
+      .filter((e) => e && e.key)
+      .map((e) => ({
+        value: String(e.key),
+        label: e.failures ? `${e.key} (${Number(e.requests || 0).toLocaleString()} req, ${Number(e.failures).toLocaleString()} failed)` : `${e.key} (${Number(e.requests || 0).toLocaleString()} req)`,
+      }));
+    renderClubSelect({ entities, disabled: entities.length === 0 });
   } catch (err) {
-    console.warn('/api/clubs unavailable', err);
-    renderClubSelect({
-      disabled: domain === 'all' || domain === 'shared',
-      clubs: [],
-      placeholder: 'Could not load clubs',
-    });
+    console.warn('/api/entities unavailable', err);
+    renderClubSelect({ entities: [], disabled: true, placeholder: `${profileLabels().entity}: unavailable` });
   }
 }
 
 function shouldQueryJourneys(domain = state.filters.domain) {
-  return domain === 'all' || JOURNEY_DOMAINS.includes(domain);
+  return domain === 'all' || journeyDomains().includes(domain);
 }
 
 /** First user-driven filter change switches the KQL sample from 50 → 200. */
@@ -1013,8 +1092,8 @@ function markFiltersApplied() {
 }
 
 /**
- * Rebuilds the rows from the journeys the Domain filter already loaded, so the
- * Analytics tab never runs a KQL query for a vertical the user did not select.
+ * Rebuilds the comparison rows from the journeys the Domain filter already loaded, so the
+ * Analytics tab never reads a service the user did not select.
  */
 function ensureDomainComparison() {
   const needed = shouldRefreshDomainComparison({
@@ -1024,15 +1103,8 @@ function ensureDomainComparison() {
   if (!needed) return false;
 
   state.domainComparisonStale = false;
-  const wanted = comparisonDomains(state.filters.domain);
-  state.hotelDomainComparison = wanted.includes('hotels')
-    ? calculateHotelDomainComparison(state.journeys) : null;
-  state.airDomainComparison = wanted.includes('air')
-    ? calculateAirDomainComparison(state.journeys) : null;
-  state.cruiseDomainComparison = wanted.includes('cruises')
-    ? calculateCruiseDomainComparison(state.journeys) : null;
-  state.carsDomainComparison = wanted.includes('cars')
-    ? calculateCarsDomainComparison(state.journeys) : null;
+  const wanted = state.filters.domain === 'all' ? journeyDomains() : journeyDomains().filter((d) => d === state.filters.domain);
+  state.serviceComparison = calculateServiceComparison(state.journeys, wanted, state.exceptions);
   return true;
 }
 
@@ -1043,11 +1115,10 @@ function invalidateDomainComparison() {
 }
 
 /**
- * Reloads journeys for the current filters. pull re-runs the domain KQL in Application Insights
- * with the club selected in the dropdown, then reads that snapshot back.
+ * Reloads journeys, exceptions, overview and metrics for the current filters, all scoped to the
+ * active company.
  */
 let filterRequestGeneration = 0;
-let pullBusyCount = 0;
 
 function loadingTableRow(colspan) {
   return `<tr class="is-loading"><td colspan="${colspan}"><div class="state-block" role="status"><div class="spinner" aria-hidden="true"></div>Loading…</div></td></tr>`;
@@ -1111,7 +1182,7 @@ function showDataTablesLoading() {
   const comparisonBody = document.querySelector('#domain-comparison-table tbody');
   if (journeysBody) journeysBody.innerHTML = loadingTableRow(10);
   if (exceptionsBody) exceptionsBody.innerHTML = loadingTableRow(11);
-  if (comparisonBody) comparisonBody.innerHTML = loadingTableRow(5);
+  if (comparisonBody) comparisonBody.innerHTML = loadingTableRow(6);
   state.dashboardChartsLoading = true;
   paintDashboardChartsLoading();
 }
@@ -1126,20 +1197,12 @@ function isCurrentFilterRequest(generation) {
   return generation === filterRequestGeneration;
 }
 
-async function reloadJourneysForClub({ pull = false, generation } = {}) {
+async function reloadJourneysForClub({ generation } = {}) {
   const stillCurrent = () => generation == null || generation === filterRequestGeneration;
-  if (pull) {
-    pullBusyCount += 1;
-    setRefreshBusy(true);
-  }
   const label = document.getElementById('filter-club');
   const shown = label && label.selectedOptions[0] ? label.selectedOptions[0].textContent : state.filters.club;
+  const scope = shown || domainLabel(state.filters.domain);
   try {
-    let pullFailures = [];
-    if (pull) {
-      pullFailures = await pullLatestJourneysFromAzure();
-    }
-    if (!stillCurrent()) return;
     const exceptionsPromise = dataProvider.getExceptions();
     const overviewPromise = dataProvider.getOverview();
     const metricsPromise = dataProvider.getDashboardMetrics();
@@ -1151,33 +1214,23 @@ async function reloadJourneysForClub({ pull = false, generation } = {}) {
     state.journeys = journeys;
     state.exceptions = exceptions;
     state.overview = overview;
+    showOverviewWarningToast(overview);
     state.dashboardMetrics = dashboardMetrics;
     invalidateDomainComparison();
     const m = state.journeysMeta || {};
     const win = m.win || headerQueryWin();
-    const pullWarn = pullFailures
-      .map((err) => `${domainLabel(err.domain) || 'Journeys'}: ${err.message || err}`)
-      .join(' ');
-    if (pullFailures.length && (m.source === 'error' || m.rowCount === 0)) {
-      showToast('Query failed', pullWarn || `Could not load journeys for ${shown || domainLabel(state.filters.domain)}.`, 'critical');
-    } else if (m.source === 'error' || m.rowCount === 0) {
-      showToast('No journeys', `${shown || domainLabel(state.filters.domain)}: no journeys in the last ${win}.`, 'info');
+    const flow = profileLabels().flow;
+    if (m.source === 'error') {
+      showToast('Query failed', m.warning || `${flow}: could not load data for ${scope}.`, 'critical');
+    } else if (m.rowCount === 0) {
+      showToast(`${flow}: no data`, `${scope}: nothing recorded in the last ${win}.`, 'info');
     } else {
-      showToast(
-        'Journeys updated',
-        `${m.rowCount} journeys (${m.source}) for last ${win}, capped at ${state.rowCap}.${pullWarn ? ` ${pullWarn}` : ''}`,
-        pullFailures.length ? 'info' : m.source === 'live' ? 'success' : 'info',
-      );
+      showToast(`${flow}: updated`, `${m.rowCount} rows for last ${win}, capped at ${state.rowCap}.`, 'info');
     }
   } catch (err) {
     if (!stillCurrent()) return;
     console.error(err);
-    showToast('Query failed', `Could not load journeys for ${shown || domainLabel(state.filters.domain)}.`, 'critical');
-  } finally {
-    if (pull) {
-      pullBusyCount = Math.max(0, pullBusyCount - 1);
-      if (pullBusyCount === 0) setRefreshBusy(false);
-    }
+    showToast('Query failed', `Could not load data for ${scope}.`, 'critical');
   }
 }
 
@@ -1213,6 +1266,7 @@ function wireFilterBar() {
 
   domain.addEventListener('change', async () => {
     state.filters.domain = domain.value;
+    state.filters.club = '';
     markFiltersApplied();
     const generation = beginFilterRequest();
     await finishFilterRequest(generation, async () => {
@@ -1326,11 +1380,6 @@ function wireFilterBar() {
   });
 }
 
-/** Every wired travel vertical queries with the header Time range and Environment. */
-function usesHeaderWin(domain) {
-  return domain === 'all' || JOURNEY_DOMAINS.includes(domain);
-}
-
 function environmentInsightsLabel(environment) {
   const env = String(environment || 'production');
   if (env === 'staging') return 'UAT App Insights';
@@ -1370,11 +1419,11 @@ function computeDomainHealth(domain) {
 }
 
 function renderKpiCards() {
+  const flow = profileLabels().flow;
   const cards = state.overview?.tiles?.length ? state.overview.tiles : [
     { label: 'Platform Availability', value: 'No data', meta: 'Rolling 24h average', tone: '' },
-    { label: 'Successful Journeys', value: 'No data', meta: 'Completed / total in the selected window', tone: '' },
-    { label: 'Booking Conversion', value: 'No data', meta: 'Search-to-booking', tone: '' },
-    { label: 'Avg. End-to-End Response', value: 'No data', meta: 'Across the selected journeys', tone: '' },
+    { label: `${flow} completion`, value: 'No data', meta: 'Completed / total in the selected window', tone: '' },
+    { label: 'Avg. End-to-End Response', value: 'No data', meta: `Across the selected window (${flow})`, tone: '' },
     { label: 'Active Critical Incidents', value: 'No data', meta: 'Open incidents at Critical severity', tone: '' },
     { label: 'Open Exceptions', value: 'No data', meta: 'Open count, with total tracked', tone: '' },
     { label: 'Doctor Monkey Diagnoses', value: 'No data', meta: 'Diagnoses in window', tone: '' },
@@ -1389,30 +1438,103 @@ function renderKpiCards() {
 }
 
 function renderDomainCards(targetId) {
-  const health = JOURNEY_DOMAINS.map(computeDomainHealth).filter((d) => state.filters.domain === 'all' || state.filters.domain === d.domain);
+  const heading = document.getElementById('overview-domains-heading');
+  const labels = profileLabels();
+  if (heading) heading.textContent = `${labels.service} Health`;
+  const health = journeyDomains().map(computeDomainHealth).filter((d) => state.filters.domain === 'all' || state.filters.domain === d.domain);
   const percent = (value) => value == null ? '—' : `${value.toFixed(2)}%`;
   const latency = (value) => value == null ? '—' : `${value} ms`;
   const count = (value) => value == null ? '—' : String(value);
   const trendIcon = { improving: '▲', degrading: '▼', stable: '→', unknown: '—' };
-  document.getElementById(targetId).innerHTML = health.map((d) => `
+  const target = document.getElementById(targetId);
+  if (!health.length) {
+    target.innerHTML = `<div class="state-block">No ${escapeHtml(labels.service)} is defined for this company.</div>`;
+    return;
+  }
+  target.innerHTML = health.map((d) => `
     <div class="domain-card domain-card--${normalizeStatus(d.status)}">
       <div class="domain-card__head">
         <span class="domain-card__name">${escapeHtml(domainLabel(d.domain))}</span>
-        ${d.domain === 'air'
-          ? '<span class="construction-tag">Under construction</span>'
-          : statusBadge(d.status)}
+        ${statusBadge(d.status)}
       </div>
       <div class="domain-card__metrics">
         <span class="domain-card__metric-label">Availability</span><span class="domain-card__metric-value">${percent(d.availability)}</span>
         <span class="domain-card__metric-label">Error rate</span><span class="domain-card__metric-value">${percent(d.errorRate)}</span>
         <span class="domain-card__metric-label">Avg latency</span><span class="domain-card__metric-value">${latency(d.latencyMs)}</span>
-        <span class="domain-card__metric-label">Active incidents</span><span class="domain-card__metric-value">${count(d.incidents)}</span>
+        <span class="domain-card__metric-label">Failed</span><span class="domain-card__metric-value">${count(d.incidents)}</span>
       </div>
-      <div class="domain-card__trend">Trend: ${trendIcon[d.trend.direction]} ${escapeHtml(d.trend.label)}${d.sampleSize ? ` · ${d.sampleSize} journeys` : ''}</div>
+      <div class="domain-card__trend">Trend: ${trendIcon[d.trend.direction]} ${escapeHtml(d.trend.direction === 'unknown' && !d.sampleSize ? 'no data' : d.trend.label)}${d.sampleSize ? ` · ${d.sampleSize} × ${escapeHtml(labels.flow)}` : ''}</div>
     </div>`).join('');
 }
 
+/** Contract v6 §4.5: widgets the overview says do not apply to this company. */
+function overviewWidget(key) {
+  const widgets = state.overview && Array.isArray(state.overview.widgets) ? state.overview.widgets : null;
+  return widgets ? widgets.find((w) => w && w.key === key) || null : null;
+}
+
+/** A widget applies only when the per-company overview lists it as applicable. Without the list
+ *  (overview unreadable) the incumbent-only widgets stay hidden rather than show another
+ *  company's figures. */
+function overviewWidgetApplies(key) {
+  const widget = overviewWidget(key);
+  return !!(widget && widget.applicable !== false);
+}
+
+/** The incumbent keeps its legacy-only blocks (Fabric business health, club inventory, mock tiles). */
+function companyHasLegacyWidgets() {
+  return overviewWidgetApplies('hotelBusinessHealth');
+}
+
+function renderOverviewWidgetNotes() {
+  const host = document.getElementById('overview-widget-notes');
+  if (!host) return;
+  const widgets = state.overview && Array.isArray(state.overview.widgets) ? state.overview.widgets : [];
+  const notes = widgets.filter((w) => w && w.applicable === false).map((w) => w.note || `${w.key} does not apply to this company.`);
+  host.hidden = notes.length === 0;
+  host.innerHTML = notes.map((note) => `<li>${escapeHtml(note)}</li>`).join('');
+}
+
+function renderOverviewProfileSections() {
+  const host = document.getElementById('overview-profile');
+  if (!host) return;
+  const o = state.overview || {};
+  const labels = profileLabels();
+  const sections = [];
+  if (Array.isArray(o.pillars) && o.pillars.length) {
+    sections.push(`<div class="overview-block">
+      <h2 class="section-heading">Observability Pillars</h2>
+      <div class="overview-pillars">${o.pillars.map((p) => `
+        <div class="overview-pillar overview-pillar--${escapeHtml(String(p.status || 'offline').toLowerCase())}">
+          <span class="overview-pillar__name">${escapeHtml(p.pillar)}</span>
+          <span class="overview-pillar__meta">${escapeHtml(String(p.status || '—'))} · ${Number(p.anomalousKpis || 0)} of ${Number(p.kpiCount || 0)} KPIs anomalous</span>
+        </div>`).join('')}</div>
+    </div>`);
+  }
+  if (Array.isArray(o.topEntities) && o.topEntities.length) {
+    sections.push(`<div class="overview-block">
+      <h2 class="section-heading">Most affected · ${escapeHtml(labels.entity)}</h2>
+      <div class="table-wrap"><table class="data-table data-table--compact">
+        <thead><tr><th>${escapeHtml(labels.entity)}</th><th>Incidents</th><th>Occurrences</th><th>Affected (${escapeHtml(labels.flow)})</th></tr></thead>
+        <tbody>${o.topEntities.map((e) => `<tr><td>${escapeHtml(e.key)}</td><td>${Number(e.incidents || 0).toLocaleString()}</td><td>${Number(e.occurrences || 0).toLocaleString()}</td><td>${Number(e.affectedJourneys || 0).toLocaleString()}</td></tr>`).join('')}</tbody>
+      </table></div>
+    </div>`);
+  }
+  if (Array.isArray(o.investigations) && o.investigations.length) {
+    sections.push(`<div class="overview-block">
+      <h2 class="section-heading">Triage investigations</h2>
+      <ul class="simple-list">${o.investigations.slice(0, 5).map((i) => `<li><strong>${escapeHtml(i.pillar)} · ${escapeHtml(i.kpi)}</strong> — ${escapeHtml(String(i.status || ''))}${i.domain ? ` · ${escapeHtml(domainLabel(i.domain))}` : ''} · ${escapeHtml(formatRelativeTime(i.createdAt))}${i.summary ? `<div class="hint">${escapeHtml(i.summary)}</div>` : ''}</li>`).join('')}</ul>
+    </div>`);
+  }
+  host.innerHTML = sections.join('');
+}
+
 function renderEventTimeline() {
+  const section = document.getElementById('overview-timeline-section');
+  // The timeline is still the incumbent's sample feed (data/events.json); another company never sees it.
+  const applies = companyHasLegacyWidgets();
+  if (section) section.hidden = !applies;
+  if (!applies) return;
   const sorted = [...state.events].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   document.getElementById('overview-timeline').innerHTML = sorted.map((e) => `
     <li class="event--${e.severity}">
@@ -1424,14 +1546,14 @@ function renderEventTimeline() {
 
 function renderOverviewTab() {
   renderKpiCards();
-  renderAgentPipeline();
   renderDomainCards('overview-domains');
+  renderOverviewProfileSections();
   renderEventTimeline();
-  startOverviewPoller();
+  renderOverviewWidgetNotes();
 }
 
 /* -----------------------------------------------------------------------
-   5a-bis. AGENT PIPELINE (Overview)
+   5a-bis. AGENT PIPELINE (Simian Army)
    Two halves, deliberately: the assembly line shows the SHAPE of the process
    (detect → hand off → investigate) with work visibly moving between agents,
    and the live story below answers "what is happening right now" with real
@@ -1453,7 +1575,7 @@ const INSPECTOR_PIPELINE_PHASE_ICONS = {
 let pipelineFlowSignature = null;
 
 function renderAgentPipeline() {
-  const host = document.getElementById('overview-pipeline');
+  const host = document.getElementById('agents-pipeline');
   if (!host) return;
 
   const scouts = (state.monkeys || []).filter((m) => isScoutMonkey(m.id));
@@ -1587,7 +1709,7 @@ function renderPipelineLine(scouts, director, queue, running, rca) {
   const scoutRows = scouts.map((s) => {
     const cycle = s.lastCycle;
     const measured = cycle
-      ? `${formatCount(cycle.boardRowsEvaluated || 0)} rows · ${formatCount(cycle.clubsWatched || 0)} clubs`
+      ? `${formatCount(cycle.boardRowsEvaluated || 0)} rows · ${entityTally(cycle.clubsWatched)}`
       : 'no cycle recorded yet';
     return `
       <div class="pipe-mini${s.currentCycle ? ' pipe-mini--live' : ''}" data-monkey-id="${escapeHtml(s.id)}" data-pipe-action="evidence">
@@ -1769,7 +1891,7 @@ function renderPipelineStory(scouts, director, running) {
         who: s.board === 'exception' ? 'Exception' : 'Latency',
         whoClass: s.board === 'exception' ? 'exc' : 'lat',
         title: `Analyzed the ${s.board === 'exception' ? 'exception' : 'latency'} board`,
-        detail: `${formatCount(cycle.boardRowsEvaluated || 0)} rows across ${formatCount(cycle.clubsWatched || 0)} clubs · ${formatCount(cycle.candidatesFound || 0)} above threshold`,
+        detail: `${formatCount(cycle.boardRowsEvaluated || 0)} rows · ${entityTally(cycle.clubsWatched)} · ${formatCount(cycle.candidatesFound || 0)} above threshold`,
       });
     }
     (s.activity || []).slice(0, 2).forEach((a) => {
@@ -1840,12 +1962,63 @@ function renderPipelineStory(scouts, director, running) {
    5b. CUSTOMER JOURNEYS TAB
    ----------------------------------------------------------------------- */
 function journeySortAccessor(j, key) {
-  if (key === 'club') return j.club || j.origin;
-  if (key === 'origin') return j.origin;
   return j[key] ?? '';
 }
 
+/** Column titles keep the company's own word intact ("# Paso", not "Paso count"/"Last paso"). */
+function countHeading(label) {
+  return `# ${label}`;
+}
+
+/** Contract v6 §6: column titles come from the active company's labels. */
+function journeyColumns() {
+  const l = profileLabels();
+  return [
+    { key: 'correlationId', label: `${l.flow} ID` },
+    { key: 'domain', label: l.service },
+    { key: 'flow', label: l.flow },
+    { key: 'entity', label: l.entity },
+    { key: 'startDate', label: 'Started' },
+    { key: 'status', label: 'Status' },
+    { key: 'stepCount', label: countHeading(l.step), title: `How many ${l.step} entries the journey recorded` },
+    { key: 'lastStepKey', label: l.step, title: `The last ${l.step} the journey reached` },
+    { key: 'totalDurationMs', label: 'Duration' },
+    { key: 'timestamp', label: 'Last seen' },
+  ];
+}
+
+function renderJourneysHead() {
+  const head = document.getElementById('journeys-thead');
+  if (!head) return;
+  head.innerHTML = `<tr>${journeyColumns().map((c) => `<th data-sort="${escapeHtml(c.key)}"${c.title ? ` title="${escapeHtml(c.title)}"` : ''}>${escapeHtml(c.label)}</th>`).join('')}</tr>`;
+  const desc = document.getElementById('journeys-desc');
+  if (desc) {
+    const names = profileServices().map((s) => s.label);
+    desc.textContent = names.length
+      ? `End-to-end transaction explorer across ${names.join(', ')}.`
+      : 'End-to-end transaction explorer.';
+  }
+  const idLabel = document.getElementById('filter-id-label');
+  if (idLabel) idLabel.textContent = `${profileLabels().flow} ID`;
+}
+
+/** The header is rebuilt per company, so sorting is delegated to the table rather than bound per cell. */
+function wireJourneysSort() {
+  const table = document.getElementById('journeys-table');
+  if (!table) return;
+  table.addEventListener('click', (e) => {
+    const th = e.target.closest('thead th[data-sort]');
+    if (!th) return;
+    const key = th.dataset.sort;
+    const cur = state.sort.journeys;
+    if (cur.key === key) cur.dir = cur.dir === 'asc' ? 'desc' : 'asc';
+    else { cur.key = key; cur.dir = 'asc'; }
+    renderJourneysTable();
+  });
+}
+
 function renderJourneysTable() {
+  renderJourneysHead();
   if (state.tablesLoading) return;
   markTableBusy(document.getElementById('journeys-table'), false);
   const filtered = state.journeys.filter(matchesGlobalFilters);
@@ -1854,21 +2027,23 @@ function renderJourneysTable() {
   const tbody = document.getElementById('journeys-tbody');
 
   if (rows.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="10"><div class="state-block">No journeys match the current filters.</div></td></tr>`;
+    const meta = state.journeysMeta || {};
+    const message = meta.source === 'error' && meta.warning ? meta.warning : `${profileLabels().flow}: nothing matches the current filters.`;
+    tbody.innerHTML = `<tr><td colspan="10"><div class="state-block">${escapeHtml(message)}</div></td></tr>`;
     return;
   }
 
   tbody.innerHTML = rows.map((j) => `
-    <tr data-journey-id="${escapeHtml(j.id)}" tabindex="0" role="button" aria-label="View journey ${escapeHtml(j.correlationId || j.id)} details">
+    <tr data-journey-id="${escapeHtml(j.id)}" tabindex="0" role="button" aria-label="View ${escapeHtml(profileLabels().flow.toLowerCase())} ${escapeHtml(j.correlationId || j.id)} details">
       <td><code>${escapeHtml(j.correlationId || '—')}</code></td>
       <td>${escapeHtml(domainLabel(j.domain))}</td>
-      <td>${escapeHtml(j.customer)}</td>
-      <td>${escapeHtml(j.club || j.origin)}</td>
-      <td>${new Date(j.startDate).toLocaleDateString()}</td>
-      <td>${journeyStatusBadge(j.status)}</td>
-      <td>${j.sessionCount ? `${j.sessionCount}` : '—'}</td>
+      <td>${escapeHtml(profileFlowLabel(j.domain, j.flow) || '—')}</td>
+      <td>${escapeHtml(j.entity || '—')}</td>
+      <td>${j.startDate ? new Date(j.startDate).toLocaleString() : '—'}</td>
+      <td>${journeyStatusBadge(j.status, j.outcome)}</td>
+      <td>${j.stepCount || '—'}</td>
+      <td>${escapeHtml(profileStepLabel(j.domain, j.lastStepKey) || '—')}</td>
       <td>${formatDuration(j.totalDurationMs)}</td>
-      <td>${j.bookingId ? escapeHtml(j.bookingId) : '—'}</td>
       <td>${formatRelativeTime(j.timestamp)}</td>
     </tr>`).join('');
 
@@ -1879,171 +2054,86 @@ function renderJourneysTable() {
   });
 }
 
-function journeyStatusBadge(status) {
-  const cls = mapOutcomeToHealth(status);
+function journeyStatusBadge(status, outcome) {
+  const cls = mapOutcomeToHealth(outcome || status);
   return `<span class="status-badge status-badge--${cls}">${escapeHtml(status)}</span>`;
 }
 
-function stageBarClass(status) {
-  if (status === 'failed') return 'waterfall-row__bar--failed';
-  if (status === 'degraded') return 'waterfall-row__bar--degraded';
-  if (status === 'skipped') return 'waterfall-row__bar--skipped';
-  return '';
-}
-
-function openJourneyDetail(journeyId) {
+/** Contract v6 §4.1: the side panel reads the journey and its steps from GET /api/profile-journeys/{id}. */
+async function openJourneyDetail(journeyId) {
   const journey = state.journeys.find((j) => j.id === journeyId);
   if (!journey) return;
-  const totalMs = Math.max(journey.totalDurationMs || 0, 1);
+  const labels = profileLabels();
+  const title = `${labels.flow} ${journey.correlationId || journey.id}`;
+  const company = activeCompanyKey();
+  openSidePanel(title, '<div class="state-block" role="status"><div class="spinner" aria-hidden="true"></div>Loading…</div>');
+  let detail;
+  try {
+    detail = await fetchJsonPayload(withActiveCompany(`/api/profile-journeys/${encodeURIComponent(journey.id)}`));
+  } catch (err) {
+    if (activeCompanyKey() !== company) return;
+    openSidePanel(title, `<div class="state-block state-block--error">${escapeHtml(err.message || `${labels.flow} could not be read.`)}</div>`);
+    return;
+  }
+  if (activeCompanyKey() !== company) return;
+  openSidePanel(title, journeyDetailHtml(detail ? mapProfileJourney(detail.journey || {}) : journey, (detail && detail.steps) || [], labels));
+  scrollDetailsToTop();
+}
 
-  const waterfallRows = journey.stages.map((s, idx) => {
-    const leftPct = (s.startOffsetMs / totalMs) * 100;
-    const widthPct = Math.max((s.durationMs / totalMs) * 100, s.durationMs === 0 ? 0 : 0.6);
+function journeyDetailHtml(journey, rawSteps, labels) {
+  const steps = [...rawSteps].sort((a, b) => (Number(a.stepOrder) || 0) - (Number(b.stepOrder) || 0)
+    || new Date(a.timestamp) - new Date(b.timestamp));
+  const times = steps.map((s) => new Date(s.timestamp).getTime()).filter((t) => !Number.isNaN(t));
+  const t0 = times.length ? Math.min(...times) : 0;
+  const ends = steps.map((s) => (new Date(s.timestamp).getTime() - t0) + (Number(s.durationMs) || 0));
+  const totalMs = Math.max(1, ...ends, journey.totalDurationMs || 0);
+
+  const waterfallRows = steps.map((s) => {
+    const offset = Math.max(0, new Date(s.timestamp).getTime() - t0);
+    const leftPct = (offset / totalMs) * 100;
+    const widthPct = Math.max(((Number(s.durationMs) || 0) / totalMs) * 100, 0.6);
     return `
-      <div class="waterfall-row" data-stage-idx="${idx}">
+      <div class="waterfall-row">
         <div class="waterfall-row__label">
-          <span class="waterfall-row__name">${escapeHtml(s.name)}</span>
-          <span class="waterfall-row__component">${escapeHtml(s.component)}</span>
+          <span class="waterfall-row__name">${escapeHtml(profileStepLabel(journey.domain, s.stepKey) || s.name)}</span>
+          <span class="waterfall-row__component">${escapeHtml(s.name || '')}</span>
         </div>
         <div class="waterfall-row__track">
-          <div class="waterfall-row__bar ${stageBarClass(s.status)}" style="left:${leftPct}%; width:${widthPct}%;"></div>
+          <div class="waterfall-row__bar ${s.success === false ? 'waterfall-row__bar--failed' : ''}" style="left:${leftPct}%; width:${widthPct}%;"></div>
         </div>
-        <div class="waterfall-row__duration">${s.status === 'skipped' ? 'skipped' : formatDuration(s.durationMs)}</div>
+        <div class="waterfall-row__duration">${formatDuration(Math.round(Number(s.durationMs) || 0))}</div>
       </div>`;
   }).join('');
 
-  const failBanner = journey.failReason
-    ? `<div class="fail-reason"><span class="fail-reason__label">Why it failed</span>${escapeHtml(journey.failReason)}</div>`
-    : '';
+  const stepRows = steps.map((s) => `
+    <tr class="${s.success === false ? 'is-failed' : ''}">
+      <td>${escapeHtml(String(s.stepOrder ?? '—'))}</td>
+      <td>${escapeHtml(profileStepLabel(journey.domain, s.stepKey) || '—')}</td>
+      <td>${escapeHtml(s.name || '—')}</td>
+      <td>${s.timestamp ? new Date(s.timestamp).toLocaleString() : '—'}</td>
+      <td>${formatDuration(Math.round(Number(s.durationMs) || 0))}</td>
+      <td>${escapeHtml(s.resultCode || '—')}</td>
+      <td>${s.success === false ? 'Failed' : 'OK'}</td>
+    </tr>`).join('');
 
-  const sessions = journey.sessions || [];
-  const sessionsBlock = sessions.length
-    ? `<h3>Telemetry CorrelationId</h3>
-       <p class="hint">One GUID: the session of the member's last call (not the first/login session). SessionCount still says if more existed.</p>
-       <div class="table-wrap trace-table-wrap">
-         <table class="data-table data-table--compact">
-           <thead><tr>
-             <th>#</th><th>correlationId</th><th>First seen</th><th>Last seen</th><th>Gap</th><th>changeReason</th>
-           </tr></thead>
-           <tbody>${sessions.map((s) => `
-             <tr>
-               <td>${s.session ?? '—'}</td>
-               <td><code>${escapeHtml(s.correlationId || '')}</code></td>
-               <td>${s.firstSeen ? new Date(s.firstSeen).toLocaleString() : '—'}</td>
-               <td>${s.lastSeen ? new Date(s.lastSeen).toLocaleString() : '—'}</td>
-               <td>${s.gapFromPreviousSec == null || s.gapFromPreviousSec === '' ? '—' : `${s.gapFromPreviousSec}s`}</td>
-               <td>${escapeHtml(s.changeReason || '—')}</td>
-             </tr>`).join('')}
-           </tbody>
-         </table>
-       </div>`
-    : '';
-
-  const isAir = journey.domain === 'air';
-  const scope = isAir
-    ? { label: 'Route', value: `${journey.origin} → ${journey.destination}` }
-    : { label: 'Scope', value: journey.origin };
-
-  const body = `
+  return `
     <div class="journey-summary">
-      <div class="journey-summary__item"><strong>${journeyStatusBadge(journey.status)}</strong>Outcome</div>
-      <div class="journey-summary__item"><strong>${formatDuration(journey.totalDurationMs)}</strong>API time (${isAir ? 'Air UI+API' : 'TMO host'})</div>
-      <div class="journey-summary__item"><strong>${escapeHtml(scope.value)}</strong>${scope.label}</div>
-      <div class="journey-summary__item"><strong>${escapeHtml(journey.customer || journey.id)}</strong>User ID</div>
-      <div class="journey-summary__item"><strong>${journey.bookingId ? escapeHtml(journey.bookingId) : '—'}</strong>Booking ID</div>
-      <div class="journey-summary__item"><strong>${escapeHtml(journey.correlationId || '—')}</strong>Journey ID</div>
-      <div class="journey-summary__item"><strong>${journey.sessionCount || 0}</strong>Session count</div>
+      <div class="journey-summary__item"><strong>${journeyStatusBadge(journey.status, journey.outcome)}</strong>Outcome</div>
+      <div class="journey-summary__item"><strong>${escapeHtml(domainLabel(journey.domain))}</strong>${escapeHtml(labels.service)}</div>
+      <div class="journey-summary__item"><strong>${escapeHtml(profileFlowLabel(journey.domain, journey.flow) || '—')}</strong>${escapeHtml(labels.flow)}</div>
+      <div class="journey-summary__item"><strong>${escapeHtml(journey.entity || '—')}</strong>${escapeHtml(labels.entity)}</div>
+      <div class="journey-summary__item"><strong>${formatDuration(journey.totalDurationMs)}</strong>Duration</div>
+      <div class="journey-summary__item"><strong>${journey.stepCount || steps.length}</strong>${escapeHtml(countHeading(labels.step))}</div>
+      <div class="journey-summary__item"><strong>${escapeHtml(journey.correlationId || journey.id)}</strong>Operation</div>
     </div>
-    ${failBanner}
-    ${sessionsBlock}
-    <h3>Stage Waterfall</h3>
-    <p class="hint">Bars show measured API/dependency time (not user think time). Click a stage for its calls.</p>
-    <div class="waterfall" id="journey-waterfall">${waterfallRows}</div>
-    <div id="stage-detail-mount"></div>`;
-
-  openSidePanel(`Journey ${journey.correlationId || journey.id}`, body);
-  scrollDetailsToTop();
-
-  document.querySelectorAll('#journey-waterfall .waterfall-row').forEach((row) => {
-    row.addEventListener('click', () => {
-      document.querySelectorAll('#journey-waterfall .waterfall-row').forEach((r) => r.classList.remove('is-selected'));
-      row.classList.add('is-selected');
-      const stage = journey.stages[Number(row.dataset.stageIdx)];
-      renderStageDetail(stage, journey);
-    });
-  });
-
-  // Auto-select the first failed/degraded stage to spotlight the root cause
-  const problemIdx = journey.stages.findIndex((s) => s.status === 'failed' || s.status === 'degraded');
-  if (problemIdx >= 0) {
-    document.querySelectorAll('#journey-waterfall .waterfall-row')[problemIdx].click();
-  }
-}
-
-function callErrorMessages(call) {
-  return (call.errors || []).map((e) => e.message || JSON.stringify(e));
-}
-
-function callHasFailure(call) {
-  return callErrorMessages(call).length > 0 || Number(call.failureRatePct) > 0;
-}
-
-function renderStageDetail(stage, journey) {
-  const calls = stage.calls || [];
-  const failing = calls.filter(callHasFailure);
-
-  // The calls table scrolls horizontally in a narrow panel, so errors get their
-  // own block above it: the reason a stage is red must never require scrolling.
-  const errorBlock = failing.length
-    ? `<div class="call-errors">
-         <div class="call-errors__title">${failing.length} failing call${failing.length > 1 ? 's' : ''} in this stage</div>
-         ${failing.map((c) => {
-           const msgs = callErrorMessages(c);
-           return `<div class="call-errors__item">
-             <span class="call-errors__call">${escapeHtml(c.kind)} · ${escapeHtml(c.call)}</span>
-             <span class="call-errors__rate">${c.failureRatePct == null ? '' : `${c.failureRatePct}% of ${c.n ?? '?'}`}</span>
-             <span class="call-errors__msg">${msgs.length ? escapeHtml(msgs.join(' · ')) : 'failed without a captured message'}</span>
-           </div>`;
-         }).join('')}
-       </div>`
-    : `<div class="call-errors call-errors--clean">No failing calls in this stage.</div>`;
-
-  const callRows = calls.length ? calls.map((c) => {
-    const msgs = callErrorMessages(c);
-    const failed = callHasFailure(c);
-    return `<tr class="${failed ? 'is-failed' : ''}">
-      <td>${escapeHtml(c.kind)}</td>
-      <td>${escapeHtml(c.call)}${msgs.length ? `<div class="call-inline-error">${escapeHtml(msgs.join(' · '))}</div>` : ''}</td>
-      <td><code>${escapeHtml(c.correlationId || '—')}</code></td>
-      <td>${c.n ?? '—'}</td>
-      <td>${formatDuration(c.callTotalMs)}</td>
-      <td>${c.p95Ms == null ? '—' : formatDuration(c.p95Ms)}</td>
-      <td>${escapeHtml(c.status || '—')}</td>
-      <td>${c.failureRatePct == null ? '—' : `${c.failureRatePct}%`}</td>
-      <td>${escapeHtml(c.detail || '—')}</td>
-    </tr>`;
-  }).join('') : `<tr><td colspan="9">No calls in this stage.</td></tr>`;
-
-  document.getElementById('stage-detail-mount').innerHTML = `
-    <div class="stage-detail">
-      <dl>
-        <dt>Stage</dt><dd>${escapeHtml(stage.name)}</dd>
-        <dt>Primary call</dt><dd>${escapeHtml(stage.component)}</dd>
-        <dt>Domain</dt><dd>${escapeHtml(domainLabel(journey.domain))}</dd>
-        <dt>Latency</dt><dd>${escapeHtml(stage.v6Status || stage.status)}</dd>
-        <dt>API time</dt><dd>${formatDuration(stage.durationMs)}</dd>
-        <dt>Hits</dt><dd>${stage.requestCount}</dd>
-        <dt>Diagnostic</dt><dd>${escapeHtml(stage.diagnostic)}</dd>
-      </dl>
-    </div>
-    <h3>Calls in this stage</h3>
-    ${errorBlock}
+    <h3>Waterfall · ${escapeHtml(labels.step)}</h3>
+    <p class="hint">Bars show each request's measured duration from the start of the first request.</p>
+    <div class="waterfall" id="journey-waterfall">${waterfallRows || `<div class="state-block">${escapeHtml(labels.step)}: none recorded.</div>`}</div>
+    <h3>Requests</h3>
     <div class="table-wrap trace-table-wrap">
       <table class="data-table data-table--compact">
-        <thead><tr>
-          <th>Kind</th><th>Call</th><th>correlationId</th><th>n</th><th>Total</th><th>P95</th><th>Status</th><th>Fail %</th><th>Supplier</th>
-        </tr></thead>
-        <tbody>${callRows}</tbody>
+        <thead><tr><th>#</th><th>${escapeHtml(labels.step)}</th><th>Request</th><th>Time</th><th>Duration</th><th>Result</th><th>Outcome</th></tr></thead>
+        <tbody>${stepRows || `<tr><td colspan="7">${escapeHtml(labels.step)}: none recorded.</td></tr>`}</tbody>
       </table>
     </div>`;
 }
@@ -2052,8 +2142,9 @@ function renderStageDetail(stage, journey) {
    5c. PLATFORM HEALTH TAB
    ----------------------------------------------------------------------- */
 function renderComponentGrid() {
-  const filtered = state.components.filter(matchesGlobalFilters);
   const grid = document.getElementById('component-grid');
+  if (!grid) return;
+  const filtered = state.components.filter(matchesGlobalFilters);
   if (filtered.length === 0) {
     grid.innerHTML = `<div class="state-block">No components match the current filters.</div>`;
     return;
@@ -2113,9 +2204,1065 @@ function openComponentDetail(componentId) {
   openSidePanel(c.name, body);
 }
 
+/* Sample figures and click rules copied from arrivia_reliability_watch_v6.html
+   at observation 0. Vertical click selects that product and returns the journey
+   to Reserve. Stage click only replaces the component cards. */
+const rwWatch = {
+  ready: false,
+  /** Hour row from dbo.vw_Alert_HotelBookingKPIs, plus start-to-complete conversion from hotel.Journey. The Domain and Club filters do not scope this. Null when that read is unavailable. */
+  hotelBusiness: null,
+  /** Hotels journeys and incidents for Application Health. Domain and Club filters do not scope this. */
+  application: null,
+  applicationRequest: 0,
+  /** GET /api/health/pillars for the selected card's domain: { domain, status, pillars }. */
+  health: null,
+  healthRequest: 0,
+  /** The pillar load currently running: { domain, promise }. */
+  healthInFlight: null,
+  /** GET /api/settings/kpis - names each KPI's aggregation and its "n of m" consecutive rule. */
+  kpiDefs: null,
+  /** GET /api/health/kpis/{id}/buckets by KpiDefinitionId: { status, items }. */
+  buckets: {},
+  /** GET /api/triage/investigations: { status, items }. */
+  triage: null,
+  triageRequest: 0,
+  triageRunning: false,
+  healthTimer: null,
+  /** Service key of the selected card. The cards are the active company's services. */
+  focus: null,
+  stage: 1,
+  /** Incumbent-only sample figures by service key (shown only while its legacy widgets apply).
+   *  Its live business service replaces these with the live hour row and journey conversion. */
+  base: {
+    hotels: { conversion: [11.3, 11.1], bookings: [128, 127], revenue: [28600, 28300], latency: [420, 425], exceptions: [2, 2], cpu: [42, 43], memory: [61, 60], releases: 3, known: 1 },
+    cruises: { conversion: [7.8, 7.9], bookings: [46, 47], revenue: [73400, 74600], latency: [600, 615], exceptions: [1, 1], cpu: [43, 44], memory: [59, 58], releases: 2, known: 0 },
+    air: { conversion: [6.5, 6.4], bookings: [186, 181], revenue: [38700, 38100], latency: [410, 416], exceptions: [3, 3], cpu: [51, 51], memory: [68, 69], releases: 5, known: 2 },
+    cars: { conversion: [9.2, 9.3], bookings: [94, 95], revenue: [12600, 12750], latency: [350, 349], exceptions: [1, 1], cpu: [38, 39], memory: [48, 49], releases: 1, known: 0 },
+  },
+  /** The incumbent's live business-health service and its inert one. */
+  liveBusinessService: 'hotels',
+  offlineService: 'air',
+  stageLabels: ['Search & Quote', 'Reserve', 'Pay', 'Confirm', 'Modify / Cancel'],
+  components: [
+    ['Web / Mobile', 'Search API', 'Supplier Search · Expedia / Hotelbeds', 'Search cache'],
+    ['Booking App', 'Booking API', 'Reservation Service', 'Partner API · Expedia / Hotelbeds'],
+    ['Checkout App', 'Payment API', 'Payment gateway', 'Booking database'],
+    ['Confirmation API', 'Notification Service', 'Messaging queue', 'Supplier adapter'],
+    ['Manage Booking API', 'Cancellation Service', 'Supplier API', 'Booking database'],
+  ],
+  icons: {
+    hotels: '<path d="M4 21V6l8-4 8 4v15M9 21v-6h6v6M8 9h1m6 0h1m-8 3h1m6 0h1"/>',
+    cruises: '<path d="M3 14h18l-3 7H6l-3-7Zm5 0V5h8v9M12 5V2M3 10h18"/>',
+    air: '<path d="M2 20 22 10l-8-2-3-6-3 11-6 7ZM8 13l5 7"/>',
+    cars: '<path d="M5 16 7 9h10l2 7M4 16h16v5h-3v-2H7v2H4v-5ZM7 13h2m6 0h2"/>',
+    default: '<path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/>',
+  },
+};
+
+/** The selected card's service name, from the active profile. */
+function rwFocusLabel() {
+  return rwWatch.focus ? domainLabel(rwWatch.focus) : '—';
+}
+
+/** Keeps the selected card on a service of the active company (the first one after a switch). */
+function rwEnsureFocus() {
+  // Until the company's overview says which widgets apply, the live business card is unknown.
+  if (!state.overview) return;
+  const services = profileServices().filter((s) => !rwVerticalOffline(s.key));
+  if (services.some((s) => s.key === rwWatch.focus)) return;
+  const live = companyHasLegacyWidgets() && services.find((s) => s.key === rwWatch.liveBusinessService);
+  rwWatch.focus = live ? live.key : (services[0] ? services[0].key : null);
+  rwWatch.stage = 1;
+}
+
+function rwFmt(key, value) {
+  if (key === 'conversion') return `${value.toFixed(1)}%`;
+  if (key === 'revenue') return `$${Math.round(value).toLocaleString()}`;
+  if (key === 'latency') return `${Math.round(value)} ms`;
+  if (key === 'cpu' || key === 'memory') return `${Math.round(value)}%`;
+  return Math.round(value).toLocaleString();
+}
+
+function rwPercent(current, previous) {
+  return previous ? ((current - previous) / previous) * 100 : 0;
+}
+
+function rwTrend(current, previous, higherBetter) {
+  const pct = rwPercent(current, previous);
+  if (Math.abs(pct) < 1) return { cls: 'flat', glyph: '→', label: 'Unchanged' };
+  const up = pct > 0;
+  const good = up === higherBetter;
+  if (up) return { cls: good ? 'up-good' : 'up', glyph: '▲', label: 'Up' };
+  return { cls: good ? 'down-good' : 'down', glyph: '▼', label: 'Down' };
+}
+
+function rwIcon(key) {
+  return `<span class="rw-ico" aria-hidden="true"><svg viewBox="0 0 24 24">${rwWatch.icons[key] || rwWatch.icons.default}</svg></span>`;
+}
+
+/** Live Business Health exists only for the incumbent's business service. Domain and Club do not choose it. */
+function rwHotelsQueryMode() {
+  return companyHasLegacyWidgets() && rwWatch.focus === rwWatch.liveBusinessService;
+}
+
+/** Every other service has no business-health source yet. */
+function rwPlaceholderDomain() {
+  return !rwHotelsQueryMode();
+}
+
+function rwUnavailableMetric(name) {
+  return `<li><span>${escapeHtml(name)}</span><span class="rw-metrics__vals"><strong class="rw-muted">— Unavailable</strong></span></li>`;
+}
+
+function rwLivePair(key) {
+  const live = rwWatch.hotelBusiness;
+  if (!live || !Array.isArray(live[key])) return null;
+  const pair = live[key];
+  if (pair[0] == null && pair[1] == null) return null;
+  return pair;
+}
+
+function rwShown(key, value) {
+  return value == null ? '—' : rwFmt(key, Number(value));
+}
+
+/** Last week when that hour had booking starts. An earlier same weekday is named by its date. */
+function rwConversionBaselinePhrase() {
+  const lastWeek = { short: 'same hour last week', relation: "last week's same hour" };
+  const start = rwWatch.hotelBusiness && rwWatch.hotelBusiness.priorConversionWindowStart;
+  if (!start) return lastWeek;
+  const prior = new Date(start);
+  if (Number.isNaN(prior.getTime())) return lastWeek;
+  const days = Math.round((Date.now() - prior.getTime()) / 86400000);
+  if (days >= 6 && days <= 8) return lastWeek;
+  const date = prior.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Los_Angeles' });
+  return { short: `same hour on ${date}`, relation: `the same hour on ${date}` };
+}
+
+function rwConversionDelta(now, old, live) {
+  const baseline = live
+    ? rwConversionBaselinePhrase()
+    : { short: 'same hour last week', relation: "last week's same hour" };
+  if (now == null || old == null) {
+    return `<p class="rw-delta rw-delta--flat">Conversion · ${baseline.short}</p>`;
+  }
+  const current = Number(now);
+  const previous = Number(old);
+  if (previous === 0) {
+    return `<p class="rw-delta rw-delta--flat">Conversion · ${baseline.short}</p>`;
+  }
+  const trend = rwTrend(current, previous, true);
+  const relation = current < previous ? 'below' : current > previous ? 'above' : 'at';
+  return `<p class="rw-delta rw-delta--${trend.cls}">Conversion · ${Math.abs(rwPercent(current, previous)).toFixed(1)}% ${relation} ${baseline.relation}</p>`;
+}
+
+function rwConversionPair(now, old, live) {
+  return `<div class="rw-pair">
+        <div><span class="rw-pair__label">Current</span><span class="rw-pair__value">${rwShown('conversion', now)}</span></div>
+        <div><span class="rw-pair__label">Historical</span><span class="rw-pair__value">${rwShown('conversion', old)}</span></div>
+      </div>
+      ${rwConversionDelta(now, old, live)}`;
+}
+
+/** Cancellations is not wired to a business-health read yet. */
+function rwCancellationMetric() {
+  return rwUnavailableMetric('Cancellations');
+}
+
+/** The incumbent's inert service keeps its card visible but not selectable. */
+function rwVerticalOffline(key) {
+  return companyHasLegacyWidgets() && key === rwWatch.offlineService;
+}
+
+const RW_UNAVAILABLE_PAIR = `<div class="rw-pair">
+        <div><span class="rw-pair__label">Current</span><span class="rw-pair__value">—</span></div>
+        <div><span class="rw-pair__label">Historical</span><span class="rw-pair__value">—</span></div>
+      </div>
+      <p class="rw-delta rw-delta--flat">Conversion unavailable</p>`;
+
+/** One card per service of the active company. */
+function rwRenderVerticals() {
+  const root = document.getElementById('rw-verticals');
+  const services = profileServices();
+  if (!services.length) {
+    root.innerHTML = `<div class="state-block">No ${escapeHtml(profileLabels().service)} is defined for this company.</div>`;
+    return;
+  }
+  const legacy = companyHasLegacyWidgets();
+  root.innerHTML = services.map(({ key, label }) => {
+    const offline = rwVerticalOffline(key);
+    const selected = !offline && key === rwWatch.focus;
+    const hotelLive = legacy && key === rwWatch.liveBusinessService;
+    const sample = legacy ? rwWatch.base[key] : null;
+    const live = hotelLive ? rwLivePair('conversion') : null;
+    let pair;
+    if (live) pair = rwConversionPair(live[1], live[0], true);
+    else if (!hotelLive && sample) pair = rwConversionPair(sample.conversion[1], sample.conversion[0], false);
+    else pair = RW_UNAVAILABLE_PAIR;
+    const status = offline
+      ? '<span class="rw-pill rw-pill--off">Offline</span>'
+      : '<span class="rw-pill rw-pill--ok">Monitoring</span>';
+    const tag = offline ? 'div' : 'button';
+    const attrs = offline ? '' : ` type="button" data-rw-vertical="${escapeHtml(key)}" aria-pressed="${selected}"`;
+    return `<${tag} class="rw-vertical${selected ? ' is-selected' : ''}${offline ? ' rw-vertical--offline' : ''}"${attrs}>
+      <header class="rw-vertical__head">
+        <h3 class="rw-vertical__name">${rwIcon(key)} ${escapeHtml(label)}</h3>
+        ${status}
+      </header>
+      ${pair}
+    </${tag}>`;
+  }).join('');
+}
+
+/** The selected card is a service key of the active company. Domain and Club filters do not choose this. */
+function rwApplicationDomain() {
+  return rwWatch.focus || null;
+}
+
+function rwApplicationKey() {
+  return `${activeCompanyKey()}|${rwApplicationDomain() || 'none'}|${state.filters.environment || 'production'}|${headerQueryWin()}`;
+}
+
+/** Incidents for the selected service, every entity. The muted number is the last 7 days. The window is a subset of it, so no health direction is shown.
+ *  A failed read is Unavailable. Zero is a successful read that found none. */
+function rwExceptionsMetric(name) {
+  const app = rwWatch.application;
+  const scope = rwFocusLabel();
+  const every = `every ${profileLabels().entity.toLowerCase()}`;
+  if (!app || app.status === 'loading') {
+    return `<li><span>${escapeHtml(name)}</span><span class="rw-metrics__vals"><strong class="rw-muted">—</strong></span></li>`;
+  }
+  if (app.status !== 'ready' || !app.exceptionsOk) return rwUnavailableMetric(name);
+  const count = app.count;
+  const baseline = app.baseline;
+  if (baseline == null) {
+    return `<li><span>${escapeHtml(name)}</span><span class="rw-metrics__vals"><span class="rw-was">—</span> <strong>${count.toLocaleString()}</strong></span></li>`;
+  }
+  return `<li><span>${escapeHtml(name)}</span><span class="rw-metrics__vals"><span class="rw-was" title="${escapeHtml(scope)} incidents in the last 7 days, ${escapeHtml(every)}">${baseline.toLocaleString()}</span> <strong title="${escapeHtml(scope)} incidents in the selected window, ${escapeHtml(every)}">${count.toLocaleString()}</strong></span></li>`;
+}
+
+/** Incidents for the selected service, with no entity filter.
+ *  Time range and environment still apply. Latency is not read here:
+ *  the Application Health KPIs come from the backend monitors (GET /api/health/pillars). */
+async function loadApplicationHealth() {
+  const domain = rwApplicationDomain();
+  // No selectable service: leave the readings in place.
+  if (!domain) return;
+  const key = rwApplicationKey();
+  if (rwWatch.application && rwWatch.application.key === key && rwWatch.application.status === 'loading') return;
+  const request = (rwWatch.applicationRequest || 0) + 1;
+  rwWatch.applicationRequest = request;
+  const env = state.filters.environment || 'production';
+  const win = headerQueryWin();
+  rwWatch.application = { key, status: 'loading', exceptions: [], count: 0, baseline: null, exceptionsOk: false };
+  const exceptionQs = new URLSearchParams({ win, domain, env });
+  const [exceptionsResult] = await Promise.allSettled([
+    fetchJsonPayload(withActiveCompany(`/api/exceptions?${exceptionQs}`)),
+  ]);
+  if (rwWatch.applicationRequest !== request) return;
+  if (rwApplicationKey() !== key) {
+    rwWatch.application = null;
+    return;
+  }
+
+  const sameEnv = (payload) => String(payload.environment || '').toLowerCase() === env.toLowerCase();
+  let exceptions = [];
+  let count = 0;
+  let baseline = null;
+  let exceptionsOk = false;
+  if (exceptionsResult.status === 'fulfilled' && (exceptionsResult.value.source || '') === 'sql'
+    && sameEnv(exceptionsResult.value)) {
+    exceptionsOk = true;
+    exceptions = exceptionsResult.value.exceptions || [];
+    const windowCounts = exceptionsResult.value.windowCounts;
+    count = windowCounts && windowCounts[domain] != null ? Number(windowCounts[domain]) : 0;
+    const counts = exceptionsResult.value.baselineCounts;
+    baseline = counts && typeof counts === 'object'
+      ? (counts[domain] == null ? 0 : Number(counts[domain]))
+      : null;
+  }
+  rwWatch.application = { key, status: 'ready', exceptions, count, baseline, exceptionsOk };
+  if (rwWatch.ready && rwWatch.applicationRequest === request) rwRender();
+}
+
+function rwMetric(key, name, higherBetter) {
+  if (key === 'exceptions') return rwExceptionsMetric(name);
+  const businessKey = key === 'conversion' || key === 'bookings' || key === 'revenue';
+  if (businessKey && rwPlaceholderDomain()) return rwUnavailableMetric(name);
+  if (rwHotelsQueryMode() && businessKey) {
+    const pair = rwLivePair(key);
+    if (!pair) return rwUnavailableMetric(name);
+    const now = pair[1];
+    const old = pair[0];
+    if (now == null || old == null) {
+      return `<li><span>${escapeHtml(name)}</span><span class="rw-metrics__vals"><span class="rw-was">${escapeHtml(rwShown(key, old))}</span> <strong>${escapeHtml(rwShown(key, now))}</strong></span></li>`;
+    }
+    const trend = rwTrend(Number(now), Number(old), higherBetter);
+    return `<li><span>${escapeHtml(name)}</span><span class="rw-metrics__vals"><span class="rw-was">${escapeHtml(rwShown(key, old))}</span> <strong>${escapeHtml(rwShown(key, now))}</strong> <span class="rw-dir rw-dir--${trend.cls}" aria-label="${trend.label}">${trend.glyph}</span></span></li>`;
+  }
+  const sample = rwWatch.base[rwWatch.focus];
+  if (!sample || !sample[key]) return rwUnavailableMetric(name);
+  const now = sample[key][1];
+  const old = sample[key][0];
+  const trend = rwTrend(now, old, higherBetter);
+  return `<li><span>${escapeHtml(name)}</span><span class="rw-metrics__vals"><span class="rw-was">${escapeHtml(rwFmt(key, old))}</span> <strong>${escapeHtml(rwFmt(key, now))}</strong> <span class="rw-dir rw-dir--${trend.cls}" aria-label="${trend.label}">${trend.glyph}</span></span></li>`;
+}
+
+/** How many recent booking starts the Business Health conversion chart draws. */
+const RW_CONVERSION_SAMPLE = 10;
+
+/* --- Backend pillar health (Spec 1000) ---------------------------------------------------
+   The health monitors run in JourneyMonitor.Functions on timers; the portal only renders what
+   they stored. Nothing below decides whether a reading is anomalous. */
+
+/** Pillars the backend monitors evaluate, in card order (KpiPillar, camelCase on the wire). */
+const RW_BACKEND_PILLARS = ['business', 'application', 'infrastructure'];
+const RW_PILLAR_DISPLAY = { business: 'Business Health', application: 'Application Health', infrastructure: 'Infrastructure Health' };
+/** Pillar cards that have no backend monitor and always render as offline. */
+const RW_STATIC_OFFLINE_PILLARS = 3;
+const RW_HEALTH_REFRESH_MS = 60000;
+const RW_BUCKET_HOURS = 24;
+const RW_TRIAGE_TOP = 20;
+/** The stored bucket field each KpiAggregation is evaluated on. */
+const RW_BUCKET_FIELD = { p95: 'p95', p50: 'p50', mean: 'mean', count: 'totalCount', value: 'value' };
+
+/** The selected service card picks the domain the pillars are read for. */
+function rwHealthDomain() {
+  return rwApplicationDomain() || journeyDomains()[0] || '';
+}
+
+function rwBackendPillar(key) {
+  const health = rwWatch.health;
+  // A response for the previously selected vertical is never shown under the new one.
+  if (!health || health.status !== 'ready' || health.domain !== rwHealthDomain()) return null;
+  return health.pillars.find((pillar) => String(pillar.pillar || '').toLowerCase() === key) || null;
+}
+
+/** True while the pillars on screen belong to another domain or have not loaded yet. */
+function rwHealthPending() {
+  const health = rwWatch.health;
+  return !health || health.status === 'loading' || health.domain !== rwHealthDomain();
+}
+
+function rwKpiDefinition(id) {
+  return (rwWatch.kpiDefs || []).find((definition) => definition.kpiDefinitionId === id) || null;
+}
+
+function rwBucketValue(bucket, aggregation) {
+  if (!bucket) return null;
+  const field = RW_BUCKET_FIELD[String(aggregation || '').toLowerCase()] || 'value';
+  const raw = bucket[field];
+  return raw == null ? null : Number(raw);
+}
+
+/** Percentile and mean buckets are latencies in milliseconds; seconds read better past 1000 ms. */
+function rwKpiFmt(value, aggregation) {
+  if (value == null || !Number.isFinite(value)) return '—';
+  const agg = String(aggregation || '').toLowerCase();
+  if (agg === 'p95' || agg === 'p50' || agg === 'mean') {
+    return value >= 1000 ? `${(value / 1000).toFixed(1)} s` : `${Math.round(value)} ms`;
+  }
+  if (agg === 'count') return Math.round(value).toLocaleString();
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function rwClock(iso) {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function rwKpiName(kpi) {
+  return kpi.stage ? `${kpi.kpi} · ${kpi.stage}` : kpi.kpi;
+}
+
+function rwPillarStatusPill(key) {
+  if (rwHealthPending()) return '<span class="rw-pill rw-pill--idle">Loading</span>';
+  const pillar = rwBackendPillar(key);
+  if (!pillar) return '<span class="rw-pill rw-pill--off">Unavailable</span>';
+  if (pillar.status === 'anomalous') return '<span class="rw-pill rw-pill--alert">Anomalous</span>';
+  if (pillar.status === 'ok') return '<span class="rw-pill rw-pill--ok">OK</span>';
+  return '<span class="rw-pill rw-pill--off">Offline</span>';
+}
+
+/** One KPI as the backend left it: latest bucket value and its consecutive-bucket counter "n of m". */
+function rwKpiRow(kpi) {
+  const name = escapeHtml(rwKpiName(kpi));
+  if (!kpi.enabled) {
+    return `<li><span>${name}</span><span class="rw-metrics__vals"><strong class="rw-muted">— Disabled</strong></span></li>`;
+  }
+  const definition = rwKpiDefinition(kpi.kpiDefinitionId);
+  const aggregation = definition ? definition.aggregation : null;
+  const bucket = kpi.latestBucket;
+  const value = rwKpiFmt(rwBucketValue(bucket, aggregation), aggregation);
+  const count = Number((kpi.state && kpi.state.consecutiveCount) || 0);
+  const counter = definition ? `${count} of ${definition.consecutiveCount}` : String(count);
+  const valueTitle = bucket
+    ? `Latest bucket ${new Date(bucket.bucketStart).toLocaleString()} · ${Number(bucket.totalCount).toLocaleString()} observations`
+    : 'No bucket ingested yet';
+  const tag = aggregation ? ` <span class="rw-scope">${escapeHtml(String(aggregation).toUpperCase())}</span>` : '';
+  return `<li class="rw-kpi${count > 0 ? ' rw-kpi--flagged' : ''}"><span>${name}${tag}</span><span class="rw-metrics__vals"><span class="rw-was" title="Consecutive anomalous buckets counted by the backend monitor">${escapeHtml(counter)}</span> <strong title="${escapeHtml(valueTitle)}">${escapeHtml(value)}</strong></span></li>`;
+}
+
+function rwKpiNotes(kpi) {
+  const notes = [];
+  const kpiState = kpi.state || {};
+  if (kpiState.cooldownUntil && new Date(kpiState.cooldownUntil).getTime() > Date.now()) {
+    notes.push(`${rwKpiName(kpi)} cooldown until ${rwClock(kpiState.cooldownUntil)}`);
+  }
+  if (kpi.lastAnomaly) {
+    notes.push(`${rwKpiName(kpi)} last anomaly ${formatRelativeTime(kpi.lastAnomaly.detectedAt)}: ${kpi.lastAnomaly.detection}`);
+  }
+  return notes;
+}
+
+/** Bars are the stored bucket values. The reference line and the flagged bar are drawn only from
+ *  the backend's last anomaly for this KPI. */
+function rwKpiChart(kpi) {
+  const definition = rwKpiDefinition(kpi.kpiDefinitionId);
+  const aggregation = definition ? definition.aggregation : null;
+  const heading = `${rwKpiName(kpi)} · last ${RW_BUCKET_HOURS} h`;
+  const entry = rwWatch.buckets[kpi.kpiDefinitionId];
+  const empty = (text) => `<p class="rw-chart__label"><span>${escapeHtml(heading)}</span><span class="rw-muted">—</span></p>
+      <div class="rw-chart-empty"><p>${escapeHtml(text)}</p></div>`;
+  if (!entry || entry.status === 'loading') return empty('Loading buckets');
+  if (entry.status !== 'ready') return empty('Buckets unavailable');
+  const points = entry.items.map((bucket) => ({ start: bucket.bucketStart, value: rwBucketValue(bucket, aggregation) }));
+  const values = points.map((point) => point.value).filter((value) => value != null && Number.isFinite(value));
+  if (values.length === 0) return empty('No buckets in this window');
+
+  const anomaly = kpi.lastAnomaly;
+  const reference = anomaly && Number.isFinite(Number(anomaly.referenceValue)) ? Number(anomaly.referenceValue) : null;
+  const anomalyStart = anomaly ? new Date(anomaly.bucketStart).getTime() : null;
+  const top = Math.max(...values, reference ?? 0) || 1;
+  const bars = points.map((point) => {
+    if (point.value == null || !Number.isFinite(point.value)) return '<span class="is-empty" style="height:100%"></span>';
+    const height = Math.max(4, (point.value / top) * 100);
+    const flagged = anomalyStart != null && new Date(point.start).getTime() === anomalyStart;
+    const title = `${new Date(point.start).toLocaleString()} · ${rwKpiFmt(point.value, aggregation)}`;
+    return `<span${flagged ? ' class="is-spike"' : ''} style="height:${height.toFixed(1)}%" title="${escapeHtml(title)}"></span>`;
+  }).join('');
+  const line = reference != null
+    ? `<i class="rw-bars__line" style="bottom:${Math.min(100, (reference / top) * 100).toFixed(1)}%"><b>ref ${escapeHtml(rwKpiFmt(reference, aggregation))}</b></i>`
+    : '';
+  const latest = points[points.length - 1].value;
+  return `<p class="rw-chart__label"><span>${escapeHtml(heading)}</span><span>${escapeHtml(rwKpiFmt(latest, aggregation))}</span></p>
+    <div class="rw-bars rw-bars--dense" role="img" aria-label="${escapeHtml(`${heading}, ${values.length} buckets`)}">${line}${bars}</div>`;
+}
+
+function rwBackendKpiRows(key) {
+  const health = rwWatch.health;
+  if (rwHealthPending()) {
+    return '<li><span>Monitored KPIs</span><span class="rw-metrics__vals"><strong class="rw-muted">—</strong></span></li>';
+  }
+  if (health.status !== 'ready') return rwUnavailableMetric('Monitored KPIs');
+  const pillar = rwBackendPillar(key);
+  const kpis = pillar ? pillar.kpis || [] : [];
+  if (kpis.length === 0) {
+    return '<li><span>Monitored KPIs</span><span class="rw-metrics__vals"><strong class="rw-muted">— None configured</strong></span></li>';
+  }
+  return kpis.map(rwKpiRow).join('');
+}
+
+function rwBackendKpiCharts(key) {
+  const pillar = rwBackendPillar(key);
+  return pillar ? (pillar.kpis || []).filter((kpi) => kpi.enabled).map(rwKpiChart).join('') : '';
+}
+
+function rwBackendNote(key, lead) {
+  const pillar = rwBackendPillar(key);
+  const notes = pillar ? (pillar.kpis || []).flatMap(rwKpiNotes) : [];
+  return [lead, ...notes].filter(Boolean).map(escapeHtml).join(' · ');
+}
+
+function rwRenderPillarCount() {
+  const el = document.getElementById('rw-pillars-count');
+  if (!el) return;
+  const health = rwWatch.health;
+  if (rwHealthPending() || health.status !== 'ready') {
+    el.innerHTML = `<span class="rw-muted">— active</span> · ${RW_STATIC_OFFLINE_PILLARS} offline`;
+    return;
+  }
+  const statuses = RW_BACKEND_PILLARS.map((key) => (rwBackendPillar(key) || {}).status || 'offline');
+  const active = statuses.filter((status) => status !== 'offline').length;
+  const anomalous = statuses.filter((status) => status === 'anomalous').length;
+  const offline = RW_BACKEND_PILLARS.length - active + RW_STATIC_OFFLINE_PILLARS;
+  el.innerHTML = `<span class="rw-count--ok">${active} active</span>${anomalous ? ` · <span class="rw-count--alert">${anomalous} anomalous</span>` : ''} · ${offline} offline`;
+}
+
+/** One load per domain at a time: a call while the same domain is already loading joins it, so
+ *  the interval, visibilitychange and a card click can never stack duplicate reads. */
+function loadPillarHealth() {
+  const domain = rwHealthDomain();
+  const inFlight = rwWatch.healthInFlight;
+  if (inFlight && inFlight.domain === domain) return inFlight.promise;
+  const promise = rwLoadPillarHealth(domain).finally(() => {
+    if (rwWatch.healthInFlight && rwWatch.healthInFlight.promise === promise) rwWatch.healthInFlight = null;
+  });
+  rwWatch.healthInFlight = { domain, promise };
+  return promise;
+}
+
+/** Called on every Platform Health redraw: reads the backend only when the visible tab shows a
+ *  domain that was never loaded (nothing is fetched while another tab is active). */
+function rwEnsureBackendDomain() {
+  if (!rwHealthTabVisible()) return;
+  const health = rwWatch.health;
+  if (!health || health.domain !== rwHealthDomain()) loadPillarHealth();
+}
+
+async function rwLoadPillarHealth(domain) {
+  const request = rwWatch.healthRequest + 1;
+  rwWatch.healthRequest = request;
+  if (!rwWatch.health || rwWatch.health.domain !== domain) rwWatch.health = { domain, status: 'loading', pillars: [] };
+  if (rwWatch.ready) rwRenderTriageKpiOptions();
+  const [pillarsResult, definitionsResult] = await Promise.allSettled([
+    fetchJsonPayload(withActiveCompany(`/api/health/pillars?${new URLSearchParams({ domain })}`)),
+    fetchJsonPayload(withActiveCompany('/api/settings/kpis')),
+  ]);
+  if (rwWatch.healthRequest !== request) return;
+  if (definitionsResult.status === 'fulfilled' && Array.isArray(definitionsResult.value)) {
+    rwWatch.kpiDefs = definitionsResult.value;
+  }
+  if (pillarsResult.status === 'fulfilled' && Array.isArray(pillarsResult.value)) {
+    rwWatch.health = { domain, status: 'ready', pillars: pillarsResult.value };
+  } else {
+    if (pillarsResult.status === 'rejected') console.warn('/api/health/pillars unreachable.', pillarsResult.reason);
+    rwWatch.health = { domain, status: 'error', pillars: [] };
+  }
+  if (rwWatch.ready) {
+    rwRender();
+    rwRenderTriageKpiOptions();
+  }
+  await loadKpiBuckets(request);
+}
+
+async function loadKpiBuckets(request) {
+  const kpis = RW_BACKEND_PILLARS.flatMap((key) => {
+    const pillar = rwBackendPillar(key);
+    return pillar ? (pillar.kpis || []).filter((kpi) => kpi.enabled) : [];
+  });
+  if (kpis.length === 0) return;
+  const results = await Promise.allSettled(kpis.map((kpi) =>
+    fetchJsonPayload(withActiveCompany(`/api/health/kpis/${encodeURIComponent(kpi.kpiDefinitionId)}/buckets?hours=${RW_BUCKET_HOURS}`))));
+  if (rwWatch.healthRequest !== request) return;
+  kpis.forEach((kpi, index) => {
+    const result = results[index];
+    rwWatch.buckets[kpi.kpiDefinitionId] = result.status === 'fulfilled' && Array.isArray(result.value)
+      ? { status: 'ready', items: [...result.value].sort((a, b) => new Date(a.bucketStart) - new Date(b.bucketStart)) }
+      : { status: 'error', items: [] };
+  });
+  if (rwWatch.ready) rwRender();
+}
+
+/* --- Triage Monkey (Spec 1000) ----------------------------------------------------------- */
+
+const RW_ALERT_LABELS = {
+  red_alert: ['Red alert', 'critical'],
+  amber: ['Amber', 'degraded'],
+  informational: ['Informational', 'healthy'],
+};
+
+const RW_TRIAGE_DIMENSIONS = [
+  ['businessHealth', 'Business health'],
+  ['applicationHealth', 'Application health'],
+  ['infrastructureHealth', 'Infrastructure health'],
+  ['codeReliability', 'Code reliability'],
+  ['recentChanges', 'Recent changes'],
+  ['knowledgeBase', 'Knowledge base'],
+];
+
+function rwAlertBadge(level) {
+  if (!level) return '';
+  const [label, cls] = RW_ALERT_LABELS[level] || [level, 'unknown'];
+  return `<span class="status-badge status-badge--${cls}">${escapeHtml(label)}</span>`;
+}
+
+function rwTriageStatusLabel(status) {
+  const text = String(status || 'unknown');
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+async function loadTriageInvestigations() {
+  const request = rwWatch.triageRequest + 1;
+  rwWatch.triageRequest = request;
+  if (!rwWatch.triage) rwWatch.triage = { status: 'loading', items: [] };
+  let next;
+  try {
+    const items = await fetchJsonPayload(withActiveCompany(`/api/triage/investigations?top=${RW_TRIAGE_TOP}`));
+    next = { status: 'ready', items: Array.isArray(items) ? items : [] };
+  } catch (err) {
+    console.warn('/api/triage/investigations unreachable.', err);
+    next = { status: 'error', items: [] };
+  }
+  if (rwWatch.triageRequest !== request) return;
+  rwWatch.triage = next;
+  if (rwWatch.ready) rwRenderTriage();
+}
+
+function rwTriageItem(investigation) {
+  const signal = investigation.signal || {};
+  const assessment = investigation.result && investigation.result.assessment;
+  const scope = [signal.domain ? domainLabel(signal.domain) : '', signal.stage].filter(Boolean).join(' / ') || 'All domains';
+  const summary = assessment
+    ? assessment.summary
+    : investigation.error ? `Error: ${investigation.error}` : signal.detection;
+  const actions = assessment && Array.isArray(assessment.recommendedNextActions)
+    ? assessment.recommendedNextActions.slice(0, 3)
+    : [];
+  return `<article class="rw-investigation rw-investigation--item">
+    <div class="rw-investigation__head">
+      <h3>${escapeHtml(signal.pillar || '—')} · ${escapeHtml(signal.kpi || '—')}</h3>
+      <span class="rw-investigation__badges">${rwAlertBadge(investigation.alertLevel)} <span class="rw-investigation__status">${escapeHtml(rwTriageStatusLabel(investigation.status))}</span></span>
+    </div>
+    <p class="rw-investigation__meta">${escapeHtml(scope)} · ${escapeHtml(signal.source || '—')} · ${escapeHtml(formatRelativeTime(investigation.createdAt))}</p>
+    <p>${escapeHtml(summary || '—')}</p>
+    ${actions.length ? `<ul class="rw-investigation__actions">${actions.map((action) => `<li>${escapeHtml(action)}</li>`).join('')}</ul>` : ''}
+    <button class="btn btn--sm btn--ghost" type="button" data-triage-id="${escapeHtml(investigation.investigationId)}">Details</button>
+  </article>`;
+}
+
+function rwRenderTriage() {
+  const pill = document.getElementById('rw-triage-pill');
+  const meta = document.getElementById('rw-triage-meta');
+  const list = document.getElementById('rw-triage-list');
+  if (!pill || !meta || !list) return;
+  const triage = rwWatch.triage;
+  if (!triage || triage.status === 'loading') {
+    pill.className = 'rw-pill rw-pill--idle';
+    pill.textContent = 'Loading';
+    meta.textContent = 'Loading investigations…';
+    list.innerHTML = '';
+    return;
+  }
+  if (triage.status !== 'ready') {
+    pill.className = 'rw-pill rw-pill--off';
+    pill.textContent = 'Unavailable';
+    meta.textContent = 'Investigations unavailable.';
+    list.innerHTML = '<div class="rw-investigation"><h3>Investigations unavailable</h3><p>The Triage Monkey API could not be read.</p></div>';
+    return;
+  }
+  const items = triage.items;
+  const inProgress = items.filter((item) => item.status === 'queued' || item.status === 'running').length;
+  pill.className = `rw-pill ${inProgress ? 'rw-pill--warn' : 'rw-pill--idle'}`;
+  pill.textContent = inProgress ? 'Investigating' : 'Idle';
+  if (items.length === 0) {
+    meta.textContent = '0 investigations · Only one Triage Monkey';
+    list.innerHTML = '<div class="rw-investigation"><h3>Investigation not started</h3><p>Triage Monkey is standing by. No Red Alert decision has been made yet.</p></div>';
+    return;
+  }
+  meta.textContent = `${items.length} recent investigation${items.length === 1 ? '' : 's'} · latest ${formatRelativeTime(items[0].createdAt)}${inProgress ? ` · ${inProgress} in progress` : ''}`;
+  list.innerHTML = items.map(rwTriageItem).join('');
+}
+
+function rwTriageDetailHtml(investigation) {
+  const signal = investigation.signal || {};
+  const result = investigation.result;
+  const assessment = result && result.assessment;
+  const correlation = result && result.correlation;
+  const row = (label, value) => `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value == null || value === '' ? '—' : String(value))}</li>`;
+  const dimensions = RW_TRIAGE_DIMENSIONS.map(([key, label]) => {
+    const data = correlation ? correlation[key] : null;
+    const available = data != null;
+    return `<div class="rw-dimension${available ? '' : ' rw-dimension--off'}">
+      <h4>${escapeHtml(label)} <span class="rw-pill ${available ? 'rw-pill--ok' : 'rw-pill--off'}">${available ? 'Available' : 'Unavailable'}</span></h4>
+      ${available ? `<pre class="rw-json">${escapeHtml(JSON.stringify(data, null, 2))}</pre>` : ''}
+    </div>`;
+  }).join('');
+  const assessmentHtml = assessment
+    ? `<p>${rwAlertBadge(assessment.alertLevel)}${assessment.possibleRedAlert ? ' <span class="status-badge status-badge--critical">Possible red alert</span>' : ''}</p>
+      <p>${escapeHtml(assessment.summary || '—')}</p>
+      <ul class="simple-list">${row('Confidence', assessment.confidence == null ? null : assessment.confidence)}</ul>
+      <h3>Recommended next actions</h3>
+      <ul class="simple-list">${(assessment.recommendedNextActions || []).map((action) => `<li>${escapeHtml(action)}</li>`).join('') || '<li>None.</li>'}</ul>`
+    : `<p>${escapeHtml(investigation.status === 'failed' || investigation.status === 'discarded' ? 'No assessment was produced.' : 'Not assessed yet.')}</p>`;
+  return `<h3>Signal</h3>
+    <ul class="simple-list">
+      ${row('Pillar', signal.pillar)}${row('KPI', signal.kpi)}${row('Domain', signal.domain)}${row('Stage', signal.stage)}
+      ${row('Detection', signal.detection)}${row('Detected at', signal.detectedAt ? new Date(signal.detectedAt).toLocaleString() : null)}
+      ${row('Source', signal.source)}${row('Anomaly', signal.anomalyId)}
+    </ul>
+    <h3>Investigation</h3>
+    <ul class="simple-list">
+      ${row('Id', investigation.investigationId)}${row('Status', rwTriageStatusLabel(investigation.status))}
+      ${row('Created', investigation.createdAt ? new Date(investigation.createdAt).toLocaleString() : null)}
+      ${row('Completed', investigation.completedAt ? new Date(investigation.completedAt).toLocaleString() : null)}
+      ${row('Notified', investigation.notified ? 'Yes' : 'No')}${investigation.error ? row('Error', investigation.error) : ''}
+    </ul>
+    <h3>Assessment</h3>
+    ${assessmentHtml}
+    <h3>Correlation</h3>
+    ${dimensions}`;
+}
+
+async function openTriageInvestigation(id) {
+  openSidePanel('Triage investigation', '<div class="state-block">Loading…</div>');
+  try {
+    const investigation = await fetchJsonPayload(withActiveCompany(`/api/triage/investigations/${encodeURIComponent(id)}`));
+    const signal = investigation.signal || {};
+    openSidePanel(`Triage · ${signal.pillar || ''} · ${signal.kpi || ''}`, rwTriageDetailHtml(investigation));
+  } catch (err) {
+    openSidePanel('Triage investigation', `<div class="state-block state-block--error">${escapeHtml(err.message || 'Investigation could not be read.')}</div>`);
+  }
+}
+
+/** KPI names for the manual trigger: the configured definitions for the selected card's domain. */
+function rwRenderTriageKpiOptions() {
+  const pillarSelect = document.getElementById('rw-triage-pillar');
+  const kpiSelect = document.getElementById('rw-triage-kpi');
+  const run = document.getElementById('rw-triage-run');
+  if (!pillarSelect || !kpiSelect || !run) return;
+  const scope = document.getElementById('rw-triage-scope');
+  if (scope) scope.textContent = rwFocusLabel();
+  // Until the selected vertical's KPIs have loaded, a KPI of the previous domain must not be sent.
+  if (rwHealthPending()) {
+    kpiSelect.innerHTML = '<option value="">Loading KPIs…</option>';
+    run.disabled = true;
+    return;
+  }
+  const domain = rwHealthDomain();
+  const pillarKey = pillarSelect.value;
+  const fromDefinitions = (rwWatch.kpiDefs || [])
+    .filter((definition) => String(definition.pillar || '').toLowerCase() === pillarKey && definition.domain === domain)
+    .map((definition) => definition.kpi);
+  const pillar = rwBackendPillar(pillarKey);
+  const fromHealth = pillar ? (pillar.kpis || []).map((kpi) => kpi.kpi) : [];
+  const names = [...new Set([...fromDefinitions, ...fromHealth])];
+  const previous = kpiSelect.value;
+  kpiSelect.innerHTML = names.length
+    ? names.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')
+    : '<option value="">No KPI configured</option>';
+  if (names.includes(previous)) kpiSelect.value = previous;
+  run.disabled = rwWatch.triageRunning || names.length === 0;
+}
+
+async function rwRunTriage() {
+  const pillarKey = document.getElementById('rw-triage-pillar').value;
+  const kpi = document.getElementById('rw-triage-kpi').value;
+  const statusEl = document.getElementById('rw-triage-run-status');
+  if (!kpi || rwWatch.triageRunning || rwHealthPending()) return;
+  rwWatch.triageRunning = true;
+  document.getElementById('rw-triage-run').disabled = true;
+  statusEl.textContent = 'Submitting…';
+  try {
+    const response = await fetch('/api/triage/investigations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': await getAntiforgeryToken() },
+      body: JSON.stringify({
+        detectedAt: new Date().toISOString(),
+        pillar: RW_PILLAR_DISPLAY[pillarKey],
+        kpi,
+        // The web server replaces this with "manual: <signed-in user>" when Entra is configured.
+        detection: 'manual: portal',
+        domain: rwHealthDomain(),
+      }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const errors = Array.isArray(body.errors) ? body.errors.join(' ') : body.error;
+      throw new Error(errors || `Request failed: ${response.status}`);
+    }
+    const message = body.duplicate
+      ? `Duplicate: investigation ${body.investigationId} already covers this KPI this hour.`
+      : `Investigation ${body.investigationId} queued.`;
+    statusEl.textContent = message;
+    showToast('Triage Monkey', message, body.duplicate ? 'info' : 'success');
+    loadTriageInvestigations();
+  } catch (err) {
+    statusEl.textContent = err.message;
+    showToast('Triage Monkey', err.message, 'critical');
+  } finally {
+    rwWatch.triageRunning = false;
+    rwRenderTriageKpiOptions();
+  }
+}
+
+function rwHealthTabVisible() {
+  return document.visibilityState === 'visible' && state.activeTab === 'health';
+}
+
+function rwRefreshBackend() {
+  loadPillarHealth();
+  loadTriageInvestigations();
+}
+
+/** Re-reads the backend every 60 s, only while the Platform Health tab is on screen. */
+function rwStartHealthRefresh() {
+  if (rwWatch.healthTimer) return;
+  rwWatch.healthTimer = setInterval(() => {
+    if (rwHealthTabVisible()) rwRefreshBackend();
+  }, RW_HEALTH_REFRESH_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (rwHealthTabVisible()) rwRefreshBackend();
+  });
+}
+
+function wireTriageCard() {
+  document.getElementById('rw-triage-list')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-triage-id]');
+    if (button) openTriageInvestigation(button.dataset.triageId);
+  });
+  document.getElementById('rw-triage-pillar')?.addEventListener('change', rwRenderTriageKpiOptions);
+  document.getElementById('rw-triage-run')?.addEventListener('click', rwRunTriage);
+}
+
+/** Last ten completed purchases, oldest first. Each bar is a full blue bar. Empty slots pad
+ *  the left when fewer than ten completed purchases are stored. */
+function rwConversionBars(operations) {
+  const missing = Math.max(0, RW_CONVERSION_SAMPLE - operations.length);
+  const placeholders = Array.from(
+    { length: missing },
+    () => '<span class="is-empty" style="height:100%"></span>',
+  ).join('');
+  const bars = operations.map(() => '<span style="height:100%"></span>').join('');
+  return placeholders + bars;
+}
+
+function rwConversionChart() {
+  const live = rwWatch.hotelBusiness;
+  const current = live && Array.isArray(live.conversion) ? live.conversion[1] : null;
+  const operations = live && Array.isArray(live.operations)
+    ? live.operations.filter((operation) => operation.completed === true).slice(0, RW_CONVERSION_SAMPLE)
+    : [];
+  const value = current == null ? '—' : rwFmt('conversion', Number(current));
+  const heading = `Conversion · last ${RW_CONVERSION_SAMPLE} operations`;
+  if (!live) {
+    return `<p class="rw-chart__label"><span>${heading}</span><span class="rw-muted">—</span></p>
+      <div class="rw-chart-empty"><p>Conversion unavailable</p></div>`;
+  }
+  if (!live.currentConversionWindowStart) {
+    return `<p class="rw-chart__label"><span>${heading}</span><span class="rw-muted">—</span></p>
+      <div class="rw-chart-empty"><p>Conversion unavailable</p></div>`;
+  }
+  if (operations.length === 0) {
+    return `<p class="rw-chart__label"><span>${heading}</span><span class="rw-muted">${escapeHtml(value)}</span></p>
+      <div class="rw-chart-empty"><p>No completed purchases</p></div>`;
+  }
+  return `<p class="rw-chart__label"><span>${heading}</span><span>${escapeHtml(value)}</span></p>
+    <div class="rw-bars" role="img" aria-label="${escapeHtml(heading)}">${rwConversionBars(operations)}</div>`;
+}
+
+function rwCountBars(count, label) {
+  const bars = Array.from({ length: 10 }, (_, index) => {
+    const recorded = index < count;
+    return `<span class="${recorded ? 'is-warning' : ''}" style="height:${recorded ? 70 : 12}%"></span>`;
+  }).join('');
+  return `<p class="rw-chart__label"><span>${escapeHtml(label)}</span><strong>${count} total</strong></p>
+    <div class="rw-bars rw-bars--short" role="img" aria-label="${escapeHtml(label)}, ${count} recorded">${bars}</div>`;
+}
+
+function rwPillar(modifier, title, pillHtml, body, note, muted = false) {
+  return `<article class="rw-pillar rw-pillar--${modifier}${muted ? ' rw-pillar--muted' : ''}">
+    <header class="rw-pillar__head"><h3>${title}</h3>${pillHtml}</header>
+    ${body}
+    ${note ? `<p class="rw-chart__note">${note}</p>` : ''}
+  </article>`;
+}
+
+const RW_OFFLINE_PILL = '<span class="rw-pill rw-pill--off">Offline</span>';
+const RW_OFFLINE_BODY = '<ul class="rw-metrics"><li><span>Repository telemetry</span><span class="rw-metrics__vals"><strong class="rw-muted">— Offline</strong></span></li></ul><div class="rw-chart-empty"><p>No operations · pillar offline</p></div>';
+
+/** Bookings and revenue always compare with 7 days ago. Live conversion names its own baseline. */
+function rwBusinessNote() {
+  const base = 'Current vs same weekday/hour 7 days ago';
+  if (!rwHotelsQueryMode() || !rwWatch.hotelBusiness || !rwWatch.hotelBusiness.priorConversionWindowStart) return base;
+  return `${base} · conversion vs ${rwConversionBaselinePhrase().short}`;
+}
+
+function rwRenderPillars() {
+  document.getElementById('rw-pillars-title').textContent = `${rwFocusLabel()} · Observability Pillars`;
+  rwRenderPillarCount();
+
+  const infrastructure = rwBackendPillar('infrastructure');
+  const infrastructureLive = !!infrastructure && (infrastructure.kpis || []).length > 0;
+  const infrastructureOffline = !infrastructure || infrastructure.status === 'offline';
+
+  document.getElementById('rw-pillars').innerHTML = [
+    rwPillar(
+      'business',
+      'Business Health',
+      rwPillarStatusPill('business'),
+      `<ul class="rw-metrics">${rwMetric('conversion', 'Conversion', true)}${rwMetric('bookings', 'Bookings', true)}${rwMetric('revenue', 'Revenue', true)}${rwCancellationMetric()}</ul>${rwPlaceholderDomain() ? '<p class="rw-chart__label"><span>Conversion</span><span class="rw-muted">Unavailable</span></p><div class="rw-chart-empty"><p>No operations in this window</p></div>' : rwConversionChart()}
+      <p class="rw-chart__label"><span>Monitored KPIs · ${escapeHtml(domainLabel(rwHealthDomain()))}</span></p>
+      <ul class="rw-metrics">${rwBackendKpiRows('business')}</ul>${rwBackendKpiCharts('business')}`,
+      rwBackendNote('business', rwBusinessNote()),
+    ),
+    rwPillar(
+      'application',
+      'Application Health',
+      rwPillarStatusPill('application'),
+      `<ul class="rw-metrics">${rwBackendKpiRows('application')}${rwMetric('exceptions', 'Exceptions', false)}</ul>${rwBackendKpiCharts('application')}`,
+      rwBackendNote('application', `${rwFocusLabel()} · every ${profileLabels().entity.toLowerCase()} · evaluated by the Application Health monitor`),
+    ),
+    infrastructureLive
+      ? rwPillar(
+        'infrastructure',
+        'Infrastructure Health',
+        rwPillarStatusPill('infrastructure'),
+        `<ul class="rw-metrics">${rwBackendKpiRows('infrastructure')}</ul>${rwBackendKpiCharts('infrastructure')}`,
+        rwBackendNote('infrastructure', infrastructureOffline ? 'Excluded from Triage Monkey investigation' : ''),
+        infrastructureOffline,
+      )
+      : rwPillar('infrastructure', 'Infrastructure Health', rwPillarStatusPill('infrastructure'), RW_OFFLINE_BODY, 'Excluded from Triage Monkey investigation', true),
+    rwPillar('change', 'Change Intelligence', RW_OFFLINE_PILL, RW_OFFLINE_BODY, 'Excluded from Triage Monkey investigation', true),
+    rwPillar('reliability', 'Reliability Knowledge', RW_OFFLINE_PILL, RW_OFFLINE_BODY, 'Excluded from Triage Monkey investigation', true),
+    rwPillar('code', 'Code Intelligence', RW_OFFLINE_PILL, RW_OFFLINE_BODY, 'Excluded from Triage Monkey investigation', true),
+  ].join('');
+}
+
+function rwComponentLatency(stage, componentIndex) {
+  const historical = [258, 410, 345, 508][componentIndex] + stage * 22;
+  return [historical, historical + (componentIndex === 1 ? 4 : -2)];
+}
+
+function rwRenderJourney() {
+  const labels = profileLabels();
+  document.getElementById('rw-journey-title').textContent = `${rwFocusLabel()} · ${labels.flow}`;
+  // The component breakdown is the incumbent's sample model; every other company sees its own
+  // steps from the profile and no invented components.
+  const legacy = companyHasLegacyWidgets();
+  const stageLabels = legacy
+    ? rwWatch.stageLabels
+    : profileServiceSteps(rwWatch.focus).map((s) => s.label);
+  if (rwWatch.stage >= stageLabels.length) rwWatch.stage = 0;
+  document.getElementById('rw-stages').innerHTML = stageLabels.length
+    ? stageLabels.map((label, index) => {
+      const selected = index === rwWatch.stage;
+      return `<button class="rw-stage${selected ? ' is-selected' : ''}" type="button" data-rw-stage="${index}" aria-pressed="${selected}"><span>${index + 1}. ${escapeHtml(label)}</span>${legacy ? '<small>→ stable</small>' : ''}</button>`;
+    }).join('')
+    : `<div class="state-block">${escapeHtml(labels.step)}: none defined for this ${escapeHtml(labels.service)}.</div>`;
+  if (!legacy) {
+    document.getElementById('rw-components').innerHTML = `<p class="rw-panel__note">Component breakdown is not available for this company yet.</p>`;
+    return;
+  }
+  const accents = ['app', 'api', 'service', 'partner'];
+  document.getElementById('rw-components').innerHTML = rwWatch.components[rwWatch.stage].map((name, index) => {
+    const [oldMs, nowMs] = rwComponentLatency(rwWatch.stage, index);
+    const trend = rwTrend(nowMs, oldMs, false);
+    return `<article class="rw-component rw-component--${accents[index]}">
+      <h3>${escapeHtml(name)}</h3>
+      <div class="rw-pair rw-pair--compact">
+        <div><span class="rw-pair__label">Historical P90</span><span class="rw-pair__value">${oldMs} ms</span></div>
+        <div><span class="rw-pair__label">Current P90</span><span class="rw-pair__value">${nowMs} ms</span></div>
+      </div>
+      <p class="rw-delta rw-delta--${trend.cls}">${Math.abs(rwPercent(nowMs, oldMs)).toFixed(1)}% vs reference</p>
+    </article>`;
+  }).join('');
+}
+
+function rwRender() {
+  // Every redraw replaces the card buttons. Keep keyboard focus on the same card, but only when
+  // focus is still on a card at the moment this redraw starts.
+  const active = document.activeElement;
+  const focusedCard = active && active.matches && active.matches('#rw-verticals [data-rw-vertical]')
+    ? active.dataset.rwVertical
+    : null;
+  rwRenderVerticals();
+  if (focusedCard) document.querySelector(`#rw-verticals [data-rw-vertical="${focusedCard}"]`)?.focus();
+  rwRenderPillars();
+  rwRenderJourney();
+}
+
+function applyHotelBusinessHealth(payload) {
+  if (!payload || payload.available === false || !payload.current || !payload.priorWeek) {
+    rwWatch.hotelBusiness = null;
+    return;
+  }
+  const prior = payload.priorWeek;
+  const current = payload.current;
+  const bookingsLive = payload.bookingsAvailable !== false;
+  rwWatch.hotelBusiness = {
+    bookings: bookingsLive ? [Number(prior.bookings), Number(current.bookings)] : null,
+    revenue: bookingsLive ? [Number(prior.revenue), Number(current.revenue)] : null,
+    conversion: [prior.conversionPercent ?? null, current.conversionPercent ?? null],
+    operations: Array.isArray(payload.recentOperations) ? payload.recentOperations : [],
+    priorConversionWindowStart: payload.priorConversionWindowStart || null,
+    currentConversionWindowStart: payload.currentConversionWindowStart || null,
+    environment: state.filters.environment || 'production',
+  };
+}
+
+async function loadHotelBusinessHealth() {
+  const request = (rwWatch.businessRequest || 0) + 1;
+  rwWatch.businessRequest = request;
+  // Contract v6 §4.5: Fabric business health is incumbent-only; another company never reads it.
+  if (!companyHasLegacyWidgets()) {
+    rwWatch.hotelBusiness = null;
+    return;
+  }
+  const params = new URLSearchParams();
+  params.set('environment', state.filters.environment || 'production');
+  params.set('domain', rwWatch.liveBusinessService);
+  try {
+    const response = await fetch(withActiveCompany(`/api/hotels/business-health?${params}`));
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    if (rwWatch.businessRequest !== request) return;
+    applyHotelBusinessHealth(payload);
+  } catch {
+    if (rwWatch.businessRequest !== request) return;
+    rwWatch.hotelBusiness = null;
+  }
+  if (rwWatch.ready && rwWatch.businessRequest === request) rwRender();
+}
+
+/** A card click drives the Domain filter through its own change handler, so entities, monkeys and
+ *  journeys reload exactly as if the user had picked the service by hand. */
+function rwSyncDomainFilter(domain) {
+  const select = document.getElementById('filter-domain');
+  if (!select || !domain || select.value === domain) return;
+  if (![...select.options].some((o) => o.value === domain)) return;
+  select.value = domain;
+  select.dispatchEvent(new Event('change'));
+}
+
 function renderHealthTab() {
-  renderDomainCards('health-domains');
-  renderComponentGrid();
+  const root = document.getElementById('rw-verticals');
+  if (!root) return;
+  // Application Health now reads live journeys, so a reload has to redraw. The listeners below are
+  // delegated to the containers, which lets the markup be replaced without rewiring them.
+  if (rwWatch.hotelBusiness && rwWatch.hotelBusiness.environment !== (state.filters.environment || 'production')) {
+    rwWatch.hotelBusiness = null;
+  }
+  rwEnsureFocus();
+  // renderAllTabs runs on every auto-refresh and filter change from any tab. The backend health
+  // reads are not repeated here: they run on entering the tab (activateTab), every 60 s and on
+  // visibilitychange while it is visible, and on a vertical change (the card click below).
+  if (rwWatch.ready) { loadApplicationHealth(); rwRender(); loadHotelBusinessHealth(); rwEnsureBackendDomain(); return; }
+  rwWatch.ready = true;
+  root.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-rw-vertical]');
+    if (!button || rwVerticalOffline(button.dataset.rwVertical)) return;
+    // While a filter request is in flight the Domain control is locked; a card click must respect
+    // the same lock, or overlapping club loads could leave another domain's clubs in the list.
+    if (document.getElementById('filter-domain')?.disabled) return;
+    rwWatch.focus = button.dataset.rwVertical;
+    rwWatch.stage = 1;
+    // Marks the pillars as loading for the new domain before the redraw below, and is the only
+    // backend load for this click: the Domain change it dispatches finds the domain already loaded.
+    loadPillarHealth();
+    loadApplicationHealth();
+    rwRender();
+    rwRenderTriageKpiOptions();
+    rwSyncDomainFilter(rwWatch.focus);
+  });
+  document.getElementById('rw-stages').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-rw-stage]');
+    if (!button) return;
+    rwWatch.stage = Number(button.dataset.rwStage);
+    const hadFocus = document.activeElement === button;
+    rwRenderJourney();
+    if (hadFocus) {
+      document.querySelector('#rw-stages .rw-stage.is-selected').focus();
+    }
+  });
+  wireTriageCard();
+  rwStartHealthRefresh();
+  rwRender();
+  rwRenderTriage();
+  rwRenderTriageKpiOptions();
+  loadHotelBusinessHealth();
+  loadApplicationHealth();
+  if (rwHealthTabVisible()) rwRefreshBackend();
 }
 
 /* -----------------------------------------------------------------------
@@ -2166,13 +3313,13 @@ function renderBarList(targetId, rows, labelKey, valueKey, format = (v) => v) {
     </div>`).join('');
 }
 
-function renderDashboardTimechart(svgId, legendId, points) {
+function renderDashboardTimechart(svgId, legendId, points, seriesLabel = (name) => name) {
   const svg = document.getElementById(svgId);
   const legend = document.getElementById(legendId);
   if (!svg) return;
   if (!points.length) {
     svg.innerHTML = '';
-    if (legend) legend.innerHTML = '<span>No stored dashboard points yet. Run SyncJourneys.</span>';
+    if (legend) legend.innerHTML = '<span>No stored points for this window yet.</span>';
     return;
   }
   const seriesNames = [...new Set(points.map((p) => p.series))].sort();
@@ -2184,67 +3331,110 @@ function renderDashboardTimechart(svgId, legendId, points) {
     bySeries[name] = bins.map((bin) => (lookup[bin] == null ? 0 : lookup[bin]));
   });
   const colors = ['var(--chart-line-1)', 'var(--chart-line-2)', 'var(--chart-line-3)', 'var(--teal-500)', 'var(--status-critical)', '#8b5cf6', '#f59e0b', '#14b8a6'];
-  renderSvgLineChart(svgId, seriesNames.map((name) => bySeries[name]), colors);
+  renderSvgLineChart(svgId, seriesNames.map((name) => bySeries[name]), seriesNames.map((_, i) => colors[i % colors.length]));
   if (legend) {
     legend.innerHTML = seriesNames.map((name, i) =>
-      `<span><i class="legend-swatch" style="background:${colors[i % colors.length]}"></i>${escapeHtml(name)}</span>`).join('');
+      `<span><i class="legend-swatch" style="background:${colors[i % colors.length]}"></i>${escapeHtml(seriesLabel(name))}</span>`).join('');
   }
 }
 
-function visibleDashboardDomains() {
-  const domain = state.filters.domain;
-  if (JOURNEY_DOMAINS.includes(domain)) return [domain];
-  if (domain === 'all') return JOURNEY_DOMAINS.slice();
-  return [];
+const DASHBOARD_CHART_TITLES = {
+  step_latency_p95: (step) => `P95 latency by ${step.toLowerCase()}`,
+  exceptions_by_step: (step) => `exceptions by ${step.toLowerCase()}`,
+};
+
+/** Contract v6 §4.4: one card per (service, chart) the metrics response names - no fixed names.
+ *  The series are drawn from the returned points, so a service whose series use other keys than
+ *  its profile steps (the incumbent's legacy sync) still draws. */
+function dashboardChartCards() {
+  const meta = state.dashboardMeta || {};
+  const services = Array.isArray(meta.services) && meta.services.length
+    ? meta.services
+    : profileServices().map((s) => ({ key: s.key, displayName: s.label, charts: Object.keys(DASHBOARD_CHART_TITLES), steps: [] }));
+  return services
+    .filter((s) => s && s.key && (state.filters.domain === 'all' || s.key === state.filters.domain))
+    .flatMap((service) => (Array.isArray(service.charts) ? service.charts : []).map((chart) => ({ service, chart })));
 }
 
-function renderAnalyticsTab() {
-  const a = state.analytics;
-  if (!a) return;
-  const wanted = visibleDashboardDomains();
-  document.querySelectorAll('[data-dashboard-chart]').forEach((card) => {
-    const [domain] = card.getAttribute('data-dashboard-chart').split(':');
-    card.hidden = !wanted.includes(domain);
-  });
+function renderAnalyticsCharts() {
+  const host = document.getElementById('analytics-charts');
+  if (!host) return;
+  const stepLabel = (state.dashboardMeta && state.dashboardMeta.labels && state.dashboardMeta.labels.step) || profileLabels().step;
+  const cards = dashboardChartCards();
+  const signature = JSON.stringify([activeCompanyKey(), stepLabel, cards.map(({ service, chart }) => `${service.key}:${chart}`)]);
+  if (host.dataset.signature !== signature) {
+    host.dataset.signature = signature;
+    host.innerHTML = cards.length
+      ? cards.map(({ service, chart }, i) => {
+        const title = (DASHBOARD_CHART_TITLES[chart] || ((step) => `${chart} by ${step.toLowerCase()}`))(stepLabel);
+        return `<div class="chart-card" data-dashboard-chart="${escapeHtml(`${service.key}:${chart}`)}">
+          <h2 class="chart-card__title">${escapeHtml(service.displayName || domainLabel(service.key))} — ${escapeHtml(title)}</h2>
+          <svg id="dashboard-chart-${i}" class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+          <div class="chart-legend" id="dashboard-legend-${i}"></div>
+        </div>`;
+      }).join('')
+      : `<div class="state-block">No analytics are defined for this company.</div>`;
+  }
+  const note = document.getElementById('analytics-note');
+  if (note) {
+    const warning = state.dashboardMeta && state.dashboardMeta.warning;
+    note.textContent = warning || '';
+    note.hidden = !warning;
+  }
   if (state.dashboardChartsLoading) {
     paintDashboardChartsLoading();
     return;
   }
-  document.querySelectorAll('[data-dashboard-chart]').forEach((card) => card.removeAttribute('aria-busy'));
+  host.querySelectorAll('[data-dashboard-chart]').forEach((card) => card.removeAttribute('aria-busy'));
   const points = state.dashboardMetrics || [];
-  renderDashboardTimechart('chart-hotel-latency', 'legend-hotel-latency',
-    points.filter((p) => p.domain === 'hotels' && p.chart === 'step_latency_p95'));
-  renderDashboardTimechart('chart-hotel-exceptions', 'legend-hotel-exceptions',
-    points.filter((p) => p.domain === 'hotels' && p.chart === 'exceptions_by_step'));
-  renderDashboardTimechart('chart-cruise-latency', 'legend-cruise-latency',
-    points.filter((p) => p.domain === 'cruises' && p.chart === 'step_latency_p95'));
-  renderDashboardTimechart('chart-cruise-exceptions', 'legend-cruise-exceptions',
-    points.filter((p) => p.domain === 'cruises' && p.chart === 'exceptions_by_step'));
+  cards.forEach(({ service, chart }, i) => {
+    const steps = Array.isArray(service.steps) ? service.steps : [];
+    const seriesLabel = (name) => {
+      const step = steps.find((s) => String(s.key).toLowerCase() === String(name).toLowerCase());
+      return step ? (step.displayName || step.key) : profileStepLabel(service.key, name) || name;
+    };
+    renderDashboardTimechart(`dashboard-chart-${i}`, `dashboard-legend-${i}`,
+      points.filter((p) => p.domain === service.key && p.chart === chart), seriesLabel);
+  });
+}
 
-  const comparisonRows = [
-    state.hotelDomainComparison,
-    state.airDomainComparison,
-    state.cruiseDomainComparison,
-    state.carsDomainComparison,
-  ].filter(Boolean);
-  const visibleComparisonDomains = comparisonDomains(state.filters.domain).map(domainLabel);
-  const comparisonBody = document.querySelector('#domain-comparison-table tbody');
-  if (state.tablesLoading) {
-    if (comparisonBody) comparisonBody.innerHTML = loadingTableRow(5);
-  } else if (comparisonBody) {
-    markTableBusy(document.getElementById('domain-comparison-table'), false);
-    comparisonBody.innerHTML = comparisonRows.length
-      ? comparisonRows.map((d) => `<tr><td>${escapeHtml(domainLabel(d.domain))}</td><td>${d.journeys.toLocaleString()}</td>
-        <td>${d.conversionRate == null ? '—' : `${(d.conversionRate * 100).toFixed(1)}%`}</td>
-        <td>${d.p95LatencyMs == null ? '—' : `${d.p95LatencyMs.toLocaleString()} ms`}</td>
-        <td>${d.exceptions.toLocaleString()}</td></tr>`).join('')
-      : `<tr><td colspan="5"><div class="state-block">${state.domainComparisonStale
-        ? 'Loading Domain Comparison…'
-        : visibleComparisonDomains.length
-          ? `${visibleComparisonDomains.join(', ')} analytics are unavailable for the selected environment and time range.`
-          : 'Domain Comparison is available only for Hotels and Cruises.'}</div></td></tr>`;
+function renderServiceComparison() {
+  const labels = profileLabels();
+  const heading = document.getElementById('domain-comparison-heading');
+  if (heading) heading.textContent = `${labels.service} Comparison`;
+  const head = document.getElementById('domain-comparison-thead');
+  if (head) {
+    head.innerHTML = `<tr><th>${escapeHtml(labels.service)}</th><th>${escapeHtml(countHeading(labels.flow))}</th><th>Completion rate</th><th>P95 duration</th><th>Failed</th><th>Exceptions</th></tr>`;
   }
+  const comparisonBody = document.querySelector('#domain-comparison-table tbody');
+  if (!comparisonBody) return;
+  if (state.tablesLoading) {
+    comparisonBody.innerHTML = loadingTableRow(6);
+    return;
+  }
+  markTableBusy(document.getElementById('domain-comparison-table'), false);
+  const rows = state.serviceComparison || [];
+  comparisonBody.innerHTML = rows.length
+    ? rows.map((d) => `<tr><td>${escapeHtml(domainLabel(d.domain))}</td><td>${d.journeys.toLocaleString()}</td>
+      <td>${d.completionRate == null ? '—' : `${(d.completionRate * 100).toFixed(1)}%`}</td>
+      <td>${d.p95LatencyMs == null ? '—' : formatDuration(d.p95LatencyMs)}</td>
+      <td>${d.failed.toLocaleString()}</td>
+      <td>${d.exceptions.toLocaleString()}</td></tr>`).join('')
+    : `<tr><td colspan="6"><div class="state-block">${state.domainComparisonStale
+      ? `Loading ${escapeHtml(labels.service.toLowerCase())} comparison…`
+      : `${escapeHtml(labels.flow)}: nothing in the selected window.`}</div></td></tr>`;
+}
 
+/** The remaining blocks are the incumbent's sample data (data/analytics.json): another company
+ *  gets a note instead of someone else's figures. */
+function renderAnalyticsLegacyBlocks() {
+  const legacy = document.getElementById('analytics-legacy');
+  const note = document.getElementById('analytics-legacy-note');
+  const applies = companyHasLegacyWidgets();
+  if (legacy) legacy.hidden = !applies;
+  if (note) note.hidden = applies;
+  const a = state.analytics;
+  if (!applies || !a) return;
   renderBarList('chart-exceptions-domain', a.exceptionsByDomain.map((d) => ({ label: domainLabel(d.domain), count: d.count })), 'label', 'count');
   renderBarList('chart-exceptions-component', a.exceptionsByComponent, 'component', 'count');
 
@@ -2258,6 +3448,12 @@ function renderAnalyticsTab() {
 
   document.getElementById('most-affected-journeys').innerHTML = a.mostAffectedJourneys.map((id) => `<li>${escapeHtml(id)}</li>`).join('') || '<li>None currently.</li>';
   document.getElementById('operational-insights').innerHTML = a.operationalInsights.map((i) => `<li>${escapeHtml(i)}</li>`).join('');
+}
+
+function renderAnalyticsTab() {
+  renderAnalyticsCharts();
+  renderServiceComparison();
+  renderAnalyticsLegacyBlocks();
 }
 
 /* -----------------------------------------------------------------------
@@ -2296,6 +3492,9 @@ const isScoutMonkey = (id) => SCOUT_MONKEY_IDS.has(id);
 const HIDDEN_MONKEY_IDS = new Set(['latency-spike-monkey', 'slo-burn-rate-monkey', 'doctor-monkey']);
 
 function renderMonkeysTab() {
+  renderAgentPipeline();
+  startAgentPipelinePoller();
+
   const grid = document.getElementById('monkeys-grid');
   grid.innerHTML = state.monkeys.filter((m) => !HIDDEN_MONKEY_IDS.has(m.id)).map((m) => {
     const isImplemented = IMPLEMENTED_MONKEY_IDS.has(m.id);
@@ -2334,6 +3533,7 @@ function renderMonkeysTab() {
       </div>
       <p class="monkey-card__purpose">${escapeHtml(m.purpose)}</p>
       ${live}
+      ${isScoutMonkey(m.id) ? renderScoutShadow(m) : ''}
       ${isImplemented ? '' : `
         <div class="heartbeat">
           <div class="heartbeat__bars">${'<div class="heartbeat__bar heartbeat__bar--none" title="No cycles recorded"></div>'.repeat(24)}</div>
@@ -2385,6 +3585,7 @@ function renderMonkeysTab() {
   startCountdownTicker();
   startScoutPoller();
   startInspectorPoller();
+  loadScoutShadow();
 }
 
 /** One listener on the grid itself, wired once and never again. Every control on these cards lives
@@ -2470,7 +3671,7 @@ function renderLiveLine(m, running) {
         <strong style="color:var(--status-info)">Analyzing now</strong>
         <span class="agent-live__sep">·</span>
         <span>started ${formatRelativeTime(running.startedAt)}</span>
-        ${running.clubsWatched ? `<span class="agent-live__sep">·</span><span><strong>${formatCount(running.boardRowsEvaluated)}</strong> rows across <strong>${formatCount(running.clubsWatched)}</strong> clubs so far</span>` : ''}
+        ${running.clubsWatched ? `<span class="agent-live__sep">·</span><span><strong>${formatCount(running.boardRowsEvaluated)}</strong> rows so far · <strong>${escapeHtml(entityTally(running.clubsWatched))}</strong></span>` : ''}
       </div>`;
   }
   if (m.status === 'paused') {
@@ -2513,7 +3714,7 @@ function renderHeartbeat(cycles, cycleMinutes) {
     const when = new Date(c.startedAt).toLocaleTimeString();
     const detail = c.status === 'failed'
       ? (c.errorMessage || 'failed')
-      : `${formatCount(c.boardRowsEvaluated)} rows · ${formatCount(c.clubsWatched)} clubs · ${c.packagesCreated} new · ${c.packagesSkippedDuplicate} already known`;
+      : `${formatCount(c.boardRowsEvaluated)} rows · ${entityTally(c.clubsWatched)} · ${c.packagesCreated} new · ${c.packagesSkippedDuplicate} already known`;
     const selected = state.scoutCycleFilter === c.id ? ' heartbeat__bar--selected' : '';
     return `<div class="heartbeat__bar heartbeat__bar--${escapeHtml(c.status)}${selected}" role="button" tabindex="0" data-cycle-id="${escapeHtml(c.id || '')}" title="${escapeHtml(`${when} · ${Math.round((c.durationMs || 0) / 1000)}s · ${detail} — click to filter the timeline`)}"></div>`;
   }).join('');
@@ -2553,7 +3754,7 @@ function renderCycleReceipt(c) {
       <div class="cycle-receipt__title">Last cycle · ${formatRelativeTime(c.startedAt)} · ${Math.round((c.durationMs || 0) / 1000)}s · ${c.packagesCreated > 0 ? 'found something' : 'checked, nothing new'}</div>
       <div class="cycle-receipt__flow">
         <span class="cycle-chip"><strong>${formatCount(c.boardRowsEvaluated)}</strong> rows</span><span class="cycle-arrow">→</span>
-        <span class="cycle-chip"><strong>${formatCount(c.clubsWatched)}</strong> clubs</span><span class="cycle-arrow">→</span>
+        <span class="cycle-chip">${escapeHtml(profileLabels().entity)}: <strong>${formatCount(c.clubsWatched)}</strong></span><span class="cycle-arrow">→</span>
         <span class="cycle-chip cycle-chip--info"><strong>${c.candidatesFound}</strong> candidates</span><span class="cycle-arrow">→</span>
         <span class="cycle-chip cycle-chip--muted"><strong>${c.packagesSkippedDuplicate}</strong> already known</span><span class="cycle-arrow">→</span>
         <span class="cycle-chip cycle-chip--ok cycle-chip--clickable${state.scoutCycleFilter === c.id ? ' cycle-chip--selected' : ''}" role="button" tabindex="0" data-cycle-id="${escapeHtml(c.id || '')}" title="Click to filter the timeline to this cycle"><strong>${c.packagesCreated}</strong> handed to L3</span>
@@ -2684,6 +3885,141 @@ function renderSkippedCandidates(cycle, activity) {
     <ul class="activity-log">${rows}</ul>`;
 }
 
+/* Scout shadow (contract v4 §4): the Scout escalates on its fixed rules; the entity-grain KPI method
+   runs beside it and is only compared. Every figure here comes from GET /api/scouts/{board}/shadow -
+   the browser counts nothing and decides nothing. */
+const SCOUT_SHADOW_BOARDS = { 'latency-scout-monkey': 'latency', 'exception-scout-monkey': 'exception' };
+const SCOUT_SHADOW_HOURS = 24;
+const SCOUT_SHADOW_TOP = 8;
+const SCOUT_SHADOW_TTL_MS = 60000;
+const SCOUT_SHADOW_AGREEMENT = {
+  both: { label: 'Both', hint: () => `The rules and the method both flagged this ${scoutShadowGrain()} × hour.` },
+  'rules-only': { label: 'Rules only', hint: () => `The rules flagged it; the method saw nothing anomalous for that ${scoutShadowGrain()} × hour.` },
+  'method-only': { label: 'Method only', hint: () => 'The method flagged it; the rules did not put it on the board.' },
+};
+
+/** The shadow's case grain in the active company's words ("Club × Stage", "Sucursal × Paso"). */
+function scoutShadowGrain() {
+  const l = profileLabels();
+  return `${l.entity} × ${l.step}`;
+}
+const scoutShadow = { profileKey: null, fetchedAt: 0, boards: {} };
+let scoutShadowInFlight = null;
+
+function renderScoutShadow(m) {
+  const board = SCOUT_SHADOW_BOARDS[m.id];
+  if (!board) return '';
+  return `<section class="scout-shadow" data-scout-shadow="${escapeHtml(board)}" aria-label="Shadow — rules vs method">${renderScoutShadowBody(m, scoutShadow.boards[board])}</section>`;
+}
+
+function renderScoutShadowBody(m, data) {
+  const mode = (data && data.detectionMode) || 'Rules';
+  const head = `
+    <div class="scout-shadow__head">
+      <h3 class="scout-shadow__title">Shadow — rules vs method</h3>
+      <span class="scout-shadow__mode" title="Scout:DetectionMode. Rules: the fixed rules decide what reaches the Inspector; the method is only compared.">Detection mode: <strong>${escapeHtml(mode)}</strong></span>
+    </div>
+    <p class="scout-shadow__note">Last ${SCOUT_SHADOW_HOURS} h. Counted once per ${escapeHtml(scoutShadowGrain())} × hour — repeated 5-minute rows of the same hour are one case.</p>`;
+
+  if (!data) return `${head}<p class="timeline-empty">Loading the shadow comparison…</p>`;
+  if (data.error) return `${head}<p class="timeline-empty">Shadow comparison unavailable: ${escapeHtml(data.error)}</p>`;
+
+  const counts = data.counts || {};
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  const stat = (key, value) => `
+    <div class="scout-shadow__count scout-shadow__count--${key}" title="${escapeHtml(SCOUT_SHADOW_AGREEMENT[key].hint())}">
+      <span class="agent-totals__value">${formatCount(value || 0)}</span>
+      <span class="agent-totals__label">${escapeHtml(SCOUT_SHADOW_AGREEMENT[key].label)}</span>
+    </div>`;
+  const totals = `
+    <div class="scout-shadow__counts">
+      ${stat('both', counts.both)}${stat('rules-only', counts.rulesOnly)}${stat('method-only', counts.methodOnly)}
+    </div>`;
+
+  if (!rows.length && !counts.total) {
+    return `${head}${totals}<p class="timeline-empty">No cases in the last ${SCOUT_SHADOW_HOURS} h — neither the rules nor the method flagged anything for this company.</p>`;
+  }
+
+  const cycleIds = new Set((m.cycles || []).map((c) => c.id));
+  const list = rows.map((r) => {
+    const agreement = SCOUT_SHADOW_AGREEMENT[r.agreement] || { label: r.agreement || '?', hint: () => '' };
+    const hour = r.bucketStart ? new Date(r.bucketStart) : null;
+    const hourText = hour && !Number.isNaN(hour.getTime())
+      ? `${hour.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${String(hour.getHours()).padStart(2, '0')}:00`
+      : '—';
+    const links = [
+      r.runId && cycleIds.has(r.runId)
+        ? `<button type="button" class="scout-shadow__link" data-cycle-id="${escapeHtml(r.runId)}" title="Show the packages this Scout cycle handed off">cycle packages</button>`
+        : '',
+      r.kpiAnomalyId != null ? `<span class="scout-shadow__ref" title="KPI anomaly id">anomaly #${escapeHtml(String(r.kpiAnomalyId))}</span>` : '',
+    ].filter(Boolean).join(' ');
+    return `
+      <tr>
+        <td class="scout-shadow__entity" title="${escapeHtml(r.entityKey || '')}">${escapeHtml(r.entityKey || '—')}</td>
+        <td>${escapeHtml(r.stage || '—')}</td>
+        <td>${escapeHtml(hourText)}</td>
+        <td><span class="shadow-pill shadow-pill--${escapeHtml(r.agreement || 'unknown')}" title="${escapeHtml(agreement.hint())}">${escapeHtml(agreement.label)}</span></td>
+        <td>${r.ruleRank != null ? `#${escapeHtml(String(r.ruleRank))}` : '—'}</td>
+        <td>${escapeHtml(r.methodVerdict || '—')}</td>
+        <td>${links || '—'}</td>
+      </tr>`;
+  }).join('');
+
+  return `${head}${totals}
+    <p class="timeline-section">Latest cases</p>
+    <div class="scout-shadow__table-wrap">
+      <table class="scout-shadow__table">
+        <thead><tr><th>Entity</th><th>Stage</th><th>Hour</th><th>Agreement</th><th>Rule rank</th><th>Method</th><th></th></tr></thead>
+        <tbody>${list}</tbody>
+      </table>
+    </div>`;
+}
+
+function paintScoutShadow() {
+  document.querySelectorAll('.monkey-card [data-scout-shadow]').forEach((node) => {
+    const card = node.closest('.monkey-card');
+    const m = card ? state.monkeys.find((x) => x.id === card.dataset.monkeyId) : null;
+    if (m) node.innerHTML = renderScoutShadowBody(m, scoutShadow.boards[node.dataset.scoutShadow]);
+  });
+}
+
+/** Reads both boards for the active company, at most once a minute; a company switch discards the cache. */
+function loadScoutShadow(force) {
+  if (!document.querySelector('.monkey-card [data-scout-shadow]')) return Promise.resolve();
+  const key = activeCompanyKey();
+  if (scoutShadow.profileKey !== key) {
+    scoutShadow.profileKey = key;
+    scoutShadow.boards = {};
+    scoutShadow.fetchedAt = 0;
+    paintScoutShadow();
+  }
+  if (!force && Date.now() - scoutShadow.fetchedAt < SCOUT_SHADOW_TTL_MS) return Promise.resolve();
+  if (scoutShadowInFlight) return scoutShadowInFlight;
+
+  scoutShadowInFlight = (async () => {
+    const results = await Promise.all(Object.values(SCOUT_SHADOW_BOARDS).map(async (board) => {
+      try {
+        const response = await fetch(withActiveCompany(`/api/scouts/${encodeURIComponent(board)}/shadow?hours=${SCOUT_SHADOW_HOURS}&top=${SCOUT_SHADOW_TOP}`), { headers: { Accept: 'application/json' } });
+        const body = await response.json().catch(() => null);
+        if (response.ok && body) return [board, body];
+        const message = (body && (body.error || (Array.isArray(body.errors) ? body.errors.join(' ') : ''))) || `HTTP ${response.status}`;
+        return [board, { error: message }];
+      } catch (err) {
+        return [board, { error: 'the portal could not reach the API' }];
+      }
+    }));
+    // A switch made while the request was in flight: these rows belong to the previous company.
+    if (activeCompanyKey() !== key) return;
+    results.forEach(([board, data]) => { scoutShadow.boards[board] = data; });
+    scoutShadow.fetchedAt = Date.now();
+    paintScoutShadow();
+  })().finally(() => {
+    scoutShadowInFlight = null;
+    if (activeCompanyKey() !== key) loadScoutShadow();
+  });
+  return scoutShadowInFlight;
+}
+
 function formatCount(n) {
   return typeof n === 'number' ? n.toLocaleString() : '0';
 }
@@ -2763,6 +4099,7 @@ function startScoutPoller() {
       }
 
       startCountdownTicker();
+      loadScoutShadow();
       schedule(anyBusy ? SCOUT_POLL_BUSY_MS : SCOUT_POLL_IDLE_MS);
     } catch (err) {
       // A failed poll is not worth a toast - the next tick retries.
@@ -2875,9 +4212,9 @@ function inspectorOwner(team, resolvedBy) {
   }
   const fallback = resolvedBy === 'vertical-fallback';
   const hint = fallback
-    ? 'Matched the whole vertical, not this stage specifically.'
-    : 'This team is recorded as owning this exact journey stage.';
-  return `<span class="insp-owner" title="${escapeHtml(hint)}">${escapeHtml(team)}${fallback ? ' <span class="insp-owner__fb">vertical</span>' : ''}</span>`;
+    ? `Matched the whole ${profileNoun('service')}, not this ${profileNoun('step')} specifically.`
+    : `This team is recorded as owning this exact ${profileNoun('step')}.`;
+  return `<span class="insp-owner" title="${escapeHtml(hint)}">${escapeHtml(team)}${fallback ? ` <span class="insp-owner__fb">${escapeHtml(profileNoun('service'))}</span>` : ''}</span>`;
 }
 
 function inspectorAlertBadge(level, reason) {
@@ -2913,11 +4250,11 @@ function inspectorBucketClock(value) {
  *  and an honest "unknown" only when nothing exists. The brand is a label shared by several clubs -
  *  the id is the identity. */
 function inspectorBrand(entry) {
-  if (!entry) return 'Unknown club';
+  if (!entry) return `Unknown ${profileNoun('entity')}`;
   if (entry.clubName) return entry.clubName;
   if (entry.brandName) return entry.brandName;
   const id = entry.clubId || entry.icePartnerId;
-  return id ? `club ${id}` : 'Unknown club';
+  return id ? `${profileNoun('entity')} ${id}` : `Unknown ${profileNoun('entity')}`;
 }
 
 /** A card scoped by the global filters must say so. An empty list under a club filter and a dead
@@ -2929,7 +4266,7 @@ function renderInspectorFilterNote(m) {
   if (f.domain) parts.push(escapeHtml(f.domain));
   if (f.club) {
     const option = (state.clubOptions || []).find((c) => c.value === f.club);
-    parts.push(escapeHtml(option ? option.label : `club ${f.club}`));
+    parts.push(escapeHtml(option ? option.label : `${profileNoun('entity')} ${f.club}`));
   }
   return `<p class="insp-filternote">Showing only investigations for ${parts.join(' · ')}. The counters below are cumulative and are not filtered.</p>`;
 }
@@ -3001,7 +4338,7 @@ async function toggleInspectorQueuePanel(card) {
   panel.innerHTML = '<p class="insp-queue-panel__empty">Loading the backlog…</p>';
 
   try {
-    const response = await fetch('/api/inspector/queue');
+    const response = await fetch(withActiveCompany('/api/inspector/queue'));
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     state.inspectorQueue = await response.json();
   } catch (err) {
@@ -3354,27 +4691,30 @@ function stopInspectorPoller() {
   if (inspectorPollTimer) { clearTimeout(inspectorPollTimer); inspectorPollTimer = null; }
 }
 
-// The Overview's pipeline widget used to be a snapshot of whatever /api/monkeys returned on page
+// The pipeline widget used to be a snapshot of whatever /api/monkeys returned on page
 // load (or on the 90s auto-refresh, itself off by default) - a real investigation could start,
 // finish and compose an RCA entirely between visits, and the card would still say "0" until the
-// user reloaded the whole page. Same shape as the Scout/Inspector pollers: only #overview-pipeline
-// is replaced, and a hidden Overview tab costs nothing.
-const OVERVIEW_POLL_BUSY_MS = 5000;
-const OVERVIEW_POLL_IDLE_MS = 20000;
-let overviewPollTimer = null;
+// user reloaded the whole page. Same shape as the Scout/Inspector pollers: only #agents-pipeline
+// is replaced, and a hidden Simian Army tab costs nothing.
+const PIPELINE_POLL_BUSY_MS = 5000;
+const PIPELINE_POLL_IDLE_MS = 20000;
+let pipelinePollTimer = null;
 
-function startOverviewPoller() {
-  stopOverviewPoller();
-  const schedule = (ms) => { overviewPollTimer = setTimeout(poll, ms); };
+// Idempotent, unlike the Scout/Inspector pollers: renderMonkeysTab() is itself called from those
+// pollers every few seconds, and a restart-on-every-call poller would reset its own timer before
+// it ever fired.
+function startAgentPipelinePoller() {
+  if (pipelinePollTimer) return;
+  const schedule = (ms) => { pipelinePollTimer = setTimeout(poll, ms); };
 
   async function poll() {
-    const host = document.getElementById('overview-pipeline');
-    if (!host) { stopOverviewPoller(); return; }
+    const host = document.getElementById('agents-pipeline');
+    if (!host) { stopAgentPipelinePoller(); return; }
 
-    if (document.hidden) { schedule(OVERVIEW_POLL_IDLE_MS); return; }
+    if (document.hidden) { schedule(PIPELINE_POLL_IDLE_MS); return; }
 
-    const panel = document.getElementById('tab-overview');
-    if (panel && panel.hidden) { schedule(OVERVIEW_POLL_IDLE_MS); return; }
+    const panel = document.getElementById('tab-monkeys');
+    if (panel && panel.hidden) { schedule(PIPELINE_POLL_IDLE_MS); return; }
 
     try {
       const monkeys = await fetchMonkeysForPoll();
@@ -3382,18 +4722,18 @@ function startOverviewPoller() {
       renderAgentPipeline();
       const director = monkeys.find((m) => m.id === 'inspector-monkey');
       const busy = (director && director.currentCase) || monkeys.some((m) => m.currentCycle);
-      schedule(busy ? OVERVIEW_POLL_BUSY_MS : OVERVIEW_POLL_IDLE_MS);
+      schedule(busy ? PIPELINE_POLL_BUSY_MS : PIPELINE_POLL_IDLE_MS);
     } catch (err) {
       // A failed poll is not worth a toast - the next tick retries.
-      schedule(OVERVIEW_POLL_IDLE_MS);
+      schedule(PIPELINE_POLL_IDLE_MS);
     }
   }
 
-  schedule(OVERVIEW_POLL_BUSY_MS);
+  schedule(PIPELINE_POLL_BUSY_MS);
 }
 
-function stopOverviewPoller() {
-  if (overviewPollTimer) { clearTimeout(overviewPollTimer); overviewPollTimer = null; }
+function stopAgentPipelinePoller() {
+  if (pipelinePollTimer) { clearTimeout(pipelinePollTimer); pipelinePollTimer = null; }
 }
 
 /** Toast delivery is a poll, not a push. The watermark is kept in memory with a few seconds of
@@ -3402,7 +4742,7 @@ async function pollInspectorToasts() {
   const since = state.inspectorToastSince || new Date(Date.now() - 60000).toISOString();
   let payload;
   try {
-    const response = await fetch(`/api/inspector/toasts?since=${encodeURIComponent(since)}`);
+    const response = await fetch(withActiveCompany(`/api/inspector/toasts?since=${encodeURIComponent(since)}`));
     if (!response.ok) return;
     payload = await response.json();
   } catch (err) {
@@ -3577,7 +4917,7 @@ function openInspectorEvidenceModal(monkey, filter) {
 
 async function loadInspectorQueue() {
   try {
-    const response = await fetch('/api/inspector/queue');
+    const response = await fetch(withActiveCompany('/api/inspector/queue'));
     if (!response.ok) return;
     state.inspectorQueue = await response.json();
   } catch (err) {
@@ -3963,9 +5303,9 @@ function renderInspectorCaseTable(rows, emptyText) {
     <table class="pkg__table insp-table">
       <thead>
         <tr>
-          <th>Club</th><th>Case</th><th>Status</th>
+          <th>${escapeHtml(profileLabels().entity)}</th><th>Case</th><th>Status</th>
           <th title="The severity the Red Alert policy assigned, and why. Hover a badge for the stated reason.">Alert</th>
-          <th title="The team accountable for the failing service - who fixes it, as opposed to the club, which is who is affected.">Owner</th>
+          <th title="The team accountable for the failing service - who fixes it, as opposed to the ${escapeHtml(profileNoun('entity'))}, which is who is affected.">Owner</th>
           <th>Verdict</th>
           <th class="num">Confidence</th>
           <th class="num" title="How many cited artifacts were found in the real system.">Citations</th>
@@ -4079,7 +5419,7 @@ function openInspectorCaseDetail(caseId) {
   refreshInspectorModal();
   if (state.inspectorCaseDetails[caseId]) return;
 
-  fetch(`/api/inspector/cases/${encodeURIComponent(caseId)}`)
+  fetch(withActiveCompany(`/api/inspector/cases/${encodeURIComponent(caseId)}`))
     .then(async (response) => {
       if (!response.ok) {
         state.inspectorCaseDetails[caseId] = { error: `Could not load the case file (HTTP ${response.status}).` };
@@ -4125,7 +5465,7 @@ function loadRca(caseId) {
   if (state.rcaByCase[caseId] !== undefined) return;
   state.rcaByCase[caseId] = { loading: true };
 
-  fetch(`/api/inspector/cases/${encodeURIComponent(caseId)}/rca`)
+  fetch(withActiveCompany(`/api/inspector/cases/${encodeURIComponent(caseId)}/rca`))
     .then(async (response) => {
       // 404 means "none written yet", which is an offer, not an error.
       if (response.status === 404) { state.rcaByCase[caseId] = null; return; }
@@ -4257,7 +5597,7 @@ function renderRcaBlock(detail) {
 function openRcaEvidenceModal(monkey) {
   openModal(`${monkey.name} — Evidence`, renderRcaEvidence(monkey), { wide: true });
 
-  fetch('/api/knowledge/documents')
+  fetch(withActiveCompany('/api/knowledge/documents'))
     .then(async (response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return response.json();
@@ -4363,11 +5703,12 @@ function renderMemoryBankTab() {
 
   if (!state.knowledgeCorpus) {
     host.innerHTML = '<p class="mem-note">Loading the knowledge base…</p>';
-    fetch('/api/knowledge/documents')
+    const company = activeCompanyKey();
+    fetch(withActiveCompany('/api/knowledge/documents'))
       .then(async (r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((c) => { state.knowledgeCorpus = c; })
-      .catch((e) => { state.knowledgeCorpus = { error: e.message || 'unavailable' }; })
-      .finally(renderMemoryBankTab);
+      .then((c) => { if (activeCompanyKey() === company) state.knowledgeCorpus = c; })
+      .catch((e) => { if (activeCompanyKey() === company) state.knowledgeCorpus = { error: e.message || 'unavailable' }; })
+      .finally(() => { if (activeCompanyKey() === company) renderMemoryBankTab(); });
     return;
   }
 
@@ -4510,7 +5851,7 @@ async function runMemorySearch(query) {
   renderMemoryBankTab();
 
   try {
-    const response = await fetch(`/api/knowledge/search?q=${encodeURIComponent(q)}&top=10`);
+    const response = await fetch(withActiveCompany(`/api/knowledge/search?q=${encodeURIComponent(q)}&top=10`));
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     state.memory.search = { query: q, results: data.results || [] };
@@ -4531,7 +5872,7 @@ function openMemoryDocument(title, sourceType) {
     document.getElementById('modal-body').innerHTML = html;
   };
 
-  fetch(`/api/knowledge/document?title=${encodeURIComponent(title)}&type=${encodeURIComponent(sourceType || '')}`)
+  fetch(withActiveCompany(`/api/knowledge/document?title=${encodeURIComponent(title)}&type=${encodeURIComponent(sourceType || '')}`))
     .then(async (r) => {
       if (r.status === 404) throw new Error('no indexed passages for this document');
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -4574,7 +5915,7 @@ function renderInspectorVerdict(d) {
       <div class="insp-verdict__kick">L3 verdict · ${escapeHtml(decision)}${d.alertReason ? ` ${inspectorAlertBadge(d.alertLevel, d.alertReason)}` : ''}</div>
       <h3 class="insp-verdict__h">${escapeHtml(d.verdict || (d.status === 'running' ? 'Still investigating — no verdict yet.' : 'No verdict was recorded for this case.'))}</h3>
       <div class="insp-verdict__sub">
-        ${escapeHtml(d.clubName || d.brandName || 'Unknown club')} · <code title="${escapeHtml(d.caseId || '')}">${escapeHtml(inspectorCaseLabel(d.caseId))}</code> ·
+        ${escapeHtml(d.clubName || d.brandName || `Unknown ${profileNoun('entity')}`)} · <code title="${escapeHtml(d.caseId || '')}">${escapeHtml(inspectorCaseLabel(d.caseId))}</code> ·
         ${escapeHtml(d.vertical || '—')} / ${escapeHtml(d.stage || '—')}
       </div>
       <div class="insp-conf">
@@ -4615,8 +5956,8 @@ function renderInspectorOwnerBlock(d) {
       d.ownerBackup ? `backup ${escapeHtml(d.ownerBackup)}` : '',
     ].filter(Boolean).join(' · ');
     const scope = d.ownerResolvedBy === 'vertical-fallback'
-      ? 'Matched the whole vertical, not this stage specifically.'
-      : 'Recorded as owning this exact journey stage.';
+      ? `Matched the whole ${profileNoun('service')}, not this ${profileNoun('step')} specifically.`
+      : `Recorded as owning this exact ${profileNoun('step')}.`;
     return `
       <div class="insp-owner-block">
         <span class="insp-owner-block__lbl">Accountable team</span>
@@ -4731,7 +6072,7 @@ function renderInspectorGraph(d) {
   const nodes = [
     { x: 14, y: 84, w: 86, h: 46, label: 'Planner', sub: 'routes · synthesises', state: roleState('Planner') || 'pending', agent: 'Planner', title: 'Planner — dispatches the specialists and reconciles the debate.' },
     { x: 120, y: 30, w: 92, h: 40, label: 'PreProcess', sub: 'no LLM', state: roleState('PreProcess') || 'pending', agent: 'PreProcess', title: 'PreProcessor — normalises the package and screens it for prompt injection. Deterministic, no LLM call.' },
-    { x: 120, y: 144, w: 92, h: 40, label: 'ScopeResolver', sub: 'no LLM', state: roleState('Scope') || 'pending', agent: 'Scope', title: 'ScopeResolver — resolves the club and which sources apply. Deterministic, no LLM call.' },
+    { x: 120, y: 144, w: 92, h: 40, label: 'ScopeResolver', sub: 'no LLM', state: roleState('Scope') || 'pending', agent: 'Scope', title: 'ScopeResolver — resolves the affected entity and which sources apply. Deterministic, no LLM call.' },
     ...INSPECTOR_SPECIALISTS.map((role, i) => specialistNode(role, [6, 48, 90, 132, 174][i])),
     { x: 372, y: 86, w: 92, h: 46, label: 'Blackboard', sub: `${contributed} of ${INSPECTOR_SPECIALISTS.length} contributed`, state: blackboard.length ? 'done' : 'pending', agent: null, title: 'The shared evidence every model in the debate reads. Agreement across models over an incomplete blackboard is not evidence.' },
     ...moaNodes,
@@ -5169,7 +6510,7 @@ function renderHandoffDetail(a) {
 
   const brand = club.brandName
     ? `${escapeHtml(club.clubName || club.brandName)} <span style="color:var(--text-muted);">(${escapeHtml(club.clubName ? club.brandName : '')}${club.clubName ? ' · ' : ''}${escapeHtml(club.resolvedBy || '')})</span>`
-    : `<span style="color:var(--text-muted);">Unknown brand — ${escapeHtml(club.entityKey || '—')} is not in the catalogue</span>`;
+    : `<span style="color:var(--text-muted);">Unknown ${escapeHtml(profileNoun('entity'))} — ${escapeHtml(club.entityKey || '—')} is not in the catalogue</span>`;
 
   return `
     <div class="stage-detail" style="padding:14px;">
@@ -5234,8 +6575,8 @@ function renderPackageHeadline(a, row, exceptions, requests, failed) {
 function renderPackageCounters(exceptions, requests, failed, members, row) {
   const perMember = members > 0 && exceptions > 0 ? Math.round(exceptions / members) : null;
   const note = perMember && perMember > 20
-    ? `That is <strong>≈${formatCount(perMember)} exceptions per member</strong> across the ${members} member(s) telemetry could attribute — a repeating loop, not ${formatCount(exceptions)} people hitting an error.`
-    : `${members} member(s) identified in the window.`;
+    ? `That is <strong>≈${formatCount(perMember)} exceptions per user</strong> across the ${members} user(s) telemetry could attribute — a repeating loop, not ${formatCount(exceptions)} people hitting an error.`
+    : `${members} user(s) identified in the window.`;
 
   return `
     <div class="pkg__counters">
@@ -5262,7 +6603,7 @@ function renderMemberCoverage(members, row) {
     <dt>Members</dt>
     <dd>
       ${formatCount(members)} identified
-      <span style="color:var(--text-muted)">· ${coverage}% of events carry a member id${anonymous ? `, ${formatCount(anonymous)} anonymous browser(s)` : ''}</span>
+      <span style="color:var(--text-muted)">· ${coverage}% of events carry a user id${anonymous ? `, ${formatCount(anonymous)} anonymous browser(s)` : ''}</span>
       ${coverage >= 100 ? '<span style="color:var(--status-healthy)"> — this is the full affected set</span>' : ''}
     </dd>`;
 }
@@ -5306,7 +6647,7 @@ function renderPathBars(payload, row) {
     </div>`).join('');
 
   return `
-    <p class="pkg__block-title" style="margin:14px 0 4px;">Request paths — budget ${formatMs(budgetMs)} for this stage</p>
+    <p class="pkg__block-title" style="margin:14px 0 4px;">Request paths — budget ${formatMs(budgetMs)} for this ${escapeHtml(profileNoun('step'))}</p>
     ${rows}
     ${others.length ? `
       <div class="pkg__path">
@@ -5381,7 +6722,7 @@ function formatMs(ms) {
 async function loadScoutPackageDetail(packageId, container) {
   container.innerHTML = '<p style="color:var(--text-muted);font-size:12px;margin:0;">Loading…</p>';
   try {
-    const response = await fetch(`/api/scout/packages/${encodeURIComponent(packageId)}`);
+    const response = await fetch(withActiveCompany(`/api/scout/packages/${encodeURIComponent(packageId)}`));
     if (!response.ok) {
       container.innerHTML = `<p style="color:var(--text-muted);font-size:12px;margin:0;">Could not load the package detail (HTTP ${response.status}).</p>`;
       return;
@@ -5430,7 +6771,7 @@ function renderScoutPackageDetail(d) {
       ${events.length > 100 ? `<p style="color:var(--text-muted);font-size:11px;margin:4px 0 0;">Showing the first 100 of ${formatCount(events.length)} sampled.</p>` : ''}` : ''}
 
     <p class="pkg__block-title" style="margin:16px 0 6px;">Queries — run these in Azure to reproduce</p>
-    ${queries.board ? `<p style="font-size:11.5px;color:var(--text-muted);margin:0 0 2px;">Board query — scores every club's 5-minute buckets and ranked this one</p><pre style="max-height:180px;overflow:auto;white-space:pre-wrap;font-size:10px;">${escapeHtml(queries.board)}</pre>` : ''}
+    ${queries.board ? `<p style="font-size:11.5px;color:var(--text-muted);margin:0 0 2px;">Board query — scores every ${escapeHtml(profileNoun('entity'))}'s 5-minute buckets and ranked this one</p><pre style="max-height:180px;overflow:auto;white-space:pre-wrap;font-size:10px;">${escapeHtml(queries.board)}</pre>` : ''}
     ${queries.drillDown ? `<p style="font-size:11.5px;color:var(--text-muted);margin:10px 0 2px;">Drill-down query — pulls these individual events by operation id</p><pre style="max-height:180px;overflow:auto;white-space:pre-wrap;font-size:10px;">${escapeHtml(queries.drillDown)}</pre>` : ''}
 
     <p class="pkg__block-title" style="margin:16px 0 6px;"><span>Analysis log</span>${call ? `<span class="pkg__size">${escapeHtml(call.modelUsed || '')} · ${formatCount(call.tokensIn ?? 0)} in / ${formatCount(call.tokensOut ?? 0)} out · ${formatCount(call.durationMs ?? 0)} ms</span>` : ''}</p>
@@ -5447,7 +6788,7 @@ function renderScoutPackageDetail(d) {
       <ul>
         <li><strong>Baseline:</strong> only the immediately preceding interval is compared. There is no hour-over-hour or day-over-day normal.</li>
         <li><strong>Browser, OS and geography:</strong> not collected — with the stack trace masked, this is the main remaining way to narrow a front-end defect.</li>
-        <li><strong>Blast radius denominator:</strong> how many members were shopping this club overall, not just how many hit the error.</li>
+        <li><strong>Blast radius denominator:</strong> how many users were active on this ${escapeHtml(profileNoun('entity'))} overall, not just how many hit the error.</li>
         <li><strong>Business impact:</strong> whether bookings actually dropped.</li>
       </ul>
     </div>`;
@@ -5588,7 +6929,7 @@ function renderBurnRateEventDetail(evidence) {
   return `
     <div class="stage-detail">
       <dl>
-        <dt>Domain / Stage</dt><dd>${escapeHtml(evidence.domain || '—')}${evidence.stage ? ` / ${escapeHtml(evidence.stage)}` : ' (domain-wide)'}</dd>
+        <dt>${escapeHtml(profileLabels().service)} / ${escapeHtml(profileLabels().step)}</dt><dd>${escapeHtml(evidence.domain || '—')}${evidence.stage ? ` / ${escapeHtml(evidence.stage)}` : ' (domain-wide)'}</dd>
         <dt>Signal</dt><dd>${escapeHtml(evidence.signalType || '—')}</dd>
         <dt>SLO target</dt><dd>${target} over ${evidence.windowDays ?? '—'} days</dd>
         <dt>Severity</dt><dd>${severityBadge}</dd>
@@ -5639,7 +6980,7 @@ function renderDoctorMonkeyEvidence(monkey) {
  *  any Portal user can see this, there is no truncation by design (see docs/sessions 2026-09-23). */
 async function loadLlmCallLog(findingId, container) {
   try {
-    const response = await fetch(`/api/findings/${encodeURIComponent(findingId)}/doctor-report`);
+    const response = await fetch(withActiveCompany(`/api/findings/${encodeURIComponent(findingId)}/doctor-report`));
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.llmCallLog) {
       container.innerHTML = '<p style="color:var(--text-muted);font-size:11.5px;margin:0;">No LLM call log recorded for this diagnosis.</p>';
@@ -5879,7 +7220,16 @@ function renderExceptionsNote(rowCount) {
   note.textContent = '';
 }
 
+function renderExceptionsHead() {
+  const labels = profileLabels();
+  const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+  set('exceptions-th-domain', labels.service);
+  set('exceptions-th-entity', labels.entity);
+  set('exceptions-th-stage', labels.step);
+}
+
 function renderExceptionsTable() {
+  renderExceptionsHead();
   if (state.tablesLoading) return;
   markTableBusy(document.getElementById('exceptions-table'), false);
   // Window, domain, club, environment, and id are applied by GET /api/exceptions.
@@ -5892,7 +7242,7 @@ function renderExceptionsTable() {
 
   if (rows.length === 0) {
     const message = (state.exceptionsMeta && state.exceptionsMeta.warning) || 'No exceptions match the current filters.';
-    tbody.innerHTML = `<tr><td colspan="10"><div class="state-block">${escapeHtml(message)}</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11"><div class="state-block">${escapeHtml(message)}</div></td></tr>`;
     return;
   }
 
@@ -5905,6 +7255,7 @@ function renderExceptionsTable() {
       <td>${exceptionClubCell(e)}</td>
       <td>${escapeHtml(e.component)}</td>
       <td>${exceptionTypeCell(e.type)}</td>
+      <td>${escapeHtml(e.source || 'Server')}</td>
       <td>${(e.occurrenceCount || 0).toLocaleString()}</td>
       <td>${(e.usersAffected || 0).toLocaleString()}</td>
       <td>${escapeHtml(e.status)}</td>
@@ -5943,12 +7294,28 @@ function sortExceptionRows(rows, key, dir) {
   });
 }
 
+function affectedKeyMatchesJourney(journey, key) {
+  const ids = [journey.id, journey.correlationId].filter(Boolean).map(String);
+  if (ids.some((id) => id === key)) return true;
+  // Session keys are rawId-seq (ABC123-1). A stored raw id matches every session of that id,
+  // and not a longer id that merely shares a prefix.
+  const sessionKey = new RegExp('^' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '-\\d+$');
+  if (ids.some((id) => sessionKey.test(id))) return true;
+  const customer = String(journey.customer || '');
+  return customer !== '' && customer !== '0' && customer !== '-' && customer === key;
+}
+
 function relatedJourneysFor(exception) {
-  // journeysAffected arrives newest first. Keep that stored id for the label and
-  // for Find Related Journeys. A loaded row is used only for its outcome, so a
-  // member-id fallback is not replaced by that row's later correlation.
+  // journeysAffected arrives newest first. Keep each stored key as the label and for
+  // Find Related Journeys. Loaded rows in the exception's domain supply only the outcome;
+  // when several sessions match, the latest one decides it.
+  const domain = String(exception.domain || '').toLowerCase();
   return (exception.journeysAffected || []).map((id) => {
-    const live = state.journeys.find((j) => j.id === id || j.correlationId === id);
+    const key = String(id);
+    const live = (state.journeys || [])
+      .filter((j) => !(domain && j.domain && String(j.domain).toLowerCase() !== domain)
+        && affectedKeyMatchesJourney(j, key))
+      .sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')))[0];
     if (live) return { id, status: live.status || '' };
     const demo = state.demoJourneysById && state.demoJourneysById[id];
     return { id, status: (demo && demo.status) || '' };
@@ -5965,11 +7332,12 @@ function openExceptionDetail(exceptionId) {
   const relatedJourneys = relatedJourneysFor(e);
   const occurrences = e.occurrences && e.occurrences.length
     ? e.occurrences
-    : [{ timestamp: e.lastSeen, memberId: e.memberId, url: e.url, message: e.message }];
+    : [{ timestamp: e.lastSeen, memberId: e.memberId, url: e.url, message: e.message, source: e.source }];
   const occurrenceRows = occurrences.map((o, index) => `
     <tr${index >= 3 ? ' class="exception-collapsed" hidden' : ''}>
       <td>${formatRelativeTime(o.timestamp)}</td>
       <td>${escapeHtml(o.memberId || '—')}</td>
+      <td>${escapeHtml(o.source || 'Server')}</td>
       <td>${exceptionUrlDetail(o.url)}</td>
       <td class="exception-occurrence-message">${escapeHtml(o.message || '—')}</td>
     </tr>`).join('');
@@ -5992,6 +7360,7 @@ function openExceptionDetail(exceptionId) {
       <dt>Stage</dt><dd>${escapeHtml(e.component)}</dd>
       <dt>Operation</dt><dd>${escapeHtml(e.operation)}</dd>
       <dt>Type</dt><dd>${escapeHtml(e.type)}</dd>
+      <dt>Source</dt><dd>${escapeHtml(e.source || 'Server')}</dd>
       <dt>First seen</dt><dd>${formatRelativeTime(e.firstSeen)}</dd>
       <dt>Last seen</dt><dd>${formatRelativeTime(e.lastSeen)}</dd>
       <dt>Occurrences</dt><dd>${(e.occurrenceCount || 0).toLocaleString()}</dd>
@@ -6004,8 +7373,8 @@ function openExceptionDetail(exceptionId) {
     <div data-collapsible>
       <div class="table-wrap">
         <table class="data-table data-table--compact">
-          <thead><tr><th>When</th><th>MemberId</th><th>URL</th><th>Message</th></tr></thead>
-          <tbody>${occurrenceRows || '<tr><td colspan="4">No occurrence details stored.</td></tr>'}</tbody>
+          <thead><tr><th>When</th><th>MemberId</th><th>Source</th><th>URL</th><th>Message</th></tr></thead>
+          <tbody>${occurrenceRows || '<tr><td colspan="5">No occurrence details stored.</td></tr>'}</tbody>
         </table>
       </div>
       ${occurrences.length > 3 ? '<button type="button" class="btn btn--ghost btn--sm exception-see-more" aria-expanded="false">See more</button>' : ''}
@@ -6050,7 +7419,22 @@ function wireExceptionActions(e) {
 /* -----------------------------------------------------------------------
    5g. SETTINGS TAB (Latency Spike Monkey thresholds)
    ----------------------------------------------------------------------- */
+/** The SLO form's service list is the active company's services, never a fixed set. */
+function renderSloDomainOptions() {
+  const select = document.getElementById('slo-add-domain');
+  if (!select) return;
+  const label = document.getElementById('slo-add-domain-label');
+  if (label) label.textContent = profileLabels().service;
+  const services = profileServices();
+  const keep = select.value;
+  select.innerHTML = services.length
+    ? services.map((s) => `<option value="${escapeHtml(s.key)}">${escapeHtml(s.label)}</option>`).join('')
+    : '<option value="">No services defined</option>';
+  if (services.some((s) => s.key === keep)) select.value = keep;
+}
+
 function renderSettingsTab() {
+  renderSloDomainOptions();
   const tbody = document.getElementById('latency-settings-tbody');
   if (!tbody) return;
 
@@ -6334,8 +7718,202 @@ function wireSettingsSubnav() {
       if (target === 'sources') loadTelemetrySources();
       if (target === 'budgets') loadAgentBudgets();
       if (target === 'company') loadCompanyProfiles();
+      if (target === 'kpis') loadKpiSettings();
+      if (target === 'tokens') loadAccessTokens();
     });
   });
+}
+
+/* Access Tokens (moved here from the standalone AppInsightsTokens.html page). The Web host proxies
+   /api/appinsights/tokens to Functions and adds the internal/write secrets server-side. */
+const accessTokens = { list: [], timer: null };
+
+function tokenToDate(value) {
+  if (!value) return null;
+  // Timestamps without an offset are UTC.
+  return new Date(/[zZ]|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`);
+}
+
+function tokenCountdown(value) {
+  const date = tokenToDate(value);
+  if (!date) return '';
+  const minutes = Math.round((date - new Date()) / 60000);
+  if (minutes <= 0) return `expired ${Math.abs(minutes)} min ago`;
+  if (minutes < 120) return `in ${minutes} min`;
+  return `in ${Math.round(minutes / 60)} h`;
+}
+
+function tokenFormatDate(value) {
+  const date = tokenToDate(value);
+  return date ? date.toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+}
+
+function setTokenStatus(id, ok, text) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('is-error', !ok);
+}
+
+async function tokenErrorText(response) {
+  const text = await response.text();
+  try {
+    const json = JSON.parse(text);
+    return json.error || (json.errors && json.errors.join(' ')) || text;
+  } catch {
+    return text || `HTTP ${response.status}`;
+  }
+}
+
+async function postTokenJson(url, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  const csrf = await getAntiforgeryToken();
+  if (csrf) headers['X-CSRF-TOKEN'] = csrf;
+  return fetch(url, { method: 'POST', headers, body: body === undefined ? undefined : JSON.stringify(body) });
+}
+
+function updateTokenModeFields() {
+  const mode = document.getElementById('token-refresh-mode').value;
+  const auto = mode !== 'manual';
+  document.getElementById('token-client-id-field').hidden = mode !== 'service-principal';
+  document.getElementById('token-client-secret-field').hidden = mode !== 'service-principal';
+  document.getElementById('token-value-required').hidden = auto;
+  document.getElementById('token-value-hint').textContent = auto
+    ? 'Optional: the token-refresh daemon acquires one on its next run (or use Refresh now).'
+    : 'Paste only the accessToken value, not the entire JSON output.';
+}
+
+async function loadAccessTokens() {
+  const tbody = document.getElementById('tokens-tbody');
+  if (!tbody) return;
+  try {
+    const response = await fetch('/api/appinsights/tokens');
+    if (!response.ok) throw new Error(await tokenErrorText(response));
+    const data = await response.json();
+    accessTokens.list = Array.isArray(data) ? data : (data.tokens || []);
+    document.getElementById('token-tenant-keys').innerHTML = accessTokens.list
+      .map((t) => `<option value="${escapeHtml(t.tenantKey)}"></option>`).join('');
+    renderAccessTokens();
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="state-block state-block--error">Tokens could not be read: ${escapeHtml(err.message)}</div></td></tr>`;
+  }
+  // Keeps the countdowns honest while the section is open.
+  if (!accessTokens.timer) accessTokens.timer = setInterval(renderAccessTokens, 30000);
+}
+
+function renderAccessTokens() {
+  const tbody = document.getElementById('tokens-tbody');
+  if (!tbody) return;
+  if (accessTokens.list.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6"><div class="state-block">No tokens stored yet.</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = accessTokens.list.map((t) => {
+    const mode = t.refreshMode || 'manual';
+    const auto = mode !== 'manual';
+    const key = escapeHtml(t.tenantKey);
+    const status = !t.isActive
+      ? '<span class="status-badge">Inactive</span>'
+      : t.hasToken === false
+        ? '<span class="status-badge status-badge--degraded">Waiting for first refresh</span>'
+        : t.isExpired
+          ? '<span class="status-badge status-badge--critical">Expired</span>'
+          : '<span class="status-badge status-badge--healthy">Active</span>';
+    const details = `<div class="form-field__hint">tenant ${escapeHtml(t.aadTenantId || '—')}${mode === 'service-principal' ? ` · client ${escapeHtml(t.clientId || '—')} · secret ${t.hasClientSecret ? 'stored' : 'missing'}` : ''}</div>`;
+    const lastError = t.lastRefreshError ? `<div class="form-field__hint is-error">${escapeHtml(t.lastRefreshError)}</div>` : '';
+    return `
+      <tr>
+        <td><strong>${key}</strong><div class="form-field__hint">${escapeHtml(t.email || '')}</div>${t.notes ? `<div class="form-field__hint">${escapeHtml(t.notes)}</div>` : ''}</td>
+        <td><code>${escapeHtml(mode)}</code>${details}</td>
+        <td>${tokenFormatDate(t.expiresAt)}<div class="form-field__hint">${tokenCountdown(t.expiresAt)}</div></td>
+        <td>${tokenFormatDate(t.lastRefreshAt)}<div class="form-field__hint">${t.refreshCount || 0} refresh(es)</div>${lastError}</td>
+        <td>${status}</td>
+        <td class="kpi-settings__actions">
+          <button class="btn btn--icon btn--sm" type="button" data-action="edit-token" data-key="${key}">Edit</button>
+          ${auto ? `<button class="btn btn--icon btn--sm" type="button" data-action="refresh-token" data-key="${key}">Refresh now</button>` : ''}
+          <button class="btn btn--icon btn--sm btn--ghost" type="button" data-action="deactivate-token" data-key="${key}">Deactivate</button>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function fillTokenForm(tenantKey) {
+  const t = accessTokens.list.find((x) => x.tenantKey === tenantKey);
+  if (!t) return;
+  document.getElementById('token-tenant-key').value = t.tenantKey;
+  document.getElementById('token-email').value = t.email || '';
+  document.getElementById('token-refresh-mode').value = t.refreshMode || 'manual';
+  document.getElementById('token-aad-tenant').value = t.aadTenantId || '';
+  document.getElementById('token-client-id').value = t.clientId || '';
+  document.getElementById('token-value').value = '';
+  updateTokenModeFields();
+  document.getElementById('token-value').focus();
+}
+
+function wireAccessTokenSettings() {
+  const mode = document.getElementById('token-refresh-mode');
+  if (!mode) return;
+  mode.addEventListener('change', updateTokenModeFields);
+  updateTokenModeFields();
+
+  document.getElementById('token-save').addEventListener('click', async () => {
+    const body = {
+      tenantKey: document.getElementById('token-tenant-key').value.trim(),
+      userEmail: document.getElementById('token-email').value.trim(),
+      token: document.getElementById('token-value').value.trim(),
+      refreshMode: mode.value,
+      aadTenantId: document.getElementById('token-aad-tenant').value.trim(),
+      clientId: document.getElementById('token-client-id').value.trim(),
+      clientSecret: document.getElementById('token-client-secret').value,
+    };
+    if (!body.tenantKey || !body.userEmail) { setTokenStatus('token-save-status', false, 'Tenant key and email are required.'); return; }
+    if (body.refreshMode === 'manual' && !body.token) { setTokenStatus('token-save-status', false, 'A manual token needs the access token value.'); return; }
+    try {
+      const response = await postTokenJson('/api/appinsights/tokens', body);
+      if (!response.ok) { setTokenStatus('token-save-status', false, `Error: ${await tokenErrorText(response)}`); return; }
+      setTokenStatus('token-save-status', true, `Token saved for '${body.tenantKey}'.`);
+      document.getElementById('token-value').value = '';
+      loadAccessTokens();
+    } catch (err) {
+      setTokenStatus('token-save-status', false, `Error: ${err.message}`);
+    } finally {
+      document.getElementById('token-client-secret').value = '';
+    }
+  });
+
+  document.getElementById('tokens-tbody').addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-action]');
+    if (!button) return;
+    const key = button.dataset.key;
+    if (button.dataset.action === 'edit-token') { fillTokenForm(key); return; }
+    if (button.dataset.action === 'deactivate-token' && !confirm(`Deactivate the token for ${key}?`)) return;
+    const verb = button.dataset.action === 'refresh-token' ? 'refresh' : 'deactivate';
+    button.disabled = true;
+    try {
+      const response = await postTokenJson(`/api/appinsights/tokens/${encodeURIComponent(key)}/${verb}`);
+      if (!response.ok) {
+        setTokenStatus('token-table-status', false, `${key}: ${await tokenErrorText(response)}`);
+      } else if (verb === 'refresh') {
+        const data = await response.json().catch(() => ({}));
+        setTokenStatus('token-table-status', true, `${key}: refreshed, expires ${tokenFormatDate(data.expiresAt)}.`);
+      } else {
+        setTokenStatus('token-table-status', true, `${key}: deactivated.`);
+      }
+    } catch (err) {
+      setTokenStatus('token-table-status', false, `${key}: ${err.message}`);
+    }
+    loadAccessTokens();
+  });
+}
+
+/** Deep link (?settings=tokens) used by the retired standalone token pages. */
+function openSettingsSectionFromUrl() {
+  const section = new URLSearchParams(window.location.search).get('settings');
+  if (!section) return;
+  const button = document.querySelector(`.settings-subnav__item[data-settings-section="${CSS.escape(section)}"]`);
+  if (!button) return;
+  activateTab('settings');
+  button.click();
 }
 
 /** Renders the "SLO Definitions" table (Settings tab) - one row per (domain, stage, signalType). */
@@ -6696,6 +8274,7 @@ async function loadAllData() {
   ]);
   state.journeys = journeys; state.traces = traces; state.components = components;
   state.monkeys = monkeys; state.exceptions = exceptions; state.overview = overview; state.demoJourneysById = demoJourneysById; state.events = events; state.analytics = analytics;
+  showOverviewWarningToast(overview);
   state.dashboardMetrics = dashboardMetrics;
   state.latencySettings = latencySettings; state.latencySettingsAudit = latencySettingsAudit;
   state.llmClientSetting = llmClientSetting; state.llmClientSettingAudit = llmClientSettingAudit;
@@ -6719,7 +8298,7 @@ function journeysSourceLabel(meta) {
   return {
     live: `${m.environment || 'production'} App Insights — live (${m.rowCount} journeys, ${win})`,
     mixed: `App Insights — partial live results (${m.rowCount} journeys, ${win})`,
-    sql: `SQL snapshot after Azure pull (${m.rowCount} journeys, ${win})`,
+    sql: `stored per-company records (${m.rowCount}, ${win})`,
     stored: `stored snapshot (${m.rowCount} journeys, ${win})`,
     snapshot: `exported PROD snapshot (${m.rowCount} users)`,
     demo: `anonymized demo data (${m.rowCount} users)`,
@@ -6740,30 +8319,16 @@ async function refreshData({ silent } = { silent: false }) {
     paintDashboardChartsLoading();
   }
   try {
-    let pullFailures = [];
-    if (!silent) {
-      pullFailures = await pullLatestJourneysFromAzure();
-      if (pullFailures.length) {
-        console.warn('RefreshJourneys failed for some domains', pullFailures);
-      }
-    }
     await loadAllData();
     state.dashboardChartsLoading = false;
     renderAllTabs();
     updateLastRefreshTimestamp();
     if (!silent) {
       const m = state.journeysMeta || {};
-      const extra = m.cached ? ' Cached ≤90s.' : '';
-      const pullWarn = pullFailures
-        .map((err) => `${domainLabel(err.domain) || 'Journeys'}: ${err.message || err}`)
-        .join(' ');
-      const warn = [m.warning, pullWarn].filter(Boolean).join(' ');
-      const kind = pullFailures.length === 0 && (m.source === 'sql' || m.source === 'live' || m.source === 'stored')
-        ? 'success'
-        : pullFailures.length && !m.rowCount ? 'critical' : 'info';
+      const kind = m.source === 'sql' ? 'success' : m.source === 'error' ? 'critical' : 'info';
       showToast(
-        pullFailures.length ? 'Refresh incomplete' : 'Refreshed',
-        `Journeys: ${journeysSourceLabel(m)}.${extra}${warn ? ` ${warn}` : ''} Exceptions: ${exceptionsSourceLabel()}.`,
+        m.source === 'error' ? 'Refresh incomplete' : 'Refreshed',
+        `${profileLabels().flow}: ${journeysSourceLabel(m)}.${m.warning ? ` ${m.warning}` : ''} Exceptions: ${exceptionsSourceLabel()}.`,
         kind,
       );
     }
@@ -6804,7 +8369,7 @@ async function loadKqlQueries() {
   const tbody = document.getElementById('kql-queries-tbody');
   if (!tbody) return;
   try {
-    const response = await fetch('/api/settings/kql');
+    const response = await fetch(withActiveCompany('/api/settings/kql'));
     if (!response.ok) throw new Error(`Request failed: ${response.status}`);
     const body = await response.json();
     renderKqlQueries(body.queries || []);
@@ -6845,7 +8410,7 @@ async function openKqlEditor(key) {
   const card = document.getElementById('kql-editor');
   if (!card) return;
   try {
-    const response = await fetch(`/api/settings/kql/${encodeURIComponent(key)}`);
+    const response = await fetch(withActiveCompany(`/api/settings/kql/${encodeURIComponent(key)}`));
     if (!response.ok) throw new Error(`Request failed: ${response.status}`);
     const detail = await response.json();
 
@@ -6970,7 +8535,7 @@ async function loadTelemetrySources() {
   const tbody = document.getElementById('sources-tbody');
   if (!tbody) return;
   try {
-    const response = await fetch('/api/settings/telemetry-sources');
+    const response = await fetch(withActiveCompany('/api/settings/telemetry-sources'));
     if (!response.ok) throw new Error(`Request failed: ${response.status}`);
     const body = await response.json();
     const sources = body.sources || [];
@@ -7045,7 +8610,7 @@ function shortResourceId(resourceId) {
 /** alias -> the agents that read through it, derived from the queries currently in force. */
 async function loadSourceUsage() {
   try {
-    const response = await fetch('/api/settings/kql');
+    const response = await fetch(withActiveCompany('/api/settings/kql'));
     if (!response.ok) return {};
     const body = await response.json();
     const usage = {};
@@ -7263,17 +8828,99 @@ function activeCompanyKey() {
 }
 
 /**
- * The single place a list call is scoped to the active company. GET /api/scout/packages, /runs,
- * /stats and /api/inspector/cases all take ?profileKey, and a blank one means every company.
- *
- * Nothing in the browser requests those four today — the Simian Army cards are built from
- * /api/monkeys — so this exists as the one seam to go through when they are added, rather than
- * four places each growing their own query-string code.
+ * Contract v6 §1/§6: the single place a read is scoped to the active company. Every company-scoped
+ * read in the portal (journeys, entities, exceptions, overview, analytics, health, triage, monkeys,
+ * scouts, inspector, findings, knowledge, daemons, club inventory and the company-dependent
+ * settings) goes through here, so a switch can never leave one call reading another company.
  */
 function withActiveCompany(url) {
   const key = activeCompanyKey();
   if (!key) return url;
   return `${url}${url.includes('?') ? '&' : '?'}profileKey=${encodeURIComponent(key)}`;
+}
+
+/* --- Company theme (contract v6 §2) --------------------------------------------------------- */
+
+const COMPANY_THEME_NAVY = '#0b1e45';
+const COMPANY_THEME_PROPERTIES = ['--company-primary', '--company-accent', '--company-on-primary', '--company-header-bg', '--company-header-fg'];
+
+function isThemeColor(value) {
+  return /^#[0-9a-f]{6}$/i.test(String(value || ''));
+}
+
+/** WCAG relative luminance of a #rrggbb colour. */
+function themeLuminance(hex) {
+  const channel = (i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+}
+
+/** White or navy, whichever contrasts more with the background. */
+function themeTextOn(hex) {
+  const bg = themeLuminance(hex);
+  const contrast = (fg) => (Math.max(bg, fg) + 0.05) / (Math.min(bg, fg) + 0.05);
+  return contrast(1) >= contrast(themeLuminance(COMPANY_THEME_NAVY)) ? '#ffffff' : COMPANY_THEME_NAVY;
+}
+
+/** The name shown next to the title: the theme's short name, else the display name. */
+function companyDisplayName(profile) {
+  if (!profile) return '';
+  const short = profile.theme && typeof profile.theme.shortName === 'string' ? profile.theme.shortName.trim() : '';
+  return short || profile.displayName || profile.profileKey || '';
+}
+
+/**
+ * Applies the active company's colours as CSS custom properties consumed by the header, tab nav,
+ * primary buttons and banner. No theme (or an invalid colour) falls back to the default palette.
+ */
+function applyCompanyTheme(profile) {
+  const root = document.documentElement;
+  const theme = (profile && profile.theme) || {};
+  const primary = isThemeColor(theme.primaryColor) ? theme.primaryColor : null;
+  const accent = isThemeColor(theme.accentColor) ? theme.accentColor : null;
+  COMPANY_THEME_PROPERTIES.forEach((name) => root.style.removeProperty(name));
+  if (primary) {
+    const text = themeTextOn(primary);
+    root.style.setProperty('--company-primary', primary);
+    root.style.setProperty('--company-on-primary', text);
+    root.style.setProperty('--company-header-bg', primary);
+    root.style.setProperty('--company-header-fg', text);
+  }
+  if (accent) root.style.setProperty('--company-accent', accent);
+  document.body.classList.toggle('has-company-theme', !!primary);
+  document.body.classList.toggle('company-theme--light-text', !!primary && themeTextOn(primary) === '#ffffff');
+  document.body.dataset.company = (profile && profile.profileKey) || '';
+
+  const name = companyDisplayName(profile);
+  const badge = document.getElementById('company-name');
+  if (badge) {
+    badge.textContent = name;
+    badge.hidden = !name;
+    badge.title = profile && profile.displayName ? profile.displayName : name;
+  }
+  document.title = name ? `${name} · Agentic Operations Portal` : 'Agentic Operations Portal';
+}
+
+/** Reads the active company's full profile (theme, labels, services) and applies it everywhere. */
+async function loadActiveProfile() {
+  const key = activeCompanyKey();
+  let profile = null;
+  if (key) {
+    try {
+      const response = await fetch(`/api/settings/company-profiles/${encodeURIComponent(key)}`);
+      if (response.ok) profile = await response.json();
+    } catch (err) {
+      console.warn('active company profile unreadable.', err);
+    }
+  }
+  if (activeCompanyKey() !== key) return;
+  state.activeProfile = profile && profile.profile ? profile.profile : profile;
+  applyCompanyTheme(state.activeProfile);
+  renderDomainFilter();
+  renderClubSelect({ entities: [], disabled: true });
+  renderJourneysHead();
 }
 
 /** Unlike settingsWrite, this keeps the status code: 400/401/404/503 need different sentences. */
@@ -7410,12 +9057,110 @@ async function switchActiveCompany(requestedKey) {
   await refreshForCompanyChange();
 }
 
-/** A switch changes what every agent classifies, so the view is re-read instead of left showing
- *  another customer's rows. Goes through the Refresh button's own path - no full page reload. */
+/** Contract v6 §6: a switch applies the new theme, drops everything read for the previous company
+ *  and reloads. The visible tab is redrawn as soon as the reads land; the lazily loaded tabs
+ *  (Memory Bank, Daemons, Simian Army, Platform Health backend, Application Map) start empty and
+ *  read the new company the next time they are opened. No full page reload. */
 async function refreshForCompanyChange() {
-  await Promise.all([refreshData({ silent: true }), reloadMonkeysForFilters()]);
+  resetCompanyScopedState();
+  await loadActiveProfile();
+  showDataTablesLoading();
+  renderAllTabs();
+  reloadKpiViewsForCompany();
+  const generation = filterRequestGeneration;
+  try {
+    await Promise.all([loadClubsForDomain(state.filters.domain), loadAllData()]);
+  } catch (err) {
+    console.error(err);
+  }
+  if (generation !== filterRequestGeneration) return;
+  state.tablesLoading = false;
+  state.dashboardChartsLoading = false;
+  setFiltersLocked(false);
+  renderAllTabs();
+  updateLastRefreshTimestamp();
+  reloadVisibleLazyTab();
   const settingsPanel = document.getElementById('tab-settings');
-  if (settingsPanel && !settingsPanel.hidden) loadCompanyProfiles();
+  if (settingsPanel && !settingsPanel.hidden) {
+    loadCompanyProfiles();
+    reloadVisibleSettingsSection();
+  }
+}
+
+/** Everything held in memory that belongs to one company. */
+function resetCompanyScopedState() {
+  filterRequestGeneration += 1;
+  state.journeys = [];
+  state.exceptions = [];
+  state.overview = null;
+  state.dashboardMetrics = [];
+  state.dashboardMeta = null;
+  state.serviceComparison = [];
+  state.domainComparisonStale = true;
+  state.journeyLabels = null;
+  state.journeysMeta = { source: 'snapshot', rowCount: 0, warning: '' };
+  state.exceptionsMeta = { source: '', warning: '', rowCount: 0, win: '' };
+  state.selectedExceptionId = null;
+  state.rcaByCase = {};
+  state.knowledgeCorpus = null;
+  state.memory = { filter: '', type: 'all', search: null };
+  state.clubOptions = [];
+  state.filters.club = '';
+  state.rowCap = INIT_ROW_CAP;
+  state.clubInventory = [];
+  state.clubInventoryLoaded = false;
+  state.scoutCycleFilter = null;
+  state.inspectorQueue = null;
+  state.inspectorCaseDetails = {};
+  state.inspectorDetailCaseId = null;
+  state.inspectorAgentFilter = null;
+  state.inspectorOpenGroups = [];
+  rwWatch.focus = null;
+  rwWatch.stage = 1;
+  rwWatch.application = null;
+  rwWatch.applicationRequest = (rwWatch.applicationRequest || 0) + 1;
+  rwWatch.hotelBusiness = null;
+  rwWatch.businessRequest = (rwWatch.businessRequest || 0) + 1;
+  pipelineFlowSignature = null;
+  const charts = document.getElementById('analytics-charts');
+  if (charts) charts.dataset.signature = '';
+  closeSidePanel();
+  closeModal();
+  if (window.DaemonsTab && typeof window.DaemonsTab.onCompanyChange === 'function') window.DaemonsTab.onCompanyChange();
+}
+
+/** The tabs that load on entry are re-entered so the one on screen reads the new company now. */
+function reloadVisibleLazyTab() {
+  const tab = state.activeTab;
+  if (tab === 'memory') renderMemoryBankTab();
+  if (tab === 'monkeys') reloadMonkeysForFilters();
+  if (tab === 'club-map') loadClubInventory({ force: true });
+}
+
+function reloadVisibleSettingsSection() {
+  const section = document.querySelector('.settings-content .settings-section.is-active');
+  const target = section ? section.dataset.settingsSection : '';
+  if (target === 'kql') loadKqlQueries();
+  if (target === 'sources') loadTelemetrySources();
+}
+
+/** Platform Health, KPI settings and the triage list are scoped to the active company (contract v3
+ *  §1.6), so a switch drops what was read for the previous one and reads again. Daemons is
+ *  platform-wide and is left alone. */
+function reloadKpiViewsForCompany() {
+  rwWatch.healthRequest += 1;
+  rwWatch.healthInFlight = null;
+  rwWatch.health = null;
+  rwWatch.kpiDefs = null;
+  rwWatch.buckets = {};
+  rwWatch.triageRequest += 1;
+  rwWatch.triage = null;
+  if (rwWatch.ready) {
+    loadPillarHealth();
+    loadTriageInvestigations();
+  }
+  kpiSettings.selectedId = null;
+  loadKpiSettings();
 }
 
 function wireCompanySelector() {
@@ -7608,6 +9353,455 @@ function loadCompanyRevisionIntoEditor(entry) {
   card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
+// Settings — Onboarding draft + suggested KPIs (Spec 1000 contract v4 §5, AG7)
+// ============================================================================
+// The server measures the telemetry and decides every suggestion; this view only shows them and
+// forwards each suggested definition verbatim to POST /api/settings/kpis (it stays disabled).
+
+const onboardingDraft = { profile: null, suggestions: [], created: {} };
+
+function wireOnboardingDraft() {
+  const editor = document.getElementById('company-editor');
+  if (!editor || document.getElementById('onboarding-draft-card')) return;
+
+  const card = document.createElement('div');
+  card.className = 'settings-card';
+  card.id = 'onboarding-draft-card';
+  card.innerHTML = `
+    <h3 class="settings-card__group-title">Onboard a company from telemetry</h3>
+    <p class="tab-panel__note">Measures one registered telemetry source and drafts a <strong>disabled</strong> profile plus <strong>disabled</strong> KPIs. Nothing is saved until you press a save or create button.</p>
+    <div class="form-grid">
+      <div class="form-field"><label for="onboarding-alias">Telemetry source alias</label><input type="text" id="onboarding-alias" class="settings-input" placeholder="e.g. contoso-prod"></div>
+      <div class="form-field"><label for="onboarding-environment">Environment</label><input type="text" id="onboarding-environment" class="settings-input" value="production"></div>
+      <div class="form-field"><label for="onboarding-profile-key">Profile key</label><input type="text" id="onboarding-profile-key" class="settings-input" placeholder="defaults to the alias"></div>
+      <div class="form-field"><label for="onboarding-display-name">Display name</label><input type="text" id="onboarding-display-name" class="settings-input" placeholder="defaults to the alias"></div>
+      <div class="form-field"><label for="onboarding-hours">Window (hours)</label><input type="number" id="onboarding-hours" class="settings-input" min="1" max="168" value="24"></div>
+    </div>
+    <div class="llm-client-settings__actions">
+      <button class="btn btn--sm" id="onboarding-draft-run" type="button">Build draft</button>
+      <button class="btn btn--sm" id="onboarding-draft-open" type="button" hidden>Open draft profile in editor</button>
+      <span class="llm-client-settings__status" id="onboarding-draft-status" aria-live="polite"></span>
+    </div>
+    <div id="onboarding-draft-summary"></div>
+    <div id="onboarding-suggested-kpis"></div>`;
+  editor.after(card);
+
+  document.getElementById('onboarding-draft-run').addEventListener('click', buildOnboardingDraft);
+  document.getElementById('onboarding-draft-open').addEventListener('click', openOnboardingDraftInEditor);
+}
+
+async function buildOnboardingDraft() {
+  const alias = document.getElementById('onboarding-alias').value.trim();
+  if (!alias) {
+    setStatus('onboarding-draft-status', 'Enter the telemetry source alias registered in Settings > Telemetry sources.', 'error');
+    return;
+  }
+  const hours = Number.parseInt(document.getElementById('onboarding-hours').value, 10);
+  const payload = {
+    alias,
+    environment: document.getElementById('onboarding-environment').value.trim() || undefined,
+    profileKey: document.getElementById('onboarding-profile-key').value.trim() || undefined,
+    displayName: document.getElementById('onboarding-display-name').value.trim() || undefined,
+    hours: Number.isFinite(hours) ? hours : undefined,
+  };
+
+  const runButton = document.getElementById('onboarding-draft-run');
+  runButton.disabled = true;
+  setStatus('onboarding-draft-status', 'Measuring the telemetry source…', null);
+  try {
+    const { ok, status, body } = await companyWrite('/api/onboarding/draft', 'POST', payload);
+    if (!ok) {
+      setStatus('onboarding-draft-status', (body && body.error) || `Draft failed (HTTP ${status}).`, 'error');
+      return;
+    }
+    onboardingDraft.profile = (body.draft && body.draft.profile) || null;
+    onboardingDraft.suggestions = Array.isArray(body.suggestedKpis) ? body.suggestedKpis : [];
+    onboardingDraft.created = {};
+    document.getElementById('onboarding-draft-open').hidden = !onboardingDraft.profile;
+    renderOnboardingDraftSummary(body.draft || {});
+    renderSuggestedKpis();
+    setStatus('onboarding-draft-status', `Draft built: ${onboardingDraft.suggestions.length} suggested KPI(s).`, 'ok');
+  } catch (err) {
+    setStatus('onboarding-draft-status', err.message, 'error');
+  } finally {
+    runButton.disabled = false;
+  }
+}
+
+function renderOnboardingDraftSummary(draft) {
+  const host = document.getElementById('onboarding-draft-summary');
+  if (!host) return;
+  const profile = draft.profile || {};
+  const warnings = Array.isArray(draft.warnings) ? draft.warnings : [];
+  host.innerHTML = `
+    <p class="tab-panel__note">
+      <strong>${escapeHtml(profile.displayName || profile.profileKey || '')}</strong> (<code>${escapeHtml(profile.profileKey || '')}</code>) ·
+      readiness <strong>${escapeHtml(String(draft.readiness || '—'))}</strong> ·
+      ${(profile.services || []).length} service(s) · ${(profile.partners || []).length} partner(s) ·
+      ${(profile.entityIdentitySources || []).length} identity source(s)
+    </p>
+    ${warnings.length === 0 ? '' : `<ul class="company-problems">${warnings.map((w) => `<li><strong>${escapeHtml(String(w.severity || ''))}</strong> ${escapeHtml(w.message || '')}</li>`).join('')}</ul>`}`;
+}
+
+function renderSuggestedKpis() {
+  const host = document.getElementById('onboarding-suggested-kpis');
+  if (!host) return;
+  const suggestions = onboardingDraft.suggestions;
+  if (suggestions.length === 0) {
+    host.innerHTML = '<div class="state-block">No KPI was suggested for this draft - see the notes above.</div>';
+    return;
+  }
+  const pending = suggestions.filter((s) => !onboardingDraft.created[s.key]).length;
+  host.innerHTML = `
+    <h4 class="settings-card__group-title">Suggested KPIs (created disabled)</h4>
+    <p class="tab-panel__note">The KPI API only accepts a profile that is saved <em>and enabled</em>: save the draft, enable it, then create these. Each one is stored with enabled=false; switch it on from Settings > KPIs after review.</p>
+    <div class="llm-client-settings__actions">
+      <button class="btn btn--sm" id="onboarding-kpis-create-all" type="button" ${pending === 0 ? 'disabled' : ''}>Create all (disabled)</button>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table" id="onboarding-suggested-kpis-table">
+        <thead><tr><th>KPI</th><th>Domain</th><th>Grain</th><th>Source</th><th>Detection</th><th>Why</th><th>Actions</th></tr></thead>
+        <tbody>${suggestions.map((s) => {
+          const d = s.definition || {};
+          const created = onboardingDraft.created[s.key];
+          return `
+          <tr data-suggestion="${escapeHtml(s.key)}">
+            <td>${escapeHtml(s.title || d.kpi || '')}</td>
+            <td><code>${escapeHtml(d.domain || '')}</code></td>
+            <td>${escapeHtml(d.grain || '')}</td>
+            <td><code>${escapeHtml(d.sourceKey || '')}</code></td>
+            <td>${escapeHtml(d.detectionMethod || '')} <code>${escapeHtml(d.methodParamsJson || '')}</code></td>
+            <td>${escapeHtml(s.reason || '')}</td>
+            <td>${created
+              ? `<span class="status-badge status-badge--sev-low">${escapeHtml(created)}</span>`
+              : '<button class="btn btn--icon btn--sm" data-action="create-suggested-kpi">Create (disabled)</button>'}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>
+    <div id="onboarding-kpis-errors"></div>`;
+
+  host.querySelectorAll('button[data-action="create-suggested-kpi"]').forEach((btn) => {
+    btn.addEventListener('click', () => createSuggestedKpis([btn.closest('tr').dataset.suggestion]));
+  });
+  const createAll = document.getElementById('onboarding-kpis-create-all');
+  if (createAll) {
+    createAll.addEventListener('click', () => createSuggestedKpis(suggestions.filter((s) => !onboardingDraft.created[s.key]).map((s) => s.key)));
+  }
+}
+
+/** Sequential on purpose: the KPI API refuses a duplicate key with a 400, and parallel writes of
+ *  one profile's KPIs would race that check. */
+async function createSuggestedKpis(keys) {
+  const errors = [];
+  setStatus('onboarding-draft-status', `Creating ${keys.length} KPI(s)…`, null);
+  for (const key of keys) {
+    const suggestion = onboardingDraft.suggestions.find((s) => s.key === key);
+    if (!suggestion || onboardingDraft.created[key]) continue;
+    try {
+      const response = await fetch('/api/settings/kpis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': await getAntiforgeryToken() },
+        body: JSON.stringify(suggestion.definition),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const reasons = Array.isArray(body.errors) ? body.errors : [body.error || `HTTP ${response.status}`];
+        errors.push(`${suggestion.title || key}: ${reasons.join(' ')}`);
+        continue;
+      }
+      onboardingDraft.created[key] = body.kpiDefinitionId ? `Created #${body.kpiDefinitionId} (disabled)` : 'Created (disabled)';
+    } catch (err) {
+      errors.push(`${suggestion.title || key}: ${err.message}`);
+    }
+  }
+  renderSuggestedKpis();
+  const errorHost = document.getElementById('onboarding-kpis-errors');
+  if (errorHost) {
+    errorHost.innerHTML = errors.length === 0 ? '' : `
+      <div class="state-block state-block--error">
+        <strong>${errors.length} KPI(s) not created:</strong>
+        <ul class="company-problems">${errors.map((e) => `<li>${escapeHtml(e)}</li>`).join('')}</ul>
+      </div>`;
+  }
+  setStatus('onboarding-draft-status', errors.length === 0 ? 'Suggested KPI(s) created, all disabled.' : `${errors.length} KPI(s) not created.`, errors.length === 0 ? 'ok' : 'error');
+  if (errors.length < keys.length) loadKpiSettings();
+}
+
+/** The draft goes through the same editor and the same PUT as any other profile edit. */
+function openOnboardingDraftInEditor() {
+  const card = document.getElementById('company-editor');
+  const profile = onboardingDraft.profile;
+  if (!card || !profile) return;
+  card.hidden = false;
+  card.dataset.key = profile.profileKey;
+  document.getElementById('company-editor-title').textContent = `New profile ${profile.profileKey} — draft`;
+  document.getElementById('company-editor-text').value = JSON.stringify(profile, null, 2);
+  document.getElementById('company-editor-hint').innerHTML =
+    `<strong>Draft</strong> — <code>${escapeHtml(profile.profileKey)}</code> is saved <strong>disabled</strong>. Review it, save, then set enabled=true and save again before creating the suggested KPIs.`;
+  renderCompanyProblems([]);
+  setStatus('company-editor-status', 'Draft loaded — nothing is saved yet.', null);
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// Settings — KPI definitions (Spec 1000)
+// ============================================================================
+
+const KPI_METHOD_LABELS = { staticThreshold: 'Static threshold', baselinePercent: 'Baseline percent', robustZScore: 'Robust z-score' };
+const KPI_METHOD_HINTS = {
+  staticThreshold: 'Requires {"threshold": number}. Direction must be Increase or Decrease.',
+  baselinePercent: 'Requires {"lookbackDays": 1..28, "thresholdPercent": > 0}.',
+  robustZScore: 'Requires {"windowBuckets": 4..1000, "zThreshold": > 0}.',
+};
+const kpiSettings = { definitions: [], selectedId: null, auditRequest: 0 };
+
+function kpiPillarLabel(pillar) {
+  return RW_PILLAR_DISPLAY[String(pillar || '').toLowerCase()] || pillar || '—';
+}
+
+function kpiTitle(definition) {
+  return `${kpiPillarLabel(definition.pillar)} · ${definition.kpi}${definition.stage ? ` · ${definition.stage}` : ''} · ${domainLabel(definition.domain)}${kpiGrain(definition) === 'entity' ? ' · per entity' : ''}`;
+}
+
+/** Contract v4 §1: grain is 'domain' | 'entity'; rows from an older API have none and are domain. */
+function kpiGrain(definition) {
+  return String(definition.grain || 'domain').toLowerCase() === 'entity' ? 'entity' : 'domain';
+}
+
+function kpiGrainCell(definition) {
+  return kpiGrain(definition) === 'entity'
+    ? `Entity <span class="rw-scope">max ${escapeHtml(definition.maxEntitiesPerBucket ?? 500)}</span>`
+    : 'Domain';
+}
+
+function kpiCap(value) {
+  const text = String(value ?? '');
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : '—';
+}
+
+async function loadKpiSettings() {
+  const tbody = document.getElementById('kpi-settings-tbody');
+  if (!tbody) return;
+  try {
+    const response = await fetch(withActiveCompany('/api/settings/kpis'));
+    if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+    const body = await response.json();
+    kpiSettings.definitions = Array.isArray(body) ? body : [];
+    renderKpiSettings();
+  } catch (err) {
+    console.warn('/api/settings/kpis unreachable.', err);
+    tbody.innerHTML = '<tr><td colspan="12"><div class="state-block state-block--error">KPI definitions could not be read.</div></td></tr>';
+  }
+  if (kpiSettings.selectedId != null) loadKpiAudit(kpiSettings.selectedId);
+}
+
+function renderKpiSettings() {
+  const tbody = document.getElementById('kpi-settings-tbody');
+  if (!tbody) return;
+  const definitions = kpiSettings.definitions;
+  tbody.innerHTML = definitions.length === 0
+    ? '<tr><td colspan="12"><div class="state-block">No KPI definitions configured.</div></td></tr>'
+    : definitions.map((d) => `
+      <tr data-kpi-id="${escapeHtml(d.kpiDefinitionId)}"${d.kpiDefinitionId === kpiSettings.selectedId ? ' class="is-selected"' : ''}>
+        <td>${escapeHtml(kpiPillarLabel(d.pillar))}</td>
+        <td>${escapeHtml(d.kpi)}${d.stage ? ` <span class="rw-scope">${escapeHtml(d.stage)}</span>` : ''}</td>
+        <td>${escapeHtml(domainLabel(d.domain))}</td>
+        <td>${kpiGrainCell(d)}</td>
+        <td>${escapeHtml(kpiCap(d.direction))}</td>
+        <td>${escapeHtml(String(d.aggregation || '').toUpperCase())}</td>
+        <td>${escapeHtml(KPI_METHOD_LABELS[d.detectionMethod] || d.detectionMethod)} <code>${escapeHtml(d.methodParamsJson)}</code></td>
+        <td>${escapeHtml(d.consecutiveCount)}</td>
+        <td>${escapeHtml(d.cooldownMinutes)}</td>
+        <td>${d.enabled ? '<span class="status-badge status-badge--healthy">Enabled</span>' : '<span class="status-badge">Disabled</span>'}</td>
+        <td>${d.updatedAt ? `${formatRelativeTime(d.updatedAt)} by ${escapeHtml(d.updatedBy || 'unknown')}` : '—'}</td>
+        <td class="kpi-settings__actions">
+          <button class="btn btn--icon btn--sm" type="button" data-action="edit-kpi">Edit</button>
+          <button class="btn btn--icon btn--sm btn--ghost" type="button" data-action="kpi-history">History</button>
+        </td>
+      </tr>`).join('');
+}
+
+function kpiSetErrors(errors) {
+  const list = document.getElementById('kpi-editor-errors');
+  if (!list) return;
+  list.hidden = errors.length === 0;
+  list.innerHTML = errors.map((error) => `<li>${escapeHtml(error)}</li>`).join('');
+}
+
+function kpiRenderMethodHint() {
+  const method = document.getElementById('kpi-edit-method').value;
+  document.getElementById('kpi-edit-params-hint').textContent = KPI_METHOD_HINTS[method] || '';
+}
+
+function openKpiEditor(id) {
+  const definition = kpiSettings.definitions.find((d) => d.kpiDefinitionId === id);
+  const card = document.getElementById('kpi-editor');
+  if (!definition || !card) return;
+  kpiSettings.selectedId = id;
+  card.hidden = false;
+  card.dataset.kpiId = String(id);
+  document.getElementById('kpi-editor-title').textContent = `Edit ${kpiTitle(definition)}`;
+  document.getElementById('kpi-edit-direction').value = String(definition.direction || '').toLowerCase();
+  document.getElementById('kpi-edit-frequency').value = definition.evaluationFrequency || '';
+  document.getElementById('kpi-edit-bucket').value = definition.bucketSize || '';
+  document.getElementById('kpi-edit-lookback').value = definition.lookbackWindow || '';
+  document.getElementById('kpi-edit-sample').value = definition.sampleSize ?? '';
+  document.getElementById('kpi-edit-min-obs').value = definition.minObservationsPerBucket ?? '';
+  document.getElementById('kpi-edit-grain').value = kpiGrain(definition);
+  document.getElementById('kpi-edit-max-entities').value = definition.maxEntitiesPerBucket ?? 500;
+  document.getElementById('kpi-edit-method').value = definition.detectionMethod || 'baselinePercent';
+  document.getElementById('kpi-edit-params').value = definition.methodParamsJson || '';
+  document.getElementById('kpi-edit-consecutive').value = definition.consecutiveCount ?? '';
+  document.getElementById('kpi-edit-cooldown').value = definition.cooldownMinutes ?? '';
+  document.getElementById('kpi-edit-enabled').checked = !!definition.enabled;
+  kpiRenderMethodHint();
+  kpiSetErrors([]);
+  setStatus('kpi-editor-status', '', null);
+  renderKpiSettings();
+  loadKpiAudit(id);
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/** Starts from the row exactly as GET returned it and overwrites only the edited fields; the
+ *  backend validates every range and its 400 errors are shown verbatim. */
+async function saveKpiEditor() {
+  const card = document.getElementById('kpi-editor');
+  const id = Number(card.dataset.kpiId);
+  const original = kpiSettings.definitions.find((d) => d.kpiDefinitionId === id);
+  if (!original) return;
+  // An empty box would reach the backend as null and be stored as 0, so it is refused here instead.
+  const missing = [];
+  const requiredInt = (elementId, label) => {
+    const raw = document.getElementById(elementId).value.trim();
+    const value = Number(raw);
+    if (raw === '' || !Number.isInteger(value)) {
+      missing.push(`${label} must be a whole number.`);
+      return null;
+    }
+    return value;
+  };
+  const payload = {
+    ...original,
+    direction: document.getElementById('kpi-edit-direction').value,
+    evaluationFrequency: document.getElementById('kpi-edit-frequency').value.trim(),
+    bucketSize: document.getElementById('kpi-edit-bucket').value.trim(),
+    lookbackWindow: document.getElementById('kpi-edit-lookback').value.trim(),
+    sampleSize: requiredInt('kpi-edit-sample', 'Sample size'),
+    minObservationsPerBucket: requiredInt('kpi-edit-min-obs', 'Minimum observations'),
+    grain: document.getElementById('kpi-edit-grain').value,
+    maxEntitiesPerBucket: requiredInt('kpi-edit-max-entities', 'Max entities per bucket'),
+    detectionMethod: document.getElementById('kpi-edit-method').value,
+    methodParamsJson: document.getElementById('kpi-edit-params').value.trim(),
+    consecutiveCount: requiredInt('kpi-edit-consecutive', 'Consecutive buckets'),
+    cooldownMinutes: requiredInt('kpi-edit-cooldown', 'Cooldown (minutes)'),
+    enabled: document.getElementById('kpi-edit-enabled').checked,
+    changedBy: document.getElementById('kpi-edit-changed-by').value.trim(),
+  };
+  if (missing.length > 0) {
+    kpiSetErrors(missing);
+    setStatus('kpi-editor-status', 'Not saved.', 'error');
+    return;
+  }
+  setStatus('kpi-editor-status', 'Saving…', null);
+  kpiSetErrors([]);
+  const saveButton = document.getElementById('kpi-editor-save');
+  saveButton.disabled = true;
+  try {
+    const response = await fetch('/api/settings/kpis', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': await getAntiforgeryToken() },
+      body: JSON.stringify(payload),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const errors = Array.isArray(body.errors) ? body.errors : [body.error || `Request failed: ${response.status}`];
+      kpiSetErrors(errors);
+      setStatus('kpi-editor-status', `Not saved (HTTP ${response.status}).`, 'error');
+      return;
+    }
+    setStatus('kpi-editor-status', 'Saved.', 'ok');
+    showToast('KPIs', `${kpiTitle(body.kpi ? body : original)} saved.`, 'success');
+    await loadKpiSettings();
+    if (rwWatch.ready) loadPillarHealth();
+  } catch (err) {
+    setStatus('kpi-editor-status', err.message, 'error');
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+function kpiSnapshotField(snapshot, name) {
+  if (!snapshot) return null;
+  const key = Object.keys(snapshot).find((k) => k.toLowerCase() === name.toLowerCase());
+  return key === undefined ? null : snapshot[key];
+}
+
+async function loadKpiAudit(id) {
+  const tbody = document.getElementById('kpi-audit-tbody');
+  const caption = document.getElementById('kpi-audit-caption');
+  if (!tbody) return;
+  const definition = kpiSettings.definitions.find((d) => d.kpiDefinitionId === id);
+  if (caption) caption.textContent = definition ? kpiTitle(definition) : `KPI ${id}`;
+  // A slow answer for a KPI selected earlier must not overwrite the history of the current one.
+  const request = kpiSettings.auditRequest + 1;
+  kpiSettings.auditRequest = request;
+  tbody.innerHTML = '<tr><td colspan="8"><div class="state-block">Loading history…</div></td></tr>';
+  try {
+    const response = await fetch(withActiveCompany(`/api/settings/kpis/${encodeURIComponent(id)}/audit`));
+    if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+    const entries = await response.json();
+    if (kpiSettings.auditRequest !== request) return;
+    if (!Array.isArray(entries) || entries.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8"><div class="state-block">No changes recorded yet.</div></td></tr>';
+      return;
+    }
+    const cell = (value) => escapeHtml(value == null || value === '' ? '—' : String(value));
+    tbody.innerHTML = entries.map((entry) => {
+      let snapshot = null;
+      try { snapshot = JSON.parse(entry.snapshotJson); } catch { snapshot = null; }
+      if (!snapshot) {
+        return `<tr><td>${formatRelativeTime(entry.changedAt)}</td><td>${cell(entry.changedBy)}</td><td colspan="6"><code>${cell(entry.snapshotJson)}</code></td></tr>`;
+      }
+      const enabled = kpiSnapshotField(snapshot, 'Enabled');
+      return `<tr>
+        <td title="${escapeHtml(new Date(entry.changedAt).toLocaleString())}">${formatRelativeTime(entry.changedAt)}</td>
+        <td>${cell(entry.changedBy)}</td>
+        <td>${cell(kpiSnapshotField(snapshot, 'Direction'))}</td>
+        <td>${cell(kpiSnapshotField(snapshot, 'DetectionMethod'))}</td>
+        <td><code>${cell(kpiSnapshotField(snapshot, 'MethodParamsJson'))}</code></td>
+        <td>${cell(kpiSnapshotField(snapshot, 'ConsecutiveCount'))}</td>
+        <td>${cell(kpiSnapshotField(snapshot, 'CooldownMinutes'))}</td>
+        <td>${enabled == null ? '—' : (enabled === true || enabled === 1 ? 'Yes' : 'No')}</td>
+      </tr>`;
+    }).join('');
+  } catch (err) {
+    if (kpiSettings.auditRequest !== request) return;
+    console.warn('/api/settings/kpis audit unreachable.', err);
+    tbody.innerHTML = '<tr><td colspan="8"><div class="state-block state-block--error">History could not be read.</div></td></tr>';
+  }
+}
+
+function wireKpiSettings() {
+  const tbody = document.getElementById('kpi-settings-tbody');
+  if (!tbody) return;
+  tbody.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-action]');
+    if (!button) return;
+    const id = Number(button.closest('tr').dataset.kpiId);
+    if (button.dataset.action === 'edit-kpi') openKpiEditor(id);
+    if (button.dataset.action === 'kpi-history') {
+      kpiSettings.selectedId = id;
+      renderKpiSettings();
+      loadKpiAudit(id);
+    }
+  });
+  document.getElementById('kpi-edit-method').addEventListener('change', kpiRenderMethodHint);
+  document.getElementById('kpi-editor-save').addEventListener('click', saveKpiEditor);
+  document.getElementById('kpi-editor-close').addEventListener('click', () => {
+    document.getElementById('kpi-editor').hidden = true;
+  });
+}
+
 function wireHeaderControls() {
   document.getElementById('refresh-btn').addEventListener('click', () => refreshData());
   document.getElementById('run-demo-scenario').addEventListener('click', runDemoScenario);
@@ -7638,7 +9832,9 @@ function wireClubMapFilters() {
       platform: platform ? platform.value : '',
       q: q ? q.value.trim() : '',
     };
+    resetClubMapPage();
     renderClubMapTable();
+    renderClubMapOverview();
   };
   brand?.addEventListener('change', onChange);
   product?.addEventListener('change', onChange);
@@ -7647,14 +9843,468 @@ function wireClubMapFilters() {
   q?.addEventListener('input', onChange);
 }
 
-/** Club Map products (normalized catalog; fixed column order). */
+/** Application Map product columns (fixed order). */
 const CLUB_MAP_PRODUCTS = ['Cars', 'Cruises', 'Hotels', 'Flights'];
+
+/** The inventory's product columns are its own data model, so they are drawn here, not in the HTML. */
+function renderClubMapProductHeaders() {
+  const row = document.getElementById('club-map-product-headers');
+  if (!row || row.children.length) return;
+  row.innerHTML = CLUB_MAP_PRODUCTS
+    .map((product) => `<th data-sort="product${escapeHtml(product)}" class="club-map-th--product">${escapeHtml(product)}</th>`)
+    .join('');
+}
+
+/** Known platform families shown on the Application Map overview. */
+const CLUB_MAP_PLATFORMS = ['Fusion', 'Hybrid', 'SOR', 'NG'];
+
+/**
+ * NG rows store ClubId = this offset + Members.MemberClassId so they never
+ * collide with SaveOn VacationClub IDs. The UI subtracts it for display.
+ */
+const NG_MEMBER_CLASS_CLUB_ID_OFFSET = 1000000;
+
+/** Club ID shown in the table (MemberClassId for NG; otherwise inventory ClubId). */
+function clubMapVisibleClubId(row) {
+  const id = Number(row.clubId);
+  if ((row.fusionPlatform || '') === 'NG' && Number.isFinite(id) && id >= NG_MEMBER_CLASS_CLUB_ID_OFFSET) {
+    return id - NG_MEMBER_CLASS_CLUB_ID_OFFSET;
+  }
+  return row.clubId;
+}
+
+/**
+ * Club-level observability bucket for overview charts (US 240388):
+ * - observed: every listed product has maturity >= 1
+ * - partial: mix of maturity >= 1 and 0 / missing
+ * - notObserved: no product has maturity >= 1 (or no products)
+ */
+function clubMapObservabilityBucket(row) {
+  const map = clubMapProductStatusMap(row);
+  const levels = CLUB_MAP_PRODUCTS
+    .filter((name) => map.has(name))
+    .map((name) => Number(map.get(name).maturityStatus) || 0);
+  if (levels.length === 0) return 'notObserved';
+  const anyObserved = levels.some((n) => n >= 1);
+  const allObserved = levels.every((n) => n >= 1);
+  if (allObserved) return 'observed';
+  if (anyObserved) return 'partial';
+  return 'notObserved';
+}
+
+/** Platform key for overview cards; null if the row is not a known family. */
+function clubMapOverviewPlatformKey(row) {
+  const platform = row.fusionPlatform || '';
+  return CLUB_MAP_PLATFORMS.includes(platform) ? platform : null;
+}
+
+function emptyObservabilityCounts() {
+  return { observed: 0, notObserved: 0, partial: 0 };
+}
+
+function renderClubMapOverview() {
+  const root = document.getElementById('club-map-overview');
+  const totalEl = document.getElementById('club-map-overview-total');
+  const errEl = document.getElementById('club-map-overview-error');
+  if (!root || !totalEl) return;
+
+  const meta = state.clubInventoryMeta || {};
+  const unavailable = Boolean(meta.warning && (!state.clubInventory || state.clubInventory.length === 0));
+  root.classList.toggle('is-unavailable', unavailable);
+  if (errEl) errEl.hidden = !unavailable;
+  if (unavailable) {
+    totalEl.textContent = '';
+    return;
+  }
+
+  const rows = filteredClubInventory();
+  const countsByPlatform = Object.fromEntries(
+    CLUB_MAP_PLATFORMS.map((platform) => [platform, emptyObservabilityCounts()]),
+  );
+  rows.forEach((row) => {
+    const platform = clubMapOverviewPlatformKey(row);
+    if (!platform) return;
+    const bucket = clubMapObservabilityBucket(row);
+    countsByPlatform[platform][bucket] += 1;
+  });
+
+  totalEl.textContent = `${rows.length.toLocaleString()} clubs`;
+  root.querySelectorAll('.club-map-overview__card').forEach((card) => {
+    const platform = card.getAttribute('data-platform');
+    const stats = countsByPlatform[platform] || emptyObservabilityCounts();
+    const total = stats.observed + stats.notObserved + stats.partial;
+    const observedPct = total > 0 ? Math.round((100 * stats.observed) / total) : 0;
+    const valueEl = card.querySelector('[data-role="value"]');
+    const metaEl = card.querySelector('[data-role="meta"]');
+    const chartEl = card.querySelector('[data-role="chart"]');
+    const partialLegend = card.querySelector('.club-map-chart__legend-partial');
+    if (valueEl) valueEl.textContent = String(total);
+    if (metaEl) {
+      let text = `${stats.observed} observed / ${stats.notObserved} not observed (${observedPct}%)`;
+      if (stats.partial > 0) text += ` · ${stats.partial} partial`;
+      metaEl.textContent = text;
+    }
+    if (chartEl) {
+      const observedWidth = total > 0 ? (100 * stats.observed) / total : 0;
+      const notObservedWidth = total > 0 ? (100 * stats.notObserved) / total : 0;
+      const partialWidth = total > 0 ? (100 * stats.partial) / total : 0;
+      chartEl.innerHTML = `
+        <span class="club-map-chart__seg club-map-chart__seg--observed" style="width:${observedWidth}%" title="Observed: ${stats.observed}"></span>
+        <span class="club-map-chart__seg club-map-chart__seg--partial" style="width:${partialWidth}%" title="Partial: ${stats.partial}"></span>
+        <span class="club-map-chart__seg club-map-chart__seg--not-observed" style="width:${notObservedWidth || (total === 0 ? 100 : 0)}%" title="Not observed: ${stats.notObserved}"></span>`;
+    }
+    if (partialLegend) partialLegend.hidden = !(stats.partial > 0);
+    card.dataset.hasPartial = stats.partial > 0 ? 'true' : 'false';
+  });
+}
 const CLUB_MAP_PRODUCT_SORT_KEYS = {
   productCars: 'Cars',
   productCruises: 'Cruises',
   productHotels: 'Hotels',
   productFlights: 'Flights',
 };
+
+/**
+ * US 241135 — same catalog as journeys / KqlSourceResolver / TelemetrySourceDefaults.
+ * Prefer loading production rows from GET /api/settings/telemetry-sources; fallback = defaults below.
+ */
+const CLUB_MAP_TELEMETRY_ENV = 'production';
+/** Default Azure Portal directory (Hotels/Cars/Cruises / ICE). */
+const CLUB_MAP_AI_PORTAL_TENANT = 'iceenterprise.com';
+/**
+ * Air App Insights lives in a different Entra tenant. Opening Air resources under
+ * #@iceenterprise.com causes "You do not have authorization" on cross-resource queries.
+ */
+const CLUB_MAP_AIR_PORTAL_TENANT = 'carnivalvacationclub.onmicrosoft.com';
+const CLUB_MAP_PORTAL_TENANT_BY_SOURCE = {
+  'air-ui': CLUB_MAP_AIR_PORTAL_TENANT,
+  'air-api': CLUB_MAP_AIR_PORTAL_TENANT,
+};
+
+function clubMapPortalTenantForSource(sourceAlias) {
+  if (!sourceAlias) return CLUB_MAP_AI_PORTAL_TENANT;
+  return CLUB_MAP_PORTAL_TENANT_BY_SOURCE[String(sourceAlias).toLowerCase()] || CLUB_MAP_AI_PORTAL_TENANT;
+}
+
+function clubMapPortalTenantForProduct(productName) {
+  const sourceAlias = CLUB_MAP_PRODUCT_WORKBOOK_COMPONENT[productName]
+    || (CLUB_MAP_PRODUCT_SOURCES[productName] || [])[0];
+  return clubMapPortalTenantForSource(sourceAlias);
+}
+
+/** Fallback ARM ids (mirror TelemetrySourceDefaults production). Overridden by API catalog when loaded. */
+const CLUB_MAP_TELEMETRY_DEFAULTS = {
+  'sor-frontend': '/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/sor-appinsights-rg-usw/providers/microsoft.insights/components/sor-frontend-ai-prod-usw',
+  club: '/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/ovs-club-dev/providers/microsoft.insights/components/appInsights-ovs-club',
+  'cruise-core': '/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/cruiseng-rg-prod-usc/providers/microsoft.insights/components/cruise-core-ovs-ai-prod',
+  'cruise-api': '/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/cruiseng-rg-prod-usc/providers/microsoft.insights/components/cruise-web-api-ai-prod',
+  'air-ui': '/subscriptions/819c105d-0328-4c63-a1a4-5284021e175f/resourceGroups/Air-RG-Prod-USC/providers/microsoft.insights/components/appInsights-Air-UI-Prod-USC',
+  'air-api': '/subscriptions/819c105d-0328-4c63-a1a4-5284021e175f/resourceGroups/Air-RG-Prod-USC/providers/microsoft.insights/components/appInsights-Air-API-Prod-USC',
+};
+
+/** ClubInventory.TelemetryLocation component name → catalog alias ({{SOURCE:*}}). */
+const CLUB_MAP_COMPONENT_TO_SOURCE = {
+  'sor-frontend-ai-prod-usw': 'sor-frontend',
+  'appInsights-ovs-club': 'club',
+  'cruise-core-ovs-ai-prod': 'cruise-core',
+  'cruise-web-api-ai-prod': 'cruise-api',
+  'appInsights-Air-UI-Prod-USC': 'air-ui',
+  'appInsights-Air-API-Prod-USC': 'air-api',
+};
+
+/** Map product → preferred catalog aliases (same verticals journeys use). */
+const CLUB_MAP_PRODUCT_SOURCES = {
+  Cars: ['sor-frontend', 'club'],
+  Hotels: ['sor-frontend', 'club'],
+  Cruises: ['cruise-core', 'cruise-api'],
+  Flights: ['air-ui', 'air-api'],
+};
+
+/**
+ * Per-product workbooks (ClubId / PartnerId params).
+ * Flights workbook is hosted on ICE (write access) but KQL targets Air UI (cross-resource).
+ */
+const CLUB_MAP_HOTELS_WORKBOOK_ID =
+  '/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/sor-appinsights-rg-usw/providers/Microsoft.Insights/workbooks/87e5efd7-2760-4487-96af-fe9b51077736';
+const CLUB_MAP_CARS_WORKBOOK_ID =
+  '/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/sor-appinsights-rg-usw/providers/Microsoft.Insights/workbooks/b2c4e8f0-1a3d-4c5e-9f67-88e5d4c3b2a1';
+const CLUB_MAP_CRUISES_WORKBOOK_ID =
+  '/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/cruiseng-rg-prod-usc/providers/Microsoft.Insights/workbooks/c7d8e9f0-2a3b-4c5d-9e6f-77a8b9c0d1e2';
+/**
+ * Flights parked (Air other tenant / workbook write). Demo focus: Hotels, Cars, Cruises.
+ */
+const CLUB_MAP_PRODUCT_WORKBOOKS = {
+  Hotels: CLUB_MAP_HOTELS_WORKBOOK_ID,
+  Cars: CLUB_MAP_CARS_WORKBOOK_ID,
+  Cruises: CLUB_MAP_CRUISES_WORKBOOK_ID,
+  Flights: '',
+};
+
+/** Workbook blade ComponentId (owner AI) per Map product. */
+const CLUB_MAP_PRODUCT_WORKBOOK_COMPONENT = {
+  Hotels: 'sor-frontend',
+  Cars: 'sor-frontend',
+  Cruises: 'cruise-core',
+  Flights: 'air-ui',
+};
+
+function clubMapTelemetryCatalog() {
+  return state.clubMapTelemetrySources || CLUB_MAP_TELEMETRY_DEFAULTS;
+}
+
+function clubMapResolveSourceResourceId(sourceAlias) {
+  if (!sourceAlias) return null;
+  const key = String(sourceAlias).trim().toLowerCase();
+  const catalog = clubMapTelemetryCatalog();
+  for (const [alias, resourceId] of Object.entries(catalog)) {
+    if (alias.toLowerCase() !== key) continue;
+    // null = explicitly disabled in Settings (do not fall back to production defaults).
+    return resourceId || null;
+  }
+  return CLUB_MAP_TELEMETRY_DEFAULTS[key] || null;
+}
+
+/** TelemetryLocation token → catalog alias, or null. */
+function clubMapComponentToSourceAlias(componentName) {
+  const raw = String(componentName || '').trim();
+  if (!raw) return null;
+  if (CLUB_MAP_COMPONENT_TO_SOURCE[raw]) return CLUB_MAP_COMPONENT_TO_SOURCE[raw];
+  const lower = raw.toLowerCase();
+  const hit = Object.keys(CLUB_MAP_COMPONENT_TO_SOURCE).find((k) => k.toLowerCase() === lower);
+  if (hit) return CLUB_MAP_COMPONENT_TO_SOURCE[hit];
+  // Already a catalog alias?
+  if (clubMapResolveSourceResourceId(raw)) return raw.toLowerCase();
+  return null;
+}
+
+async function loadClubMapTelemetrySources() {
+  try {
+    const response = await fetch(withActiveCompany('/api/settings/telemetry-sources'));
+    if (!response.ok) return;
+    const body = await response.json();
+    const sources = Array.isArray(body.sources) ? body.sources : [];
+    const map = { ...CLUB_MAP_TELEMETRY_DEFAULTS };
+    sources.forEach((s) => {
+      if (!s?.alias) return;
+      if (String(s.environment || '').toLowerCase() !== CLUB_MAP_TELEMETRY_ENV) return;
+      const alias = String(s.alias).trim();
+      // Match KqlSourceResolver: disabled sources must not resolve to production defaults.
+      if (s.enabled === false) {
+        map[alias] = null;
+        return;
+      }
+      if (!s.resourceId) return;
+      map[alias] = s.resourceId;
+    });
+    state.clubMapTelemetrySources = map;
+  } catch (err) {
+    console.warn('Club Map: telemetry-sources catalog unavailable; using TelemetrySourceDefaults mirror.', err);
+  }
+}
+
+/**
+ * Azure Portal deep-link that opens a saved workbook with NotebookParams
+ * (plain ?ClubId= on /resource does NOT bind workbook parameters).
+ * Format: UsageNotebookBlade + ComponentId + ConfigurationId + NotebookParams.
+ */
+function clubMapWorkbookDeepLink(workbookResourceId, row, productName) {
+  if (!workbookResourceId) return null;
+  const clubId = String(clubMapVisibleClubId(row) ?? '').trim();
+  const icePartner = row?.icePartnerId == null ? '' : String(row.icePartnerId).trim();
+  // Cruises events are keyed by PartnerId only. Hotels and Cars are keyed by ClubId.
+  const partnerRaw = productName === 'Cruises' ? icePartner : '';
+  if (productName === 'Cruises') {
+    if (!partnerRaw) return null;
+  } else if (!clubId) {
+    return null;
+  }
+  // Keep NotebookParams minimal — extra keys (e.g. RowLimit) can break UsageNotebookBlade open.
+  // Opens at 24 hours. Time range and table rows stay editable in the workbook.
+  const notebookParams = {
+    ClubId: clubId,
+    TimeRange: { durationMs: 86400000 },
+  };
+  if (productName === 'Cruises') notebookParams.PartnerId = partnerRaw;
+  const sourceAlias = CLUB_MAP_PRODUCT_WORKBOOK_COMPONENT[productName] || 'sor-frontend';
+  const componentId = clubMapResolveSourceResourceId(sourceAlias);
+  if (!componentId) return null;
+  const portalTenant = clubMapPortalTenantForProduct(productName);
+  const enc = encodeURIComponent;
+  return `https://portal.azure.com/#@${portalTenant}/blade/AppInsightsExtension/UsageNotebookBlade`
+    + `/ComponentId/${enc(componentId)}`
+    + `/ConfigurationId/${enc(workbookResourceId)}`
+    + `/Type/workbook`
+    + `/NotebookParams/${enc(JSON.stringify(notebookParams))}`;
+}
+
+function clubMapTelemetryAliases(row) {
+  return String(row?.telemetryLocation || '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
+function clubMapAppInsightsResourceUrl(resourceId, sourceAlias) {
+  if (!resourceId) return null;
+  const portalTenant = clubMapPortalTenantForSource(sourceAlias);
+  return `https://portal.azure.com/#@${portalTenant}/resource${resourceId}`;
+}
+
+/**
+ * Resolve TelemetryLocation component name or catalog alias → App Insights Logs blade.
+ * Telemetry column must NOT open product workbooks — free-form query for operators.
+ */
+function clubMapAppInsightsPortalUrl(componentOrAlias) {
+  const sourceAlias = clubMapComponentToSourceAlias(componentOrAlias) || componentOrAlias;
+  const resourceId = clubMapResolveSourceResourceId(sourceAlias);
+  if (!resourceId) return null;
+  return clubMapAppInsightsLogsBladeUrl(resourceId, sourceAlias)
+    || clubMapAppInsightsResourceUrl(resourceId, sourceAlias);
+}
+
+/**
+ * Short starter KQL for Logs blade (no blank lines). Filters by ClubId and optional IcePartnerId.
+ * POC for US 241135 phase-2 — not a full journey workbook.
+ */
+function clubMapProductFilterQuery(row, productName) {
+  const clubId = String(row?.clubId ?? '').replace(/"/g, '');
+  if (!clubId) return null;
+  const partnerRaw = row?.icePartnerId == null ? '' : String(row.icePartnerId).trim();
+  const partner = partnerRaw.replace(/"/g, '');
+  const partnerClause = partner
+    ? ` or tostring(customDimensions.PartnerId) == "${partner}"`
+    : '';
+  const productHint = productName ? ` // Map product: ${productName}` : '';
+  return [
+    `union isfuzzy=true customEvents, traces, pageViews, requests${productHint}`,
+    `| where timestamp > ago(24h)`,
+    `| where tostring(customDimensions.ClubId) == "${clubId}"${partnerClause}`,
+    `| take 100`,
+  ].join('\n');
+}
+
+/** App Insights Logs blade (empty editor) for a resource. */
+function clubMapAppInsightsLogsBladeUrl(resourceId, sourceAlias) {
+  if (!resourceId) return null;
+  const portalTenant = clubMapPortalTenantForSource(sourceAlias);
+  return `https://portal.azure.com/#@${portalTenant}/resource${resourceId}/logs`;
+}
+
+/** Azure "Copy link to query" expects GZip + Base64 (plain btoa does not preload the editor). */
+async function clubMapGzipBase64Query(query) {
+  if (!query || typeof CompressionStream === 'undefined') return null;
+  try {
+    const bytes = new TextEncoder().encode(query);
+    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'));
+    const compressed = new Uint8Array(await new Response(stream).arrayBuffer());
+    let binary = '';
+    compressed.forEach((b) => { binary += String.fromCharCode(b); });
+    return btoa(binary);
+  } catch {
+    return null;
+  }
+}
+
+async function clubMapAppInsightsLogsShareUrl(resourceId, query, sourceAlias) {
+  if (!resourceId || !query) return null;
+  const gzipB64 = await clubMapGzipBase64Query(query);
+  if (!gzipB64) return null;
+  const portalTenant = clubMapPortalTenantForSource(sourceAlias);
+  return `https://portal.azure.com/#@${portalTenant}/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/${encodeURIComponent(resourceId)}/source/LogsBlade.AnalyticsShareLinkToQuery/q/${gzipB64}`;
+}
+
+/**
+ * Resolve product → link when the club has that product.
+ * Prefer workbook/dashboard with ClubId (Cristiano 241135); else Logs+ClubId; else AI overview.
+ */
+function clubMapProductAppInsightsUrl(row, productName) {
+  // Only link when the Map shows this product (badge), never for "—".
+  if (!clubMapProductStatusMap(row).has(productName)) return null;
+  // Flights stays on the map. The badge does not open Air until that US lands.
+  if (productName === 'Flights') return null;
+  // Cruises workbook needs PartnerId; without it panels return no events — leave unlinked.
+  if (productName === 'Cruises') {
+    const partner = row?.icePartnerId == null ? '' : String(row.icePartnerId).trim();
+    if (!partner) return null;
+  }
+
+  const workbookId = CLUB_MAP_PRODUCT_WORKBOOKS[productName] || '';
+  const workbookUrl = clubMapWorkbookDeepLink(workbookId, row, productName);
+  if (workbookUrl) {
+    return { url: workbookUrl, alias: productName, mode: 'workbook-clubid', resourceId: workbookId };
+  }
+
+  const preferred = CLUB_MAP_PRODUCT_SOURCES[productName] || [];
+  if (preferred.length === 0) return null;
+
+  const onRow = new Set(
+    clubMapTelemetryAliases(row)
+      .map((c) => clubMapComponentToSourceAlias(c))
+      .filter(Boolean)
+      .map((a) => a.toLowerCase()),
+  );
+  const sourceOrder = [
+    ...preferred.filter((a) => onRow.has(a.toLowerCase())),
+    ...preferred.filter((a) => !onRow.has(a.toLowerCase())),
+  ];
+
+  for (const sourceAlias of sourceOrder) {
+    const resourceId = clubMapResolveSourceResourceId(sourceAlias);
+    if (!resourceId) continue;
+    const query = clubMapProductFilterQuery(row, productName);
+    const logsBlade = clubMapAppInsightsLogsBladeUrl(resourceId, sourceAlias);
+    if (query && logsBlade) {
+      return { url: logsBlade, alias: sourceAlias, mode: 'logs-club-filter', resourceId, query };
+    }
+    const overview = clubMapAppInsightsResourceUrl(resourceId, sourceAlias);
+    if (overview) return { url: overview, alias: sourceAlias, mode: 'resource', resourceId };
+  }
+  return null;
+}
+
+async function clubMapOpenAppInsightsLink(link) {
+  if (!link) return;
+  if (link.mode === 'logs-club-filter' && link.resourceId && link.query) {
+    try {
+      await navigator.clipboard.writeText(link.query);
+    } catch {
+      /* clipboard may be blocked */
+    }
+    const shareUrl = await clubMapAppInsightsLogsShareUrl(link.resourceId, link.query, link.alias);
+    window.open(shareUrl || link.url, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  if (link.url) window.open(link.url, '_blank', 'noopener,noreferrer');
+}
+
+function wireClubMapAppInsightsLinks() {
+  if (state.clubMapAppInsightsWired) return;
+  state.clubMapAppInsightsWired = true;
+  const tbody = document.getElementById('club-map-tbody');
+  tbody?.addEventListener('click', (ev) => {
+    const anchor = ev.target.closest('a.club-map-product-link[data-ai-mode]');
+    if (!anchor) return;
+    const mode = anchor.getAttribute('data-ai-mode');
+    if (mode !== 'logs-club-filter') return;
+    ev.preventDefault();
+    const resourceId = anchor.getAttribute('data-ai-resource-id') || '';
+    let query = '';
+    try {
+      query = decodeURIComponent(anchor.getAttribute('data-ai-query') || '');
+    } catch {
+      query = anchor.getAttribute('data-ai-query') || '';
+    }
+    const alias = anchor.getAttribute('data-ai-alias') || '';
+    const url = anchor.getAttribute('href') || '';
+    clubMapOpenAppInsightsLink({ mode, resourceId, query, alias, url });
+  });
+}
+
+/**
+ * When false: product badges ignore seeded maturity and always show 0 (Not Observed).
+ * Flip to true when observability maturity is live.
+ */
+const CLUB_MAP_USE_LIVE_MATURITY = true;
 
 /** Map product name -> { maturityStatus, maturityStatusName } for a club row. */
 function clubMapProductStatusMap(row) {
@@ -7668,9 +10318,13 @@ function clubMapProductStatusMap(row) {
     }
     const name = String(p?.name || '').trim();
     if (!name) return;
+    const raw = Number.isFinite(p.maturityStatus) ? p.maturityStatus : 0;
+    const level = CLUB_MAP_USE_LIVE_MATURITY ? raw : 0;
     map.set(name, {
-      maturityStatus: Number.isFinite(p.maturityStatus) ? p.maturityStatus : 0,
-      maturityStatusName: p.maturityStatusName || 'Not Observed',
+      maturityStatus: level,
+      maturityStatusName: CLUB_MAP_USE_LIVE_MATURITY
+        ? (p.maturityStatusName || 'Not Observed')
+        : 'Not Observed',
     });
   });
   // Legacy snapshot: domain CSV without statuses
@@ -7714,8 +10368,7 @@ function filteredClubInventory() {
   const needle = (f.q || '').toLowerCase();
   const statusFilter = f.status === '' || f.status == null ? null : Number(f.status);
   return state.clubInventory.filter((row) => {
-    const platform = row.fusionPlatform || '';
-    if (platform !== 'Fusion' && platform !== 'Hybrid') return false;
+    const platform = row.fusionPlatform || 'Unknown';
     if (f.brand && row.brandName !== f.brand) return false;
     if (f.platform && platform !== f.platform) return false;
     const productMap = clubMapProductStatusMap(row);
@@ -7728,7 +10381,7 @@ function filteredClubInventory() {
       if (!entries.some((p) => p.maturityStatus === statusFilter)) return false;
     }
     if (needle) {
-      const hay = [row.clubId, row.clubName, row.site, row.brandName, row.clientId, row.telemetryLocation]
+      const hay = [clubMapVisibleClubId(row), row.clubId, row.clubName, row.site, row.brandName, row.clientId, row.telemetryLocation, row.fusionPlatform]
         .filter((v) => v != null && v !== '')
         .join(' ')
         .toLowerCase();
@@ -7738,13 +10391,16 @@ function filteredClubInventory() {
   });
 }
 
-function platformPill(platform) {
+/** Platform badge for an Application Map row (Fusion / Hybrid / SOR / NG). */
+function clubMapPlatformBadge(platform) {
   const value = platform || 'Unknown';
-  const cls = value === 'Fusion' || value === 'Hybrid' ? 'status-badge status-badge--healthy' : 'status-badge status-badge--unknown';
+  const known = CLUB_MAP_PLATFORMS.includes(value);
+  const cls = known ? 'status-badge status-badge--healthy' : 'status-badge status-badge--unknown';
   return `<span class="${cls}">${escapeHtml(value)}</span>`;
 }
 
-/** One fixed product column: status circle, or — if club has no that product. */
+/** One fixed product column: status circle, or — if club has no that product.
+ *  US 241135: Hotels, Cars, and Cruises open the club workbook. Flights stays visible with no link. */
 function productStatusCell(row, productName) {
   const info = clubMapProductStatusMap(row).get(productName);
   if (!info) {
@@ -7757,7 +10413,25 @@ function productStatusCell(row, productName) {
       : level === 2 ? 'maturity-badge maturity-badge--2'
         : level === 3 ? 'maturity-badge maturity-badge--3'
           : 'maturity-badge maturity-badge--0';
-  return `<td class="club-map-cell club-map-cell--product"><span class="${cls}" title="${escapeHtml(productName)}: ${escapeHtml(name)}">${level}</span></td>`;
+  const link = clubMapProductAppInsightsUrl(row, productName);
+  const title = link
+    ? (link.mode === 'workbook-clubid'
+      ? `${productName}: ${name} · Open App Insights workbook (ClubId)`
+      : link.mode === 'logs-club-filter'
+        ? `${productName}: ${name} · Open App Insights Logs (ClubId filter)`
+        : `${productName}: ${name} · Open App Insights (${link.alias})`)
+    : `${productName}: ${name}`;
+  const badge = `<span class="${cls}">${level}</span>`;
+  let inner;
+  if (link?.mode === 'logs-club-filter') {
+    const qEnc = encodeURIComponent(link.query || '');
+    inner = `<a class="club-map-product-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(title)}" data-ai-mode="logs-club-filter" data-ai-alias="${escapeHtml(link.alias || '')}" data-ai-resource-id="${escapeHtml(link.resourceId || '')}" data-ai-query="${qEnc}">${badge}</a>`;
+  } else if (link) {
+    inner = `<a class="club-map-product-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(title)}">${badge}</a>`;
+  } else {
+    inner = `<span title="${escapeHtml(title)}">${badge}</span>`;
+  }
+  return `<td class="club-map-cell club-map-cell--product">${inner}</td>`;
 }
 
 function textCell(value, className = '') {
@@ -7766,7 +10440,7 @@ function textCell(value, className = '') {
   return `<td class="club-map-cell club-map-cell--text${muted} ${className}">${escapeHtml(text)}</td>`;
 }
 
-/** Telemetry: one resource per line. */
+/** Telemetry: one resource alias per line. Opens that App Insights Logs blade, not the product workbook. */
 function telemetryCell(value) {
   const parts = String(value || '')
     .split(',')
@@ -7775,8 +10449,66 @@ function telemetryCell(value) {
   if (parts.length === 0) {
     return '<td class="club-map-cell club-map-cell--muted">—</td>';
   }
-  const lines = parts.map((p) => `<div class="club-map-telemetry-line">${escapeHtml(p)}</div>`).join('');
+  const lines = parts.map((p) => {
+    const url = clubMapAppInsightsPortalUrl(p);
+    if (!url) {
+      return `<div class="club-map-telemetry-line">${escapeHtml(p)}</div>`;
+    }
+    return `<div class="club-map-telemetry-line"><a class="club-map-telemetry-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="Open App Insights Logs (free query)">${escapeHtml(p)}</a></div>`;
+  }).join('');
   return `<td class="club-map-cell club-map-cell--telemetry">${lines}</td>`;
+}
+
+function resetClubMapPage() {
+  state.clubMapPagination.page = 1;
+}
+
+function clubMapPageCount(totalRows, pageSize) {
+  return Math.max(1, Math.ceil(totalRows / pageSize) || 1);
+}
+
+function wireClubMapPagination() {
+  if (state.clubMapPaginationWired) return;
+  state.clubMapPaginationWired = true;
+  const prev = document.getElementById('club-map-page-prev');
+  const next = document.getElementById('club-map-page-next');
+  const size = document.getElementById('club-map-page-size');
+  prev?.addEventListener('click', () => {
+    if (state.clubMapPagination.page <= 1) return;
+    state.clubMapPagination.page -= 1;
+    renderClubMapTable();
+  });
+  next?.addEventListener('click', () => {
+    state.clubMapPagination.page += 1;
+    renderClubMapTable();
+  });
+  size?.addEventListener('change', () => {
+    const nextSize = Number(size.value) || 50;
+    state.clubMapPagination.pageSize = nextSize;
+    resetClubMapPage();
+    renderClubMapTable();
+  });
+}
+
+function updateClubMapPaginationControls(totalRows) {
+  const pager = document.getElementById('club-map-pagination');
+  const label = document.getElementById('club-map-page-label');
+  const prev = document.getElementById('club-map-page-prev');
+  const next = document.getElementById('club-map-page-next');
+  const size = document.getElementById('club-map-page-size');
+  if (!pager) return;
+
+  const pageSize = state.clubMapPagination.pageSize || 50;
+  const pageCount = clubMapPageCount(totalRows, pageSize);
+  if (state.clubMapPagination.page > pageCount) state.clubMapPagination.page = pageCount;
+  if (state.clubMapPagination.page < 1) state.clubMapPagination.page = 1;
+  const page = state.clubMapPagination.page;
+
+  pager.hidden = totalRows === 0;
+  if (size && String(size.value) !== String(pageSize)) size.value = String(pageSize);
+  if (label) label.textContent = `Page ${page} of ${pageCount}`;
+  if (prev) prev.disabled = page <= 1;
+  if (next) next.disabled = page >= pageCount;
 }
 
 function renderClubMapTable() {
@@ -7793,23 +10525,41 @@ function renderClubMapTable() {
       // Missing product sorts below present ones; then by status level.
       return info ? info.maturityStatus : -1;
     }
+    if (key === 'clubId') {
+      const visibleClubId = clubMapVisibleClubId(row);
+      return typeof visibleClubId === 'number' ? visibleClubId : Number(visibleClubId) || 0;
+    }
     const v = row[key];
     if (typeof v === 'number') return v;
     return (v == null ? '' : String(v)).toLowerCase();
   });
 
+  const pageSize = state.clubMapPagination.pageSize || 50;
+  const pageCount = clubMapPageCount(sorted.length, pageSize);
+  if (state.clubMapPagination.page > pageCount) state.clubMapPagination.page = pageCount;
+  const page = state.clubMapPagination.page;
+  const start = sorted.length === 0 ? 0 : (page - 1) * pageSize;
+  const end = Math.min(start + pageSize, sorted.length);
+  const pageRows = sorted.slice(start, end);
+
   if (note) {
     const meta = state.clubInventoryMeta;
     if (meta.warning) {
       note.textContent = meta.warning;
+    } else if (sorted.length === 0) {
+      note.textContent = `Showing 0 of ${meta.rowCount || state.clubInventory.length} clubs` +
+        (meta.source ? ` · source: ${meta.source}` : '') + '.';
     } else {
-      note.textContent = `Showing ${sorted.length} of ${meta.rowCount || state.clubInventory.length} clubs` +
+      note.textContent = `Showing ${start + 1}–${end} of ${sorted.length} matching` +
+        ` (${meta.rowCount || state.clubInventory.length} total)` +
         (meta.source ? ` · source: ${meta.source}` : '') + '.';
     }
   }
 
+  updateClubMapPaginationControls(sorted.length);
+
   if (sorted.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="12"><div class="state-block" role="status">${
+    tbody.innerHTML = `<tr><td colspan="11"><div class="state-block" role="status">${
       state.clubInventory.length === 0
         ? 'No inventory loaded.'
         : 'No clubs match the current filters.'
@@ -7817,31 +10567,30 @@ function renderClubMapTable() {
     return;
   }
 
-  tbody.innerHTML = sorted.map((row) => `
+  tbody.innerHTML = pageRows.map((row) => `
     <tr>
+      <td class="club-map-cell club-map-cell--num">${escapeHtml(row.clientId == null ? '—' : row.clientId)}</td>
+      ${textCell(row.brandName, 'club-map-cell--brand')}
+      <td class="club-map-cell club-map-cell--num">${escapeHtml(clubMapVisibleClubId(row))}</td>
+      ${textCell(row.clubName, 'club-map-cell--name')}
+      ${textCell(row.site, 'club-map-cell--site')}
+      <td class="club-map-cell">${clubMapPlatformBadge(row.fusionPlatform)}</td>
+      ${telemetryCell(row.telemetryLocation)}
       ${productStatusCell(row, 'Cars')}
       ${productStatusCell(row, 'Cruises')}
       ${productStatusCell(row, 'Hotels')}
       ${productStatusCell(row, 'Flights')}
-      ${textCell(row.brandName, 'club-map-cell--brand')}
-      <td class="club-map-cell club-map-cell--num">${escapeHtml(row.clubId)}</td>
-      ${textCell(row.clubName, 'club-map-cell--name')}
-      <td class="club-map-cell club-map-cell--num">${escapeHtml(row.clientId == null ? '—' : row.clientId)}</td>
-      ${textCell(row.site, 'club-map-cell--site')}
-      <td class="club-map-cell">${platformPill(row.fusionPlatform)}</td>
-      ${telemetryCell(row.telemetryLocation)}
-      <td class="club-map-cell">${escapeHtml(row.environment || '—')}</td>
     </tr>`).join('');
 }
 
 async function loadClubInventory({ force = false } = {}) {
   if (state.clubInventoryLoaded && !force) return;
   const tbody = document.getElementById('club-map-tbody');
-  if (tbody) tbody.innerHTML = loadingTableRow(12);
+  if (tbody) tbody.innerHTML = loadingTableRow(11);
   try {
     let payload;
     try {
-      payload = await fetchJsonPayload('/api/club-inventory');
+      payload = await fetchJsonPayload(withActiveCompany('/api/club-inventory'));
     } catch (apiErr) {
       // Local preview when Functions is down: snapshot exported from brand.ClubInventory.
       console.warn('/api/club-inventory unavailable, trying data/club-inventory.json', apiErr);
@@ -7869,14 +10618,45 @@ async function loadClubInventory({ force = false } = {}) {
     state.clubInventoryLoaded = false;
   }
   renderClubMapTable();
+  renderClubMapOverview();
 }
 
 async function ensureClubMapTab() {
   wireClubMapFilters();
+  wireClubMapPagination();
+  wireClubMapAppInsightsLinks();
+  await loadClubMapTelemetrySources();
   await loadClubInventory();
 }
 
+// Demo stack only (Demo:Enabled): a permanent banner above the header saying the data is synthetic.
+// When demo mode is off - or the endpoint is missing/unreachable - nothing is added to the DOM.
+async function loadDemoBanner() {
+  let info;
+  try {
+    const response = await fetch('/api/demo-mode', { headers: { Accept: 'application/json' } });
+    if (!response.ok) return;
+    info = await response.json();
+  } catch (err) {
+    return;
+  }
+  if (!info || info.enabled !== true || document.querySelector('.demo-banner')) return;
+
+  const banner = document.createElement('div');
+  banner.className = 'demo-banner';
+  banner.setAttribute('role', 'status');
+  banner.textContent = typeof info.label === 'string' && info.label.trim() ? info.label : 'DEMO — synthetic data';
+  const header = document.querySelector('.app-header');
+  if (header && header.parentNode) {
+    header.parentNode.insertBefore(banner, header);
+  } else {
+    document.body.insertBefore(banner, document.body.firstChild);
+  }
+  document.body.classList.add('has-demo-banner');
+}
+
 async function init() {
+  loadDemoBanner();
   document.getElementById('env-select').value = state.filters.environment;
   document.getElementById('time-range-select').value = state.filters.timeRange;
   wireOverlayDismiss();
@@ -7892,14 +10672,24 @@ async function init() {
   wireAgentBudgetSettings();
   wireCompanySelector();
   wireCompanySettings();
-
-  wireSortableTable('journeys-table', 'journeys', state.journeys, renderJourneysTable);
+  wireOnboardingDraft();
+  wireKpiSettings();
+  wireAccessTokenSettings();
+  openSettingsSectionFromUrl();
+  wireJourneysSort();
   wireSortableTable('exceptions-table', 'exceptions', state.exceptions, renderExceptionsTable);
-  wireSortableTable('club-map-table', 'clubMap', state.clubInventory, renderClubMapTable);
+  renderClubMapProductHeaders();
+  wireSortableTable('club-map-table', 'clubMap', state.clubInventory, () => {
+    resetClubMapPage();
+    renderClubMapTable();
+  });
 
   // Before the first load so the header never shows a company the server has not confirmed, and
   // so anything scoped by withActiveCompany() already knows the key.
   await loadCompanySelector();
+  // Theme, filters and column titles come from the active profile before anything is drawn.
+  await loadActiveProfile();
+  loadClubsForDomain(state.filters.domain);
 
   try {
     await loadAllData();

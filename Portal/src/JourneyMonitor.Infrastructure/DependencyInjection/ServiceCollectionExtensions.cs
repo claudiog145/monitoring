@@ -14,8 +14,12 @@ using JourneyMonitor.Infrastructure.Notifications;
 using JourneyMonitor.Infrastructure.Search;
 using JourneyMonitor.Core.Monitoring;
 using JourneyMonitor.Core.Monitoring.Inspector;
+using JourneyMonitor.Core.Monitoring.Privacy;
+using JourneyMonitor.Core.Monitoring.TokenRefresh;
 using JourneyMonitor.Core.UseCases;
+using JourneyMonitor.Infrastructure.Fabric;
 using JourneyMonitor.Infrastructure.Sql;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -48,13 +52,22 @@ public static class ServiceCollectionExtensions
         // so leaving it to the hosts meant this extension could not stand up its own graph - exactly
         // what InspectorDependencyInjectionTests exists to catch, and it was failing on it.
         // TryAdd so a host that registers its own (or a fake, in a test) still wins.
-        services.TryAddSingleton<IAppInsightsTokenRepository>(sp => new SqlAppInsightsTokenRepository(
-            // Empty, never null: the repository rejects null, and a fresh clone with no database
-            // must still resolve the graph. A query then fails at call time, where both callers
-            // already treat "no usable token" as "fall through to the credential chain".
-            configuration.GetConnectionString("DefaultConnection") ?? string.Empty,
-            sp.GetRequiredService<ILogger<SqlAppInsightsTokenRepository>>()));
+        services.TryAddSingleton<IAppInsightsTokenRepository>(sp =>
+        {
+            // Empty, never null: a fresh clone with no database must still resolve the graph. A query
+            // then fails at call time, where both callers already treat "no usable token" as "fall
+            // through to the credential chain".
+            var connectionString = configuration.GetConnectionString("DefaultConnection") ?? string.Empty;
+            return new SqlAppInsightsTokenRepository(
+                () => new SqlConnection(connectionString),
+                sp.GetRequiredService<ILogger<SqlAppInsightsTokenRepository>>());
+        });
+        services.TryAddSingleton<ITokenSecretProtector, DataProtectionTokenSecretProtector>();
         services.TryAddScoped<IAppInsightsTokenService, AppInsightsTokenService>();
+
+        // Maps a telemetry tenant to its stored-token key from the company profiles. Without an
+        // ICompanyProfileStore in the container DI picks the parameterless constructor (no map).
+        services.TryAddSingleton<ITenantResolver, TenantResolver>();
 
         // Register AppInsightsTelemetrySource with HttpClient and IAppInsightsTokenService dependencies
         services.AddHttpClient<AppInsightsTelemetrySource>()
@@ -66,6 +79,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<KqlQueryTextProvider>();
         services.AddSingleton<IKqlQueryTextProvider>(sp => sp.GetRequiredService<KqlQueryTextProvider>());
         services.AddSingleton<IDemoJourneyFixtureProvider, DemoJourneyFixtureProvider>();
+        services.AddSingleton<IHotelBusinessHealthSource, FabricHotelBusinessHealthSource>();
         services.AddSingleton<ITelemetryQueryCache, InMemoryTelemetryQueryCache>();
 
         return services;
@@ -96,6 +110,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IIncidentStore, SqlIncidentStore>();
         services.AddSingleton<IIncidentReader, SqlIncidentReader>();
         services.AddSingleton<IOverviewReader, SqlOverviewReader>();
+        services.AddSingleton<IHotelBookingConversionSource, SqlHotelBookingConversionSource>();
         services.AddSingleton<IIncidentSchemaGate, SqlIncidentSchemaGate>();
         services.AddSingleton<ILatencySpikeSettingsStore, SqlLatencySpikeSettingsStore>();
         services.AddSingleton<ILlmClientSettingsStore, SqlLlmClientSettingsStore>();
@@ -107,7 +122,7 @@ public static class ServiceCollectionExtensions
         // Club dropdown source (brand.Information). Safe to register unconditionally: with no
         // connection string it reports IsConfigured=false and GetClubsService uses the demo list.
         services.AddSingleton<IBrandCatalog, SqlBrandCatalog>();
-        // Full club / Fusion application map (brand.ClubInventory) for the Club Map tab.
+        // Application Map inventory (brand.ClubInventory).
         services.AddSingleton<IClubInventoryStore, SqlClubInventoryStore>();
         return services;
     }
@@ -404,7 +419,9 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredKeyedService<ILlmClient>(LlmAgents.Inspector),
             sp.GetRequiredService<IKnowledgeRetriever>(),
             sp.GetRequiredService<IOptions<RcaOptions>>(),
-            sp.GetRequiredService<ILogger<RcaAgentService>>()));
+            sp.GetRequiredService<ILogger<RcaAgentService>>(),
+            profiles: sp.GetService<ICompanyProfileStore>(),
+            redactor: sp.GetService<IEvidenceRedactor>()));
 
         services.AddScoped<RcaAutoComposer>();
 
@@ -455,6 +472,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IScoutAssessor>(sp => ActivatorUtilities.CreateInstance<ScoutAssessorService>(
             sp, sp.GetRequiredKeyedService<ILlmClient>(LlmAgents.Scout)));
         services.AddScoped<IScoutEvidenceCollector, ScoutEvidenceCollector>();
+        // FX4: the drill-down and the Inspector's log tools read only the sources the package's profile owns.
+        services.TryAddSingleton<TelemetrySourceOwnershipCheck>();
+        services.TryAddSingleton(sp => new ProfileTelemetrySourceResolver(
+            sp.GetService<ICompanyProfileStore>(),
+            sp.GetRequiredService<TelemetrySourceOwnershipCheck>(),
+            sp.GetService<ILogger<ProfileTelemetrySourceResolver>>()));
         services.AddScoped<ScoutMonkeyService>();
 
         // Inspector Monkey (L3 analysis phase). Everything is scoped per invocation except the
@@ -497,6 +520,9 @@ public static class ServiceCollectionExtensions
         }
         services.AddScoped<IInspectorSpecialist, ReproAgentSpecialist>();
 
+        // Contract v4 §5: every Inspector prompt is redacted inside InspectorRecorder.CallAsync.
+        // Stateless apart from its compiled-pattern cache, so one instance serves every run.
+        services.TryAddSingleton<IEvidenceRedactor, EvidenceRedactor>();
         services.AddScoped<InspectorRecorder>();
         services.AddScoped<InspectorPlanner>();
         services.AddScoped<IGroundingService, InspectorGroundingService>();
@@ -525,6 +551,16 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<INotificationChannel>(sp => sp.GetRequiredService<TeamsAlertNotifier>());
         services.AddSingleton<INotificationService, NotificationService>();
 
+        return services;
+    }
+
+    /// <summary>
+    /// Fabric warehouse read of <c>dbo.vw_Alert_HotelBookingKPIs</c>. The connection string and
+    /// service principal are the App Configuration keys in <see cref="FabricWarehouseOptions"/>.
+    /// </summary>
+    public static IServiceCollection AddFabricHotelBookingKpis(this IServiceCollection services)
+    {
+        services.AddSingleton<IHotelBookingKpiSource, FabricHotelBookingKpiSource>();
         return services;
     }
 

@@ -19,23 +19,26 @@ public interface IJourneyMonitorApiClient
     /// <summary>Forwards GET /api/clubs the same way.</summary>
     Task<(int StatusCode, string Body)> GetClubsAsync(string queryString, CancellationToken cancellationToken);
 
-    /// <summary>Forwards GET /api/club-inventory (brand.ClubInventory for the Club Map tab).</summary>
+    /// <summary>Forwards GET /api/club-inventory (brand.ClubInventory for the Application Map tab).</summary>
     Task<(int StatusCode, string Body)> GetClubInventoryAsync(CancellationToken cancellationToken);
+
+    /// <summary>Forwards GET /api/hotels/business-health — the Hotels Reliability Watch card.</summary>
+    Task<(int StatusCode, string Body)> GetHotelBusinessHealthAsync(string queryString, CancellationToken cancellationToken);
 
     /// <summary>Forwards GET /api/monkeys with its query string - the domain/club filters the rest of the portal already uses.</summary>
     Task<(int StatusCode, string Body)> GetMonkeysAsync(string queryString, CancellationToken cancellationToken);
 
-    /// <summary>Forwards GET /api/findings.</summary>
-    Task<(int StatusCode, string Body)> GetFindingsAsync(CancellationToken cancellationToken);
+    /// <summary>Forwards GET /api/findings. Carries ?profileKey= through (contract v6 §5).</summary>
+    Task<(int StatusCode, string Body)> GetFindingsAsync(string queryString, CancellationToken cancellationToken);
 
-    /// <summary>Forwards GET /api/findings/{id}/doctor-report.</summary>
-    Task<(int StatusCode, string Body)> GetFindingDoctorReportAsync(string id, CancellationToken cancellationToken);
+    /// <summary>Forwards GET /api/findings/{id}/doctor-report. Carries ?profileKey= through.</summary>
+    Task<(int StatusCode, string Body)> GetFindingDoctorReportAsync(string id, string queryString, CancellationToken cancellationToken);
 
     /// <summary>Forwards GET /api/scout/packages - summaries only, no member/correlation ids. Carries ?top= and ?board= through.</summary>
     Task<(int StatusCode, string Body)> GetScoutPackagesAsync(string queryString, CancellationToken cancellationToken);
 
     /// <summary>Forwards GET /api/scout/packages/{id} - the full handoff package, gated by the internal secret.</summary>
-    Task<(int StatusCode, string Body)> GetScoutPackageAsync(string id, CancellationToken cancellationToken);
+    Task<(int StatusCode, string Body)> GetScoutPackageAsync(string id, string queryString, CancellationToken cancellationToken);
 
     /// <summary>Forwards GET /api/scout/runs. Carries ?top= and ?board= through.</summary>
     Task<(int StatusCode, string Body)> GetScoutRunsAsync(string queryString, CancellationToken cancellationToken);
@@ -43,16 +46,19 @@ public interface IJourneyMonitorApiClient
     /// <summary>Forwards GET /api/scout/stats. Carries ?board= through.</summary>
     Task<(int StatusCode, string Body)> GetScoutStatsAsync(string queryString, CancellationToken cancellationToken);
 
+    /// <summary>Forwards GET /api/scouts/{board}/shadow (contract v4 §4) - shadow counts and latest rows.</summary>
+    Task<(int StatusCode, string Body)> GetScoutShadowAsync(string board, string queryString, CancellationToken cancellationToken);
+
     /// <summary>Forwards GET /api/inspector/cases - case summaries only, no transcript.</summary>
     Task<(int StatusCode, string Body)> GetInspectorCasesAsync(string queryString, CancellationToken cancellationToken);
 
     /// <summary>Forwards GET /api/inspector/cases/{id} - the full case including the raw LLM transcript, gated by the internal secret.</summary>
-    Task<(int StatusCode, string Body)> GetInspectorCaseAsync(string id, CancellationToken cancellationToken);
+    Task<(int StatusCode, string Body)> GetInspectorCaseAsync(string id, string queryString, CancellationToken cancellationToken);
 
-    Task<(int StatusCode, string Body)> GetRcaAsync(string caseId, CancellationToken cancellationToken);
+    Task<(int StatusCode, string Body)> GetRcaAsync(string caseId, string queryString, CancellationToken cancellationToken);
 
-    /// <summary>What the RCA Agent can draw on: the imported corpus, one row per document.</summary>
-    Task<(int StatusCode, string Body)> GetKnowledgeDocumentsAsync(CancellationToken cancellationToken);
+    /// <summary>What the RCA Agent can draw on: the imported corpus, one row per document. Carries ?profileKey= through.</summary>
+    Task<(int StatusCode, string Body)> GetKnowledgeDocumentsAsync(string queryString, CancellationToken cancellationToken);
 
     /// <summary>The indexed passages of one document.</summary>
     Task<(int StatusCode, string Body)> GetKnowledgeDocumentAsync(string queryString, CancellationToken cancellationToken);
@@ -62,8 +68,8 @@ public interface IJourneyMonitorApiClient
 
     Task<(int StatusCode, string Body)> ComposeRcaAsync(string caseId, CancellationToken cancellationToken);
 
-    /// <summary>Forwards GET /api/inspector/queue.</summary>
-    Task<(int StatusCode, string Body)> GetInspectorQueueAsync(CancellationToken cancellationToken);
+    /// <summary>Forwards GET /api/inspector/queue. Carries ?profileKey= through.</summary>
+    Task<(int StatusCode, string Body)> GetInspectorQueueAsync(string queryString, CancellationToken cancellationToken);
 
     /// <summary>Forwards POST /api/inspector/queue/discard - takes waiting work out of the backlog (see DiscardInspectorQueueFunction).</summary>
     Task<(int StatusCode, string Body)> DiscardInspectorQueueAsync(string jsonBody, CancellationToken cancellationToken);
@@ -143,6 +149,50 @@ public interface IJourneyMonitorApiClient
 
     /// <summary>Forwards POST /api/onboarding/draft - same gate, and persists nothing: the draft is returned for a human to edit and save.</summary>
     Task<(int StatusCode, string Body)> BuildCompanyProfileDraftAsync(string jsonBody, CancellationToken cancellationToken);
+    /// <summary>Forwards GET /api/health/pillars (Spec 1000 pillar status computed by the backend monitors). Carries ?domain=&amp;profileKey= through.</summary>
+    Task<(int StatusCode, string Body)> GetPillarHealthAsync(string queryString, CancellationToken cancellationToken);
+
+    /// <summary>Forwards GET /api/health/anomalies. Carries ?pillar=&amp;domain=&amp;top=&amp;profileKey= through.</summary>
+    Task<(int StatusCode, string Body)> GetKpiAnomaliesAsync(string queryString, CancellationToken cancellationToken);
+
+    /// <summary>Forwards GET /api/health/kpis/{id}/buckets. Carries ?hours= through.</summary>
+    Task<(int StatusCode, string Body)> GetKpiBucketsAsync(int id, string queryString, CancellationToken cancellationToken);
+
+    /// <summary>Forwards GET /api/triage/investigations. Carries ?top=&amp;profileKey= through.</summary>
+    Task<(int StatusCode, string Body)> GetTriageInvestigationsAsync(string queryString, CancellationToken cancellationToken);
+
+    /// <summary>Forwards GET /api/triage/investigations/{id}. Carries ?profileKey= through.</summary>
+    Task<(int StatusCode, string Body)> GetTriageInvestigationAsync(Guid id, string queryString, CancellationToken cancellationToken);
+
+    /// <summary>Forwards POST /api/triage/investigations (manual Triage Monkey run), adding X-Internal-Api-Secret server-side.</summary>
+    Task<(int StatusCode, string Body)> SubmitTriageInvestigationAsync(string jsonBody, CancellationToken cancellationToken);
+
+    /// <summary>Forwards GET /api/settings/kpis. Carries ?profileKey= through.</summary>
+    Task<(int StatusCode, string Body)> GetKpiDefinitionsAsync(string queryString, CancellationToken cancellationToken);
+
+    /// <summary>Forwards GET /api/settings/kpis/{id}/audit. Carries ?top= through.</summary>
+    Task<(int StatusCode, string Body)> GetKpiDefinitionAuditAsync(int id, string queryString, CancellationToken cancellationToken);
+
+    /// <summary>Forwards POST /api/settings/kpis, adding X-Settings-Write-Secret server-side.</summary>
+    Task<(int StatusCode, string Body)> UpsertKpiDefinitionAsync(string jsonBody, CancellationToken cancellationToken);
+
+    /// <summary>Forwards GET /api/daemons (one status card per Spec 1000 daemon).</summary>
+    Task<(int StatusCode, string Body)> GetDaemonsAsync(string queryString, CancellationToken cancellationToken);
+
+    /// <summary>Forwards GET /api/daemons/activity. Carries ?afterId=&amp;daemon=&amp;level=&amp;top= through.</summary>
+    Task<(int StatusCode, string Body)> GetDaemonActivityAsync(string queryString, CancellationToken cancellationToken);
+
+    /// <summary>Forwards GET /api/appinsights/tokens (metadata only, never a token or secret), adding X-Internal-Api-Secret server-side.</summary>
+    Task<(int StatusCode, string Body)> GetAppInsightsTokensAsync(CancellationToken cancellationToken);
+
+    /// <summary>Forwards POST /api/appinsights/tokens (save/update a token and its refresh settings), adding X-Settings-Write-Secret server-side.</summary>
+    Task<(int StatusCode, string Body)> SaveAppInsightsTokenAsync(string jsonBody, CancellationToken cancellationToken);
+
+    /// <summary>Forwards POST /api/appinsights/tokens/{tenantKey}/deactivate, adding X-Settings-Write-Secret server-side.</summary>
+    Task<(int StatusCode, string Body)> DeactivateAppInsightsTokenAsync(string tenantKey, CancellationToken cancellationToken);
+
+    /// <summary>Forwards POST /api/appinsights/tokens/{tenantKey}/refresh (200 / 404 / 409 / 502), adding X-Settings-Write-Secret server-side.</summary>
+    Task<(int StatusCode, string Body)> RefreshAppInsightsTokenAsync(string tenantKey, CancellationToken cancellationToken);
 }
 
 public sealed class JourneyMonitorApiClient(HttpClient httpClient, Microsoft.Extensions.Options.IOptions<JourneyMonitorApiOptions> apiOptions) : IJourneyMonitorApiClient
@@ -162,20 +212,23 @@ public sealed class JourneyMonitorApiClient(HttpClient httpClient, Microsoft.Ext
     public Task<(int StatusCode, string Body)> GetClubInventoryAsync(CancellationToken cancellationToken) =>
         GetAsync("/api/club-inventory", cancellationToken);
 
+    public Task<(int StatusCode, string Body)> GetHotelBusinessHealthAsync(string queryString, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Get, $"/api/hotels/business-health{queryString}", cancellationToken, extraHeaders: InternalApiSecretHeader());
+
     public Task<(int StatusCode, string Body)> GetMonkeysAsync(string queryString, CancellationToken cancellationToken) =>
         GetAsync($"/api/monkeys{queryString}", cancellationToken);
 
-    public Task<(int StatusCode, string Body)> GetFindingsAsync(CancellationToken cancellationToken) =>
-        GetAsync("/api/findings", cancellationToken);
+    public Task<(int StatusCode, string Body)> GetFindingsAsync(string queryString, CancellationToken cancellationToken) =>
+        GetAsync($"/api/findings{queryString}", cancellationToken);
 
-    public Task<(int StatusCode, string Body)> GetFindingDoctorReportAsync(string id, CancellationToken cancellationToken) =>
-        SendAsync(HttpMethod.Get, $"/api/findings/{Uri.EscapeDataString(id)}/doctor-report", cancellationToken, extraHeaders: InternalApiSecretHeader());
+    public Task<(int StatusCode, string Body)> GetFindingDoctorReportAsync(string id, string queryString, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Get, $"/api/findings/{Uri.EscapeDataString(id)}/doctor-report{queryString}", cancellationToken, extraHeaders: InternalApiSecretHeader());
 
     public Task<(int StatusCode, string Body)> GetScoutPackagesAsync(string queryString, CancellationToken cancellationToken) =>
         GetAsync($"/api/scout/packages{queryString}", cancellationToken);
 
-    public Task<(int StatusCode, string Body)> GetScoutPackageAsync(string id, CancellationToken cancellationToken) =>
-        SendAsync(HttpMethod.Get, $"/api/scout/packages/{Uri.EscapeDataString(id)}", cancellationToken, extraHeaders: InternalApiSecretHeader());
+    public Task<(int StatusCode, string Body)> GetScoutPackageAsync(string id, string queryString, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Get, $"/api/scout/packages/{Uri.EscapeDataString(id)}{queryString}", cancellationToken, extraHeaders: InternalApiSecretHeader());
 
     public Task<(int StatusCode, string Body)> GetScoutRunsAsync(string queryString, CancellationToken cancellationToken) =>
         GetAsync($"/api/scout/runs{queryString}", cancellationToken);
@@ -183,24 +236,27 @@ public sealed class JourneyMonitorApiClient(HttpClient httpClient, Microsoft.Ext
     public Task<(int StatusCode, string Body)> GetScoutStatsAsync(string queryString, CancellationToken cancellationToken) =>
         GetAsync($"/api/scout/stats{queryString}", cancellationToken);
 
+    public Task<(int StatusCode, string Body)> GetScoutShadowAsync(string board, string queryString, CancellationToken cancellationToken) =>
+        GetAsync($"/api/scouts/{Uri.EscapeDataString(board)}/shadow{queryString}", cancellationToken);
+
     public Task<(int StatusCode, string Body)> GetInspectorCasesAsync(string queryString, CancellationToken cancellationToken) =>
         GetAsync($"/api/inspector/cases{queryString}", cancellationToken);
 
-    public Task<(int StatusCode, string Body)> GetInspectorCaseAsync(string id, CancellationToken cancellationToken) =>
-        SendAsync(HttpMethod.Get, $"/api/inspector/cases/{Uri.EscapeDataString(id)}", cancellationToken, extraHeaders: InternalApiSecretHeader());
+    public Task<(int StatusCode, string Body)> GetInspectorCaseAsync(string id, string queryString, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Get, $"/api/inspector/cases/{Uri.EscapeDataString(id)}{queryString}", cancellationToken, extraHeaders: InternalApiSecretHeader());
 
     // Both carry the internal secret: the document quotes the investigation's raw synthesis, and
     // composing one spends a provider call.
-    public Task<(int StatusCode, string Body)> GetRcaAsync(string caseId, CancellationToken cancellationToken) =>
-        SendAsync(HttpMethod.Get, $"/api/inspector/cases/{Uri.EscapeDataString(caseId)}/rca", cancellationToken, extraHeaders: InternalApiSecretHeader());
+    public Task<(int StatusCode, string Body)> GetRcaAsync(string caseId, string queryString, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Get, $"/api/inspector/cases/{Uri.EscapeDataString(caseId)}/rca{queryString}", cancellationToken, extraHeaders: InternalApiSecretHeader());
 
     public Task<(int StatusCode, string Body)> ComposeRcaAsync(string caseId, CancellationToken cancellationToken) =>
         SendAsync(HttpMethod.Post, $"/api/inspector/cases/{Uri.EscapeDataString(caseId)}/rca", cancellationToken, extraHeaders: InternalApiSecretHeader());
 
     // Carries the secret because the document titles name real incidents, even though the call
     // itself reads no content and spends nothing.
-    public Task<(int StatusCode, string Body)> GetKnowledgeDocumentsAsync(CancellationToken cancellationToken) =>
-        SendAsync(HttpMethod.Get, "/api/knowledge/documents", cancellationToken, extraHeaders: InternalApiSecretHeader());
+    public Task<(int StatusCode, string Body)> GetKnowledgeDocumentsAsync(string queryString, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Get, $"/api/knowledge/documents{queryString}", cancellationToken, extraHeaders: InternalApiSecretHeader());
 
     public Task<(int StatusCode, string Body)> GetKnowledgeDocumentAsync(string queryString, CancellationToken cancellationToken) =>
         SendAsync(HttpMethod.Get, $"/api/knowledge/document{queryString}", cancellationToken, extraHeaders: InternalApiSecretHeader());
@@ -208,8 +264,8 @@ public sealed class JourneyMonitorApiClient(HttpClient httpClient, Microsoft.Ext
     public Task<(int StatusCode, string Body)> SearchKnowledgeAsync(string queryString, CancellationToken cancellationToken) =>
         SendAsync(HttpMethod.Get, $"/api/knowledge/search{queryString}", cancellationToken, extraHeaders: InternalApiSecretHeader());
 
-    public Task<(int StatusCode, string Body)> GetInspectorQueueAsync(CancellationToken cancellationToken) =>
-        GetAsync("/api/inspector/queue", cancellationToken);
+    public Task<(int StatusCode, string Body)> GetInspectorQueueAsync(string queryString, CancellationToken cancellationToken) =>
+        GetAsync($"/api/inspector/queue{queryString}", cancellationToken);
 
     public Task<(int StatusCode, string Body)> DiscardInspectorQueueAsync(string jsonBody, CancellationToken cancellationToken) =>
         SendAsync(HttpMethod.Post, "/api/inspector/queue/discard", cancellationToken, jsonBody, InternalApiSecretHeader());
@@ -285,6 +341,51 @@ public sealed class JourneyMonitorApiClient(HttpClient httpClient, Microsoft.Ext
 
     public Task<(int StatusCode, string Body)> BuildCompanyProfileDraftAsync(string jsonBody, CancellationToken cancellationToken) =>
         SendAsync(HttpMethod.Post, "/api/onboarding/draft", cancellationToken, jsonBody, InternalApiSecretHeader());
+    public Task<(int StatusCode, string Body)> GetPillarHealthAsync(string queryString, CancellationToken cancellationToken) =>
+        GetAsync($"/api/health/pillars{queryString}", cancellationToken);
+
+    public Task<(int StatusCode, string Body)> GetKpiAnomaliesAsync(string queryString, CancellationToken cancellationToken) =>
+        GetAsync($"/api/health/anomalies{queryString}", cancellationToken);
+
+    public Task<(int StatusCode, string Body)> GetKpiBucketsAsync(int id, string queryString, CancellationToken cancellationToken) =>
+        GetAsync($"/api/health/kpis/{id}/buckets{queryString}", cancellationToken);
+
+    public Task<(int StatusCode, string Body)> GetTriageInvestigationsAsync(string queryString, CancellationToken cancellationToken) =>
+        GetAsync($"/api/triage/investigations{queryString}", cancellationToken);
+
+    public Task<(int StatusCode, string Body)> GetTriageInvestigationAsync(Guid id, string queryString, CancellationToken cancellationToken) =>
+        GetAsync($"/api/triage/investigations/{id:D}{queryString}", cancellationToken);
+
+    // Every accepted signal can cost an LLM run, so the Function gates it like RunMonkeyNow.
+    public Task<(int StatusCode, string Body)> SubmitTriageInvestigationAsync(string jsonBody, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Post, "/api/triage/investigations", cancellationToken, jsonBody, InternalApiSecretHeader());
+
+    public Task<(int StatusCode, string Body)> GetKpiDefinitionsAsync(string queryString, CancellationToken cancellationToken) =>
+        GetAsync($"/api/settings/kpis{queryString}", cancellationToken);
+
+    public Task<(int StatusCode, string Body)> GetKpiDefinitionAuditAsync(int id, string queryString, CancellationToken cancellationToken) =>
+        GetAsync($"/api/settings/kpis/{id}/audit{queryString}", cancellationToken);
+
+    public Task<(int StatusCode, string Body)> UpsertKpiDefinitionAsync(string jsonBody, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Post, "/api/settings/kpis", cancellationToken, jsonBody, WriteSecretHeader());
+
+    public Task<(int StatusCode, string Body)> GetDaemonsAsync(string queryString, CancellationToken cancellationToken) =>
+        GetAsync($"/api/daemons{queryString}", cancellationToken);
+
+    public Task<(int StatusCode, string Body)> GetDaemonActivityAsync(string queryString, CancellationToken cancellationToken) =>
+        GetAsync($"/api/daemons/activity{queryString}", cancellationToken);
+
+    public Task<(int StatusCode, string Body)> GetAppInsightsTokensAsync(CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Get, "/api/appinsights/tokens", cancellationToken, extraHeaders: InternalApiSecretHeader());
+
+    public Task<(int StatusCode, string Body)> SaveAppInsightsTokenAsync(string jsonBody, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Post, "/api/appinsights/tokens", cancellationToken, jsonBody, WriteSecretHeader());
+
+    public Task<(int StatusCode, string Body)> DeactivateAppInsightsTokenAsync(string tenantKey, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Post, $"/api/appinsights/tokens/{Uri.EscapeDataString(tenantKey)}/deactivate", cancellationToken, extraHeaders: WriteSecretHeader());
+
+    public Task<(int StatusCode, string Body)> RefreshAppInsightsTokenAsync(string tenantKey, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Post, $"/api/appinsights/tokens/{Uri.EscapeDataString(tenantKey)}/refresh", cancellationToken, extraHeaders: WriteSecretHeader());
 
     private Dictionary<string, string>? InternalApiSecretHeader()
     {

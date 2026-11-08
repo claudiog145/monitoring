@@ -1,0 +1,10 @@
+[
+  { "alias": "bank-web-banking", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/bank-web-banking",
+    "appId": "demo-bank-web-banking", "ownerProfileKey": "banco", "enabled": true, "notes": "Banco Andino (demo) - web banking. Synthetic demo source." },
+  { "alias": "bank-mobile-api", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/bank-mobile-api",
+    "appId": "demo-bank-mobile-api", "ownerProfileKey": "banco", "enabled": true, "notes": "Banco Andino (demo) - mobile app API. Synthetic demo source." },
+  { "alias": "bank-payments-svc", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/bank-payments-svc",
+    "appId": "demo-bank-payments-svc", "ownerProfileKey": "banco", "enabled": true, "notes": "Banco Andino (demo) - payments service (ACH, bills, card authorizations). Synthetic demo source." },
+  { "alias": "bank-core-gateway", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/bank-core-gateway",
+    "appId": "demo-bank-core-gateway", "ownerProfileKey": "banco", "enabled": true, "notes": "Banco Andino (demo) - core banking gateway (mainframe). Synthetic demo source." }
+]

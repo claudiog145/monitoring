@@ -1,0 +1,10 @@
+[
+  { "alias": "aml-screening-api", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/aml-screening-api",
+    "appId": "demo-aml-screening-api", "ownerProfileKey": "kinectify", "enabled": true, "notes": "Kinectify (demo) transaction screening API. Synthetic demo source." },
+  { "alias": "aml-onboarding-kyc", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/aml-onboarding-kyc",
+    "appId": "demo-aml-onboarding-kyc", "ownerProfileKey": "kinectify", "enabled": true, "notes": "Kinectify (demo) client onboarding / KYC API. Synthetic demo source." },
+  { "alias": "aml-case-mgmt", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/aml-case-mgmt",
+    "appId": "demo-aml-case-mgmt", "ownerProfileKey": "kinectify", "enabled": true, "notes": "Kinectify (demo) case management API. Synthetic demo source." },
+  { "alias": "aml-alerts-worker", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/aml-alerts-worker",
+    "appId": "demo-aml-alerts-worker", "ownerProfileKey": "kinectify", "enabled": true, "notes": "Kinectify (demo) alert generation worker. Synthetic demo source." }
+]

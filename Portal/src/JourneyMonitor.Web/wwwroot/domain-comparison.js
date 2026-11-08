@@ -1,7 +1,8 @@
 /**
  * Builds Domain Comparison rows from mapped KQL journeys.
- * Conversion is search-to-booking for every vertical:
- *   Cruise uses PassedSearch and IsBookSuccessful as projected.
+ * Conversion is bookings divided by searches. A booking counts even when that
+ * session did not search. Those earlier search sessions stay unconverted.
+ *   Cruise uses IsBookSuccessful as projected.
  *   Hotel also infers search from stage 02 Hotel Search and booking from BookOk.
  *   Cars follows Hotel: PassedSearch from SearchAt, or stage 02 Car Search, with BookOk as the booking fallback.
  *   Air uses PassedSearch (StepsCompleted > 0) and infers search from
@@ -55,7 +56,7 @@ function shouldRefreshDomainComparison({ analyticsVisible, stale } = {}) {
 }
 
 /** Verticals that have a Domain Comparison row, in display order. */
-const COMPARISON_DOMAINS = ['hotels', 'cruises'];
+const COMPARISON_DOMAINS = ['hotels', 'cruises', 'cars'];
 
 /**
  * Domain Comparison follows the Domain filter: All compares every vertical, and
@@ -71,7 +72,7 @@ function calculateCruiseDomainComparison(journeys) {
   const rows = (Array.isArray(journeys) ? journeys : [])
     .filter((journey) => journey.domain === 'cruises');
   const searched = rows.filter((journey) => journey.passedSearch === true);
-  const successful = searched.filter((journey) => journey.isBookSuccessful === true);
+  const converted = rows.filter((journey) => journey.isBookSuccessful === true);
   const latencies = rows
     .filter((journey) => journey.overallP95Ms != null)
     .map((journey) => Number(journey.overallP95Ms))
@@ -80,7 +81,7 @@ function calculateCruiseDomainComparison(journeys) {
   return {
     domain: 'cruises',
     journeys: rows.length,
-    conversionRate: searched.length ? successful.length / searched.length : null,
+    conversionRate: searched.length ? converted.length / searched.length : null,
     p95LatencyMs: latencies.length
       ? Math.round(latencies.reduce((sum, latency) => sum + latency, 0) / latencies.length)
       : null,
@@ -95,7 +96,7 @@ function calculateHotelDomainComparison(journeys) {
   const rows = (Array.isArray(journeys) ? journeys : [])
     .filter((journey) => journey.domain === 'hotels');
   const searched = rows.filter(hotelReachedSearch);
-  const successful = searched.filter(hotelBooked);
+  const converted = rows.filter(hotelBooked);
   const latencies = rows
     .filter((journey) => journey.overallP95Ms != null)
     .map((journey) => Number(journey.overallP95Ms))
@@ -104,7 +105,7 @@ function calculateHotelDomainComparison(journeys) {
   return {
     domain: 'hotels',
     journeys: rows.length,
-    conversionRate: searched.length ? successful.length / searched.length : null,
+    conversionRate: searched.length ? converted.length / searched.length : null,
     p95LatencyMs: samplePercentile(latencies, 95),
     exceptions: rows.reduce((sum, journey) => {
       const count = Number(journey.exceptions);
@@ -117,7 +118,7 @@ function calculateAirDomainComparison(journeys) {
   const rows = (Array.isArray(journeys) ? journeys : [])
     .filter((journey) => journey.domain === 'air');
   const searched = rows.filter(airReachedSearch);
-  const successful = searched.filter(airBooked);
+  const converted = rows.filter(airBooked);
   const latencies = rows
     .filter((journey) => journey.overallP95Ms != null)
     .map((journey) => Number(journey.overallP95Ms))
@@ -126,7 +127,7 @@ function calculateAirDomainComparison(journeys) {
   return {
     domain: 'air',
     journeys: rows.length,
-    conversionRate: searched.length ? successful.length / searched.length : null,
+    conversionRate: searched.length ? converted.length / searched.length : null,
     p95LatencyMs: samplePercentile(latencies, 95),
     exceptions: rows.reduce((sum, journey) => {
       const count = Number(journey.exceptions);
@@ -139,7 +140,7 @@ function calculateCarsDomainComparison(journeys) {
   const rows = (Array.isArray(journeys) ? journeys : [])
     .filter((journey) => journey.domain === 'cars');
   const searched = rows.filter(carsReachedSearch);
-  const successful = searched.filter(carsBooked);
+  const converted = rows.filter(carsBooked);
   const latencies = rows
     .filter((journey) => journey.overallP95Ms != null)
     .map((journey) => Number(journey.overallP95Ms))
@@ -148,7 +149,7 @@ function calculateCarsDomainComparison(journeys) {
   return {
     domain: 'cars',
     journeys: rows.length,
-    conversionRate: searched.length ? successful.length / searched.length : null,
+    conversionRate: searched.length ? converted.length / searched.length : null,
     p95LatencyMs: samplePercentile(latencies, 95),
     exceptions: rows.reduce((sum, journey) => {
       const count = Number(journey.exceptions);
@@ -157,12 +158,38 @@ function calculateCarsDomainComparison(journeys) {
   };
 }
 
+/**
+ * Contract v6 §6: one comparison row per service of the active company, from the generic
+ * journeys already on screen (status Completed / Failed / Dropped at step N) and the company's
+ * own exceptions.
+ */
+function calculateServiceComparison(journeys, serviceKeys, exceptions) {
+  const rows = Array.isArray(journeys) ? journeys : [];
+  const incidents = Array.isArray(exceptions) ? exceptions : [];
+  return (Array.isArray(serviceKeys) ? serviceKeys : []).map((domain) => {
+    const own = rows.filter((journey) => journey.domain === domain);
+    const completed = own.filter((journey) => journey.status === 'Completed').length;
+    const failed = own.filter((journey) => journey.failed === true || journey.status === 'Failed').length;
+    return {
+      domain,
+      journeys: own.length,
+      completionRate: own.length ? completed / own.length : null,
+      p95LatencyMs: samplePercentile(own.map((journey) => Number(journey.totalDurationMs)), 95),
+      failed,
+      exceptions: incidents
+        .filter((incident) => incident.domain === domain)
+        .reduce((sum, incident) => sum + Math.max(0, Number(incident.occurrenceCount) || 1), 0),
+    };
+  });
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     calculateAirDomainComparison,
     calculateCarsDomainComparison,
     calculateCruiseDomainComparison,
     calculateHotelDomainComparison,
+    calculateServiceComparison,
     comparisonDomains,
     shouldRefreshDomainComparison,
   };

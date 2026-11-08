@@ -15,6 +15,26 @@ public interface ITelemetrySourceStore
     Task DeleteAsync(string alias, string environment, string changedBy, CancellationToken ct = default);
 
     Task<IReadOnlyList<TelemetrySourceAuditEntry>> GetAuditAsync(int top, CancellationToken ct = default);
+
+    /// <summary>
+    /// The newest owner the audit history records for <paramref name="alias"/> (the owner a removed
+    /// row had when it was deleted, or the owner a write left), or null when none is recorded. Lets
+    /// a deleted alias keep its owner, so recreating it for another profile needs an explicit transfer.
+    /// </summary>
+    async Task<string?> GetLastKnownOwnerAsync(string alias, CancellationToken ct = default) =>
+        TelemetrySourceAuditOwners.LastKnownOwner(await GetAuditAsync(10_000, ct).ConfigureAwait(false), alias);
+}
+
+public static class TelemetrySourceAuditOwners
+{
+    /// <summary>Scans newest first; see <see cref="ITelemetrySourceStore.GetLastKnownOwnerAsync"/>.</summary>
+    public static string? LastKnownOwner(IEnumerable<TelemetrySourceAuditEntry> audit, string alias) =>
+        audit
+            .Where(a => string.Equals(a.Alias?.Trim(), alias?.Trim(), StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(a => a.AuditId)
+            .Select(a => a.Removed ? a.PreviousOwnerProfileKey : a.OwnerProfileKey)
+            .FirstOrDefault(o => !string.IsNullOrWhiteSpace(o))
+            ?.Trim();
 }
 
 /// <summary>
@@ -46,7 +66,13 @@ public sealed record TelemetrySourceEntry(
     bool Enabled = true,
     string? Notes = null,
     DateTimeOffset? UpdatedAt = null,
-    string? UpdatedBy = null);
+    string? UpdatedBy = null,
+    /// <summary>
+    /// The company profile allowed to reference this alias. Null means shared: any profile may use it.
+    /// Without an owner, anybody who can save a profile could point a service at another company's
+    /// telemetry and read it through Scouts, KPIs and kql: queries.
+    /// </summary>
+    string? OwnerProfileKey = null);
 
 public sealed record TelemetrySourceAuditEntry(
     long AuditId,
@@ -60,7 +86,11 @@ public sealed record TelemetrySourceAuditEntry(
     string? Notes,
     bool Removed,
     DateTimeOffset ChangedAt,
-    string ChangedBy);
+    string ChangedBy,
+    /// <summary>The owner after this change (null = shared, or the row was removed).</summary>
+    string? OwnerProfileKey = null,
+    /// <summary>The owner before this change; differs from <see cref="OwnerProfileKey"/> on an ownership transfer.</summary>
+    string? PreviousOwnerProfileKey = null);
 
 public static class TelemetrySourceKind
 {

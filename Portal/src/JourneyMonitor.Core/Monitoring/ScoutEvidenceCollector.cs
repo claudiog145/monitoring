@@ -3,6 +3,7 @@ using JourneyMonitor.Core.Abstractions;
 using JourneyMonitor.Core.Configuration;
 using JourneyMonitor.Core.Domain;
 using JourneyMonitor.Core.Options;
+using JourneyMonitor.Core.UseCases;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -26,7 +27,10 @@ public sealed class ScoutEvidenceCollector(
     IKqlSourceResolver sourceResolver,
     IOptions<InsightsOptions> insightsOptions,
     IOptions<ScoutOptions> scoutOptions,
-    ILogger<ScoutEvidenceCollector> logger) : IScoutEvidenceCollector
+    ILogger<ScoutEvidenceCollector> logger,
+    ICompanyAdapterProvider? companyAdapters = null,
+    ProfileTelemetrySourceResolver? profileSources = null,
+    IOptionsMonitor<ScoutOptions>? boardOptions = null) : IScoutEvidenceCollector
 {
     public async Task<ScoutRawEvidence> CollectAsync(ScoutBoardRow row, CancellationToken ct = default)
     {
@@ -47,10 +51,16 @@ public sealed class ScoutEvidenceCollector(
             return ScoutRawEvidence.Skipped("no operation ids were captured for this bucket, so a scoped drill-down is not possible");
         }
 
+        var sources = await ResolveSourcesAsync(row, options, ct);
+        if (!sources.CanQuery)
+        {
+            return ScoutRawEvidence.Skipped(sources.Reason ?? ProfileTelemetrySources.NoSourcesMessage(sources.ProfileKey));
+        }
+
         string kql;
         try
         {
-            kql = BuildKql(kqlProvider.GetScoutDrillDownKql(), row, opIds, maxRows);
+            kql = sources.Apply(BuildKql(kqlProvider.GetScoutDrillDownKql(), row, opIds, maxRows));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -76,6 +86,35 @@ public sealed class ScoutEvidenceCollector(
             logger.LogWarning(ex, "[ScoutMonkey] drill-down query failed for {CaseId}.", row.CaseId);
             return new ScoutRawEvidence(kql, 0, false, "[]", Truncate(ex.Message, 500));
         }
+    }
+
+    /// <summary>
+    /// FX4: the drill-down reads the sources of the profile the package is created under - the same
+    /// <see cref="ICompanyAdapterProvider"/> resolution <see cref="ScoutMonkeyService"/> stamps on the
+    /// package. Without a provider (bare hosts, older tests) only the incumbent exists. A profile that
+    /// cannot be resolved is not queried: the package then ships without raw evidence.
+    /// </summary>
+    private async Task<ProfileTelemetrySources> ResolveSourcesAsync(ScoutBoardRow row, ScoutOptions options, CancellationToken ct)
+    {
+        if (companyAdapters is null) return ProfileTelemetrySources.Incumbent();
+
+        string profileKey;
+        try
+        {
+            var requested = boardOptions?.Get(row.Board).ResolvedCompanyProfileKey ?? options.ResolvedCompanyProfileKey;
+            profileKey = (await companyAdapters.GetAsync(requested, ct)).ProfileKey;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "[ScoutMonkey] could not resolve the company profile of {CaseId}; no drill-down is run.", row.CaseId);
+            return ProfileTelemetrySources.None("(unresolved)",
+                "the company profile of this package could not be resolved, so no drill-down was run");
+        }
+
+        if (ProfileTelemetrySourceResolver.IsIncumbent(profileKey)) return ProfileTelemetrySources.Incumbent();
+        return profileSources is null
+            ? ProfileTelemetrySources.None(profileKey.Trim())
+            : await profileSources.ResolveAsync(profileKey, ct);
     }
 
     /// <summary>Exposed for tests: a bad substitution only shows up as a generic Kusto syntax error at runtime.</summary>

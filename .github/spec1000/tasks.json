@@ -1,0 +1,2209 @@
+{
+    "$comment":  "Spec 1000 task manifest. Single source of truth for ownership, required tests, E2E level and dependencies. Read by run-gate.ps1, the hooks and every spec1000 agent. Only the orchestrator may edit this file.",
+    "version":  1,
+    "integrationBranch":  "feature/company-profile-decoupling",
+    "contractsTag":  "spec1000-contracts-v6",
+    "worktreeRoot":  "../ai-reliable-platform-wt",
+    "maxIterations":  3,
+    "solution":  "Portal/JourneyMonitor.slnx",
+    "contractFiles":  [
+                          "Portal/src/JourneyMonitor.Core/Domain/Kpi.cs",
+                          "Portal/src/JourneyMonitor.Core/Domain/Triage.cs",
+                          "Portal/src/JourneyMonitor.Core/Abstractions/IKpi.cs",
+                          "Portal/src/JourneyMonitor.Core/Abstractions/ITriage.cs",
+                          "Portal/src/JourneyMonitor.Core/Options/HealthMonitoringOptions.cs",
+                          "Portal/src/JourneyMonitor.Core/Options/TriageOptions.cs",
+                          "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringKpi.sql",
+                          "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringTriage.sql",
+                          "Portal/src/JourneyMonitor.Core/Domain/DaemonActivity.cs",
+                          "Portal/src/JourneyMonitor.Core/Abstractions/IDaemonActivity.cs",
+                          "Portal/src/JourneyMonitor.Core/Options/DaemonMonitoringOptions.cs",
+                          "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringDaemonActivity.sql",
+                          ".github/spec1000/contracts-company.md",
+                          ".github/spec1000/contracts-scout-detection.md",
+                          "Portal/src/JourneyMonitor.Core/Domain/ScoutShadow.cs",
+                          "Portal/src/JourneyMonitor.Core/Abstractions/IScoutShadow.cs",
+                          "Portal/src/JourneyMonitor.Core/Company/CompanyModel.cs",
+                          "Portal/src/JourneyMonitor.Core/Monitoring/Privacy/IEvidenceRedactor.cs",
+                          ".github/spec1000/contracts-demo-telemetry.md",
+                          ".github/spec1000/contracts-multi-company-ui.md"
+                      ],
+    "alwaysForbidden":  [
+                            "openwiki/**",
+                            ".github/agents/**",
+                            ".github/prompts/**",
+                            ".github/spec1000/**",
+                            ".spec1000/**"
+                        ],
+    "tasks":  [
+                  {
+                      "id":  "SD0",
+                      "title":  "Contracts v4 in code (types, interfaces with defaults, contract tests)",
+                      "phase":  "SD",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+
+                                    ],
+                      "contractsFrozen":  false,
+                      "e2eLevel":  "schema",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Domain/Kpi.cs",
+                                           "Portal/src/JourneyMonitor.Core/Abstractions/IKpi.cs",
+                                           "Portal/src/JourneyMonitor.Core/Domain/ScoutShadow.cs",
+                                           "Portal/src/JourneyMonitor.Core/Abstractions/IScoutShadow.cs",
+                                           "Portal/src/JourneyMonitor.Core/Company/CompanyModel.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Privacy/IEvidenceRedactor.cs",
+                                           "Portal/src/JourneyMonitor.Core/Options/ScoutOptions.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/ContractV4/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Kpi*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Company/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/ContractV4/ContractV4Tests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "V4_KpiDefinition_GrainDefaultsToDomain",
+                                                "V4_KpiDefinition_MaxEntitiesRange",
+                                                "V4_KpiBucket_EntityKeyDefaultsEmpty",
+                                                "V4_KpiSourceBucket_OptionalStats",
+                                                "V4_KpiDefinition_DomainNotRestrictedToFixedList",
+                                                "V4_CompanyProfile_PartnersAndPrivacyOptional",
+                                                "V4_ScoutShadowComparison_Shape",
+                                                "V4_StoreInterfaces_DefaultsKeepV3Behaviour"
+                                            ]
+                  },
+                  {
+                      "id":  "F0",
+                      "title":  "Fundaciones: contratos, SQL, flags y baseline",
+                      "phase":  "0",
+                      "prompt":  ".github/prompts/spec1000-f0-fundaciones.prompt.md",
+                      "dependsOn":  [
+
+                                    ],
+                      "contractsFrozen":  false,
+                      "e2eLevel":  "schema",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Domain/Kpi.cs",
+                                           "Portal/src/JourneyMonitor.Core/Domain/Triage.cs",
+                                           "Portal/src/JourneyMonitor.Core/Domain/Inspector.cs",
+                                           "Portal/src/JourneyMonitor.Core/Domain/Monitoring.cs",
+                                           "Portal/src/JourneyMonitor.Core/Abstractions/IKpi.cs",
+                                           "Portal/src/JourneyMonitor.Core/Abstractions/ITriage.cs",
+                                           "Portal/src/JourneyMonitor.Core/Options/HealthMonitoringOptions.cs",
+                                           "Portal/src/JourneyMonitor.Core/Options/TriageOptions.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringKpi.sql",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringTriage.sql",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/SeedKpiDefinitions.sql",
+                                           "Portal/docker/init-sql.sh",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/KpiContractTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Triage/TriageContractTests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/KpiContractTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Triage/TriageContractTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "FloorToBucket_AlignsToUtcEpoch",
+                                                "KpiPillarNames_MapToSpecDisplayNames",
+                                                "TriageResult_SerializesToSpecJsonShape",
+                                                "TriageSignal_RoundTripsThroughJson",
+                                                "TriageDedupKey_UsesAnomalyIdWhenPresent",
+                                                "TriageDedupKey_FallsBackToHourBucket"
+                                            ]
+                  },
+                  {
+                      "id":  "A1",
+                      "title":  "Evaluador de reglas y monitor por pilar",
+                      "phase":  "1A",
+                      "prompt":  ".github/prompts/spec1000-a1-evaluador.prompt.md",
+                      "dependsOn":  [
+                                        "F0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "none",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Kpi/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/KpiEvaluator*Tests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/PillarHealthMonitor*Tests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/Fakes/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/KpiEvaluatorTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/PillarHealthMonitorServiceTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "IsolatedSpike_DoesNotTrigger",
+                                                "TwoConsecutiveAnomalies_Trigger",
+                                                "Cooldown_SuppressesDuplicateTrigger",
+                                                "OppositeDirection_IsIgnored",
+                                                "InsufficientObservations_SkipsBucketWithoutChangingCounter",
+                                                "AfternoonSimulation_MatchesPresentationTable",
+                                                "BaselinePercent_UsesMedianOfSameSlotPreviousDays",
+                                                "BaselinePercent_InsufficientHistory_NotEvaluated",
+                                                "RobustZScore_FlagsOutlierBeyondThreshold",
+                                                "RobustZScore_ZeroMad_NotEvaluated",
+                                                "StaticThreshold_Decrease_FlagsBelowThreshold",
+                                                "StaticThreshold_Either_IsRejected",
+                                                "Monitor_DoesNothingWhenDisabled",
+                                                "Monitor_SkipsKpisNotDue",
+                                                "Monitor_EvaluatesOnlyClosedAndIngestedBuckets",
+                                                "Monitor_FirstRunEvaluatesOnlyLatestClosedBucket",
+                                                "Monitor_SubmitsTriageSignalOnTrigger",
+                                                "Monitor_PersistsStateAndAnomaly"
+                                            ]
+                  },
+                  {
+                      "id":  "A2",
+                      "title":  "Ingesta muestreada por buckets",
+                      "phase":  "1A",
+                      "prompt":  ".github/prompts/spec1000-a2-ingesta.prompt.md",
+                      "dependsOn":  [
+                                        "F0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "none",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Ingestion/**",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/KpiIngestionService.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/AppInsights/AppInsightsKpiSource.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Kql/kpi-*.txt",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Ingestion/**",
+                                           "Portal/tests/JourneyMonitor.Tests/UseCases/KpiIngestionServiceTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/AppInsightsKpiSourceTests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/UseCases/KpiIngestionServiceTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Ingestion/KpiBucketStatisticsTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/Infrastructure/AppInsightsKpiSourceTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Ingestion_DistributesSampleAcrossBuckets",
+                                                "Ingestion_BucketWithFewerRowsTakesAll",
+                                                "Ingestion_AdvancesWatermarkToLastClosedBucket",
+                                                "Ingestion_FirstRunStartsAtLookbackWindow",
+                                                "Ingestion_RespectsMaxRowsPerCycle",
+                                                "Ingestion_SkipsDefinitionsWithoutSource",
+                                                "Ingestion_SourceUnavailable_DoesNotAdvanceWatermark",
+                                                "Ingestion_PurgesSamplesOlderThanRetention",
+                                                "Statistics_PercentileMatchesExcelPercentileInc",
+                                                "Statistics_EmptySamples_ProduceNullStats",
+                                                "Source_ReplacesAllTokensWithValidatedValues",
+                                                "Source_MapsBucketAndSampleRows"
+                                            ]
+                  },
+                  {
+                      "id":  "A3",
+                      "title":  "Persistencia SQL y en memoria",
+                      "phase":  "1A",
+                      "prompt":  ".github/prompts/spec1000-a3-persistencia.prompt.md",
+                      "dependsOn":  [
+                                        "F0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "schema",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlKpi*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlIngestionWatermarkStore.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlTriageInvestigationStore.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/MonitoringSchemaGate.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Monitoring/InMemoryKpi*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Monitoring/InMemoryIngestionWatermarkStore.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Monitoring/InMemoryTriageInvestigationStore.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/KpiPersistenceServiceCollectionExtensions.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/Kpi*Tests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/TriageInvestigationStore*Tests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Infrastructure/KpiInMemoryStoresTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/Infrastructure/KpiSqlStoresIntegrationTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/Infrastructure/TriageInvestigationStoreTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "InMemoryKpiBucketStore_UpsertIsIdempotent",
+                                                "InMemoryKpiBucketStore_GetRangeIsHalfOpenAndOrdered",
+                                                "InMemoryKpiStateStore_ReturnsDefaultStateWhenMissing",
+                                                "InMemoryKpiDefinitionStore_UpsertWritesAudit",
+                                                "InMemoryKpiAnomalyStore_AttachInvestigation",
+                                                "InMemoryTriageInvestigationStore_FindOpenByDedupKeyIgnoresCompleted",
+                                                "SqlKpiStores_RoundTrip",
+                                                "SqlTriageInvestigationStore_RoundTrip",
+                                                "AddKpiPersistence_UsesInMemoryWithoutConnectionString"
+                                            ]
+                  },
+                  {
+                      "id":  "A4",
+                      "title":  "Functions, API de Triage y lecturas de salud",
+                      "phase":  "1A",
+                      "prompt":  ".github/prompts/spec1000-a4-functions-api.prompt.md",
+                      "dependsOn":  [
+                                        "F0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "none",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Functions/Functions/KpiIngestionFunction.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/ApplicationHealthMonitorFunction.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/BusinessHealthMonitorFunction.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/InfrastructureHealthMonitorFunction.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/TriageInvestigationsFunction.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/KpiDefinitionAdminFunctions.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/HealthReadFunctions.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/RunMonkeyNowFunction.cs",
+                                           "Portal/src/JourneyMonitor.Functions/local.settings.json",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/TriageSignalSubmitter.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/GetPillarHealthService.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000*Tests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000Fakes/**",
+                                           "Portal/tests/JourneyMonitor.Tests/UseCases/TriageSignalSubmitterTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/UseCases/GetPillarHealthServiceTests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000TriageApiTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000TimerFunctionsTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/UseCases/TriageSignalSubmitterTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/UseCases/GetPillarHealthServiceTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "PostInvestigation_WithoutSecret_Returns401",
+                                                "PostInvestigation_InvalidBody_Returns400",
+                                                "PostInvestigation_Valid_Returns202WithInvestigationId",
+                                                "PostInvestigation_Duplicate_ReturnsSameIdAndDuplicateTrue",
+                                                "GetInvestigation_Unknown_Returns404",
+                                                "UpsertKpiDefinition_WithoutSettingsSecret_Returns401",
+                                                "UpsertKpiDefinition_InvalidRanges_Returns400",
+                                                "TimerFunctions_DoNothingWhenHealthMonitoringDisabled",
+                                                "RunMonkeyNow_SupportsSpec1000Ids",
+                                                "Submitter_CreatesInvestigationAndEnqueuesWork",
+                                                "Submitter_OpenDuplicate_DoesNotEnqueueAgain",
+                                                "PillarHealth_OfflineWhenNoEnabledKpis",
+                                                "PillarHealth_AnomalousWhenCounterOrCooldownActive"
+                                            ]
+                  },
+                  {
+                      "id":  "A5",
+                      "title":  "Triage Monkey dentro del Inspector",
+                      "phase":  "1A",
+                      "prompt":  ".github/prompts/spec1000-a5-triage.prompt.md",
+                      "dependsOn":  [
+                                        "F0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "none",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/UseCases/MonkeyRunners.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Inspector/InspectorMonkeyService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Inspector/Triage*.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Evidence/**",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Fabric/FabricBusinessEvidenceProvider.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Inspector/Triage*Tests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Evidence/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Inspector/TriageMonkeyServiceTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Inspector/TriageRunnerTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Runner_LeasesTriageSignalBeforeInvestigationPackages",
+                                                "Runner_ExistingInvestigationPackageFlowUnchanged",
+                                                "Triage_CollectsAllSixDimensions_UnavailableOnesMarked",
+                                                "Triage_EvidenceProviderFailure_DoesNotFailInvestigation",
+                                                "Triage_ProducesContractValidJson",
+                                                "Triage_InvalidLlmJson_FallsBackToInformational",
+                                                "Triage_ShadowMode_NeverNotifies",
+                                                "Triage_LiveMode_NotifiesOnlyRedAlert",
+                                                "Triage_BudgetExhausted_DoesNotCallLlm",
+                                                "Triage_ModeOff_CompletesWithoutLlm",
+                                                "Triage_UpdatesStatusRunningThenCompleted"
+                                            ]
+                  },
+                  {
+                      "id":  "I1",
+                      "title":  "IntegraciÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³n ola 1 y registro DI",
+                      "phase":  "1B",
+                      "prompt":  ".github/prompts/spec1000-i1-integracion.prompt.md",
+                      "dependsOn":  [
+                                        "A1",
+                                        "A2",
+                                        "A3",
+                                        "A4",
+                                        "A5"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/Spec1000ServiceCollectionExtensions.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Program.cs",
+                                           "Portal/docker-compose.yml",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000DependencyInjectionTests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000DependencyInjectionTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "AddSpec1000_ResolvesEverySpec1000Service",
+                                                "AddSpec1000_WithoutSql_UsesInMemoryStores"
+                                            ]
+                  },
+                  {
+                      "id":  "A6",
+                      "title":  "Consola de calibraciÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³n",
+                      "phase":  "1B",
+                      "prompt":  ".github/prompts/spec1000-a6-consola.prompt.md",
+                      "dependsOn":  [
+                                        "I1"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "none",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.HealthConsole/**",
+                                           "Portal/JourneyMonitor.slnx",
+                                           "Portal/tests/JourneyMonitor.Tests/JourneyMonitor.Tests.csproj",
+                                           "Portal/tests/JourneyMonitor.Tests/HealthConsole/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/HealthConsole/HealthConsoleTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Simulate_Afternoon_PrintsPresentationTable",
+                                                "Replay_DoesNotWriteToStores",
+                                                "Evaluate_UnknownKpi_ReturnsExitCode2",
+                                                "Args_InvalidOption_ReturnsExitCode1WithUsage"
+                                            ]
+                  },
+                  {
+                      "id":  "A7",
+                      "title":  "Portal solo lectura",
+                      "phase":  "1B",
+                      "prompt":  ".github/prompts/spec1000-a7-portal.prompt.md",
+                      "dependsOn":  [
+                                        "I1"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "staticChecks":  [
+                                           "noBrowserDetection",
+                                           "nodeSyntax"
+                                       ],
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/**",
+                                           "Portal/src/JourneyMonitor.Web/Program.cs",
+                                           "Portal/src/JourneyMonitor.Web/Services/JourneyMonitorApiClient.cs"
+                                       ],
+                      "requiredTestFiles":  [
+
+                                            ],
+                      "requiredTestNames":  [
+
+                                            ]
+                  },
+                  {
+                      "id":  "A8",
+                      "title":  "DevOps: compose, QA siempre activo, workflow prod",
+                      "phase":  "1B",
+                      "prompt":  ".github/prompts/spec1000-a8-devops.prompt.md",
+                      "dependsOn":  [
+                                        "I1"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "timers",
+                      "staticChecks":  [
+                                           "minReplicas"
+                                       ],
+                      "allowedPaths":  [
+                                           "Portal/docker-compose.yml",
+                                           "Portal/.env.example",
+                                           "Portal/scripts/publish-func-qa.ps1",
+                                           "Portal/scripts/publish-func-qa-test.ps1",
+                                           "Portal/PUBLISHING.md",
+                                           ".github/workflows/deploy-qa.yml",
+                                           ".github/workflows/deploy-prod.yml"
+                                       ],
+                      "requiredTestFiles":  [
+
+                                            ],
+                      "requiredTestNames":  [
+
+                                            ]
+                  },
+                  {
+                      "id":  "RV",
+                      "title":  "RevisiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³n final y E2E completo",
+                      "phase":  "1B",
+                      "prompt":  ".github/prompts/spec1000-rv-revision.prompt.md",
+                      "dependsOn":  [
+                                        "A6",
+                                        "A7",
+                                        "A8"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "full",
+                      "staticChecks":  [
+                                           "noBrowserDetection",
+                                           "nodeSyntax",
+                                           "minReplicas"
+                                       ],
+                      "allowedPaths":  [
+                                           "docs/architecture/spec-1000-informe-revision-*.md"
+                                       ],
+                      "requiredTestFiles":  [
+
+                                            ],
+                      "requiredTestNames":  [
+
+                                            ]
+                  },
+                  {
+                      "id":  "D1",
+                      "title":  "Daemon activity log, status API, run tracking and Simian Army cards",
+                      "phase":  "1C",
+                      "prompt":  ".github/prompts/spec1000-d1-daemon-backend.prompt.md",
+                      "dependsOn":  [
+                                        "RV"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "daemons",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Domain/DaemonActivity.cs",
+                                           "Portal/src/JourneyMonitor.Core/Abstractions/IDaemonActivity.cs",
+                                           "Portal/src/JourneyMonitor.Core/Options/DaemonMonitoringOptions.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Daemons/**",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/KpiIngestionService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Kpi/PillarHealthMonitorService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Inspector/TriageMonkeyService.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringDaemonActivity.sql",
+                                           "Portal/docker/init-sql.sh",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlDaemonActivityLog.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/MonitoringSchemaGate.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Monitoring/InMemoryDaemonActivityLog.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/Spec1000ServiceCollectionExtensions.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/DaemonFunctions.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/GetMonkeysFunction.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/KpiIngestionFunction.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/ApplicationHealthMonitorFunction.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Daemons/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000Daemon*Tests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/DaemonActivity*Tests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/PillarHealthMonitorServiceTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/UseCases/KpiIngestionServiceTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Inspector/TriageMonkeyServiceTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/GetMonkeysFunction*Tests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Daemons/DaemonActivityRecorderTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Daemons/DaemonStatusReaderTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/Infrastructure/DaemonActivityLogTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000DaemonApiTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Recorder_NeverThrowsWhenStoreFails",
+                                                "Recorder_EntriesShareRunIdAndKeepOrder",
+                                                "Recorder_TruncatesMessageTo1000",
+                                                "StatusReader_ReturnsOneStatusPerDaemonInOrder",
+                                                "StatusReader_DisabledWhenHealthMonitoringOff",
+                                                "StatusReader_RunningWhenStartedWithoutCompletion",
+                                                "StatusReader_StaleWhenLastRunTooOld",
+                                                "StatusReader_ErrorWhenLastRunHadErrors",
+                                                "StatusReader_NeverRunWithoutActivity",
+                                                "InMemoryLog_AfterIdZeroReturnsLatestAscending",
+                                                "InMemoryLog_FiltersByDaemonAndMinLevel",
+                                                "SqlLog_RoundTripAndPaging",
+                                                "Ingestion_WritesActivityForEachKpiAndRun",
+                                                "Ingestion_UpToDateRunSaysUpToDate",
+                                                "Monitor_WritesKpiEvaluatedAnomalyAndTriageActivity",
+                                                "Monitor_DisabledWritesNoActivity",
+                                                "Triage_WritesStartedAndCompletedActivity",
+                                                "DaemonsApi_ReturnsFiveStatuses",
+                                                "DaemonsActivityApi_InvalidQuery_Returns400",
+                                                "DaemonsActivityApi_PagesWithAfterId",
+                                                "GetMonkeys_IncludesDaemonCards"
+                                            ]
+                  },
+                  {
+                      "id":  "D2",
+                      "title":  "Portal Daemons tab with live console",
+                      "phase":  "1C",
+                      "prompt":  ".github/prompts/spec1000-d2-daemons-tab.prompt.md",
+                      "dependsOn":  [
+                                        "D1"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "daemons-web",
+                      "staticChecks":  [
+                                           "noBrowserDetection",
+                                           "nodeSyntax"
+                                       ],
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/**",
+                                           "Portal/src/JourneyMonitor.Web/Program.cs",
+                                           "Portal/src/JourneyMonitor.Web/Services/JourneyMonitorApiClient.cs"
+                                       ],
+                      "requiredTestFiles":  [
+
+                                            ],
+                      "requiredTestNames":  [
+
+                                            ]
+                  },
+                  {
+                      "id":  "D3",
+                      "title":  "HealthConsole status and watch commands",
+                      "phase":  "1C",
+                      "prompt":  ".github/prompts/spec1000-d3-console-watch.prompt.md",
+                      "dependsOn":  [
+                                        "D1"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "none",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.HealthConsole/**",
+                                           "Portal/tests/JourneyMonitor.Tests/HealthConsole/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/HealthConsole/HealthConsoleDaemonTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Status_PrintsOneLinePerDaemon",
+                                                "Watch_PrintsNewEntriesOnlyOnce",
+                                                "Watch_FiltersByDaemonAndLevel",
+                                                "Watch_StopsAfterMaxPolls"
+                                            ]
+                  },
+                  {
+                      "id":  "H1",
+                      "title":  "Backfill history required by the detection method",
+                      "phase":  "1C",
+                      "prompt":  ".github/prompts/spec1000-h1-history-backfill.prompt.md",
+                      "dependsOn":  [
+                                        "D2",
+                                        "D3"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/UseCases/KpiIngestionService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Ingestion/**",
+                                           "Portal/tests/JourneyMonitor.Tests/UseCases/KpiIngestionServiceTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Ingestion/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/UseCases/KpiIngestionServiceTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Ingestion_FirstRun_BackfillsRequiredHistory",
+                                                "Ingestion_HistoryGap_BackfillsOnlyMissingRange",
+                                                "Ingestion_NoGap_DoesNotBackfill",
+                                                "Ingestion_BackfillRespectsMaxRowsPerCycle",
+                                                "Ingestion_BackfillSourceFailure_KeepsWatermarkAndRetries",
+                                                "Ingestion_WithoutEvaluator_KeepsOldBehaviour"
+                                            ]
+                  },
+                  {
+                      "id":  "MT1",
+                      "title":  "App Insights auth chain without eternal cache + automatic token refresh",
+                      "phase":  "MT",
+                      "prompt":  ".github/prompts/spec1000-mt1-auth-token-refresh.prompt.md",
+                      "dependsOn":  [
+
+                                    ],
+                      "contractsFrozen":  false,
+                      "e2eLevel":  "daemons-web",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Infrastructure/AppInsights/AppInsightsTelemetrySource.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/AppInsights/AppInsightsTokenAcquirer.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/AppInsights/*Token*.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/AppInsightsToken.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/AppInsightsTokenService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/SqlAppInsightsTokenRepository.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/TenantResolver.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/TokenRefresh/**",
+                                           "Portal/src/JourneyMonitor.Core/Options/TokenRefreshOptions.cs",
+                                           "Portal/src/JourneyMonitor.Core/Domain/DaemonActivity.cs",
+                                           "Portal/src/JourneyMonitor.Core/Domain/Monitoring.cs",
+                                           "Portal/src/JourneyMonitor.Core/Domain/MonkeyKey.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Daemons/**",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/20241030_CreateAppInsightsTokensTable.sql",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/ServiceCollectionExtensions.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/Spec1000ServiceCollectionExtensions.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/AppInsightsTokenController.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/TokenRefreshFunction.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/DaemonFunctions.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/GetMonkeysFunction.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Program.cs",
+                                           "Portal/src/JourneyMonitor.Functions/local.settings.json",
+                                           "Portal/src/JourneyMonitor.Web/Program.cs",
+                                           "Portal/src/JourneyMonitor.Web/Services/JourneyMonitorApiClient.cs",
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/AppInsightsTokens.html",
+                                           "Portal/src/JourneyMonitor.Web/Pages/AppInsightsTokens.cshtml",
+                                           "Portal/src/JourneyMonitor.Web/Pages/AppInsightsTokens.cshtml.cs",
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/daemons.js",
+                                           "Portal/src/JourneyMonitor.HealthConsole/HealthConsoleApp.Daemons.cs",
+                                           "Portal/docker-compose.yml",
+                                           "Portal/.env.example",
+                                           "Portal/scripts/publish-func-qa.ps1",
+                                           "Portal/scripts/publish-func-qa-test.ps1",
+                                           ".github/workflows/deploy-qa.yml",
+                                           ".github/workflows/deploy-prod.yml",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/AppInsightsTelemetrySource*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/TokenRefresh/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000TimerFunctionsTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000DaemonApiTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000DependencyInjectionTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Daemons/**",
+                                           "Portal/tests/JourneyMonitor.Tests/HealthConsole/HealthConsoleDaemonTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Company/coupling-allowlist.txt"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Infrastructure/AppInsightsTelemetrySourceAuthTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/TokenRefresh/AppInsightsTokenRefreshServiceTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "TelemetrySource_ApiKeyWins",
+                                                "TelemetrySource_ValidStoredToken_IsUsed",
+                                                "TelemetrySource_ExpiredStoredToken_FallsBackToDefaultCredential",
+                                                "TelemetrySource_StoredTokenNotCachedPastExpiry",
+                                                "TelemetrySource_StoredToken401_RetriesOnceWithDefault",
+                                                "TokenRefresh_DueToken_IsRefreshedAndSaved",
+                                                "TokenRefresh_NotDue_IsSkipped",
+                                                "TokenRefresh_ManualMode_IsNeverRefreshed",
+                                                "TokenRefresh_AcquireFailure_KeepsOldTokenAndRecordsError",
+                                                "TokenRefresh_RefreshNow_ManualMode_IsRejected",
+                                                "TokenRefresh_NeverLogsSecrets",
+                                                "TokenRefresh_ServicePrincipal_RequiresClientIdAndSecret"
+                                            ]
+                  },
+                  {
+                      "id":  "MT2",
+                      "title":  "ProfileKey on KPI definitions and triage (contracts v3)",
+                      "phase":  "MT",
+                      "prompt":  ".github/prompts/spec1000-mt2-kpi-profilekey.prompt.md",
+                      "dependsOn":  [
+
+                                    ],
+                      "contractsFrozen":  false,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Domain/Kpi.cs",
+                                           "Portal/src/JourneyMonitor.Core/Domain/Triage.cs",
+                                           "Portal/src/JourneyMonitor.Core/Abstractions/IKpi.cs",
+                                           "Portal/src/JourneyMonitor.Core/Abstractions/ITriage.cs",
+                                           "Portal/src/JourneyMonitor.Core/Company/ArriviaKpiProfile.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Kpi/**",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Ingestion/**",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Inspector/TriageMonkeyService.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/KpiIngestionService.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/GetPillarHealthService.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/TriageSignalSubmitter.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/MonkeyRunners.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringKpi.sql",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringTriage.sql",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/SeedKpiDefinitions.sql",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlKpi*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlTriageInvestigationStore.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Monitoring/InMemoryKpi*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Monitoring/InMemoryTriageInvestigationStore.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/AppInsights/AppInsightsKpiSource.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/KpiPersistenceServiceCollectionExtensions.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/Spec1000ServiceCollectionExtensions.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/KpiDefinitionAdminFunctions.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/TriageInvestigationsFunction.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/*HealthMonitorFunction.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/KpiIngestionFunction.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/PillarHealth*.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/*Health*Functions.cs",
+                                           "Portal/src/JourneyMonitor.Web/Program.cs",
+                                           "Portal/src/JourneyMonitor.Web/Services/JourneyMonitorApiClient.cs",
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/app.js",
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/index.html",
+                                           "Portal/src/JourneyMonitor.HealthConsole/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Triage/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Inspector/Triage*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Evidence/A5TriageTestDoubles.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Ingestion/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000Fakes/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/KpiProfileApiTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/HealthConsole/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/Kpi*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/TriageInvestigationStoreTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/AppInsightsKpiSourceTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/UseCases/KpiIngestionServiceTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/UseCases/GetPillarHealthServiceTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/UseCases/TriageSignalSubmitterTests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/KpiProfileTests.cs",
+                                                "Portal/tests/JourneyMonitor.Tests/Functions/KpiProfileApiTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "KpiDefinition_DefaultProfileKey_IsIncumbent",
+                                                "KpiDefinition_BlankProfileKey_FailsValidation",
+                                                "KpiRepository_ListByProfile_FiltersAndNullReturnsAll",
+                                                "KpiRepository_SameKeyDifferentProfiles_AreDistinct",
+                                                "Monitor_SignalCarriesDefinitionProfileKey",
+                                                "Ingestion_ProcessesAllProfiles",
+                                                "Ingestion_NoSourceForProfile_WarnsAndSkips",
+                                                "Triage_ForensicCaseUsesSignalProfileKey",
+                                                "TriageSignal_OldJsonWithoutProfileKey_Deserializes",
+                                                "SettingsApi_DefaultsToActiveProfile",
+                                                "SettingsApi_UnknownProfileKey_Returns400",
+                                                "PillarsApi_FiltersByActiveProfile",
+                                                "TriageApi_ManualRunDefaultsToActiveProfile"
+                                            ]
+                  },
+                  {
+                      "id":  "MT3",
+                      "title":  "TenantResolver reads the company profile; last branch coupling debt removed",
+                      "phase":  "MT",
+                      "prompt":  ".github/prompts/spec1000-mt3-coupling-tenant-profile.prompt.md",
+                      "dependsOn":  [
+                                        "MT1",
+                                        "MT2"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "daemons",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/TenantResolver.cs",
+                                           "Portal/src/JourneyMonitor.Core/Company/CompanyModel.cs",
+                                           "Portal/src/JourneyMonitor.Core/Company/CompanyProfileValidator.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringCompanyProfile.sql",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/ServiceCollectionExtensions.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/AppInsights/AppInsightsTelemetrySource.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/TenantResolverProfileTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Company/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/AppInsightsTelemetrySource*.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/TenantResolverProfileTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "TenantResolver_MapsTenantAndDomainFromProfile",
+                                                "TenantResolver_UnknownTenant_ReturnsUuid",
+                                                "TenantResolver_ProfileWithoutTenants_ReturnsUuid",
+                                                "CompanyProfileValidator_RejectsDuplicateTenantKey",
+                                                "CompanyProfileValidator_RejectsNonGuidAadTenantId",
+                                                "ArriviaSeed_DeclaresTelemetryTenants"
+                                            ]
+                  },
+                  {
+                      "id":  "MT4",
+                      "title":  "Repo cleanup: untrack Portal/publish, move session docs to docs/company-profile",
+                      "phase":  "MT",
+                      "prompt":  ".github/prompts/spec1000-mt4-repo-cleanup.prompt.md",
+                      "dependsOn":  [
+
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "none",
+                      "allowedPaths":  [
+                                           "Portal/publish/**",
+                                           ".gitignore",
+                                           "docs/company-profile/**",
+                                           "*.md",
+                                           "Portal/QUICK_START_TOKENS.md",
+                                           "Portal/SCOUTS_IMPLEMENTATION_STATUS.md",
+                                           "Portal/SCOUT_IMPLEMENTATION_COMPLETE.md"
+                                       ],
+                      "requiredTestFiles":  [
+
+                                            ],
+                      "requiredTestNames":  [
+
+                                            ]
+                  },
+                  {
+                      "id":  "SD1",
+                      "title":  "Entity-grain persistence (EntityKey, FailedCount, Grain, shadow table)",
+                      "phase":  "SD",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "schema",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringKpi.sql",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringScoutShadow.sql",
+                                           "Portal/docker/init-sql.sh",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlKpi*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlScoutShadow*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Monitoring/InMemoryKpi*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Monitoring/InMemoryScoutShadow*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/MonitoringSchemaGate.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/KpiPersistenceServiceCollectionExtensions.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/Kpi*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/ScoutShadow*.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Infrastructure/KpiEntityPersistenceTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "EntityBuckets_PkIncludesEntityKey",
+                                                "DomainBuckets_EmptyEntityKey_BehaveAsV3",
+                                                "EntityState_IsPerEntity",
+                                                "EntityBuckets_RetentionPurgesAfter8Days",
+                                                "ShadowComparison_RoundTrips",
+                                                "SqlScripts_AreIdempotent"
+                                            ]
+                  },
+                  {
+                      "id":  "SD2",
+                      "title":  "KPI KQL rendered from the company profile (all hosts) + entity variant",
+                      "phase":  "SD",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Infrastructure/Kql/kpi-*",
+                                           "Portal/src/JourneyMonitor.Infrastructure/AppInsights/AppInsightsKpiSource.cs",
+                                           "Portal/src/JourneyMonitor.Core/Company/CompanyKqlTemplater.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/JourneyMonitor.Infrastructure.csproj",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/AppInsightsKpiSource*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Company/CompanyKqlTemplaterTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Company/coupling-allowlist.txt"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Infrastructure/AppInsightsKpiSourceProfileTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "KpiSource_RendersFromProfile_NoHostLiteral",
+                                                "KpiSource_DomainGrain_CoversAllProfileHosts",
+                                                "KpiSource_EntityGrain_ReturnsEntityStats",
+                                                "KpiSource_EntityGrain_RespectsMaxEntities",
+                                                "KpiSource_UnknownProfile_IsUnavailable"
+                                            ]
+                  },
+                  {
+                      "id":  "SD3",
+                      "title":  "Ingestion for entity-grain KPIs",
+                      "phase":  "SD",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0",
+                                        "SD1",
+                                        "SD2"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/UseCases/KpiIngestionService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Ingestion/**",
+                                           "Portal/tests/JourneyMonitor.Tests/UseCases/KpiIngestionServiceTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Ingestion/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Ingestion/EntityIngestionTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Ingestion_EntityGrain_WritesOneBucketPerEntity",
+                                                "Ingestion_EntityGrain_WritesNoSamples",
+                                                "Ingestion_EntityGrain_BackfillsHistory",
+                                                "Ingestion_DomainGrain_Unchanged"
+                                            ]
+                  },
+                  {
+                      "id":  "SD4",
+                      "title":  "EntityDetectionMonitor with the same KpiEvaluator",
+                      "phase":  "SD",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0",
+                                        "SD1"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Kpi/**",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/ApplicationHealthMonitorFunction.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/Spec1000ServiceCollectionExtensions.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringScoutShadow.sql"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/EntityDetectionMonitorTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "EntityMonitor_UsesSameEvaluator",
+                                                "EntityMonitor_ConsecutiveAndCooldownPerEntity",
+                                                "EntityMonitor_AnomalyCarriesEntityKey",
+                                                "EntityMonitor_DoesNotChangePillarStatus",
+                                                "EntityMonitor_DoesNotSubmitTriage",
+                                                "EntityMonitor_ActivityIsOneLinePerDefinition"
+                                            ]
+                  },
+                  {
+                      "id":  "SD5",
+                      "title":  "Scout shadow comparison (rules vs method)",
+                      "phase":  "SD",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0",
+                                        "SD3",
+                                        "SD4"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "scout-shadow",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/ScoutMonkeyService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/ScoutShadow/**",
+                                           "Portal/src/JourneyMonitor.Core/Options/ScoutOptions.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/ScoutShadowFunctions.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/GetMonkeysFunction.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/ScoutMonkeyServiceTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/ScoutShadow/**",
+                                           "Portal/tests/e2e/scout-shadow.ps1",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlScoutShadowStore.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Monitoring/InMemoryScoutShadowStore.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringScoutShadow.sql",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/KpiEntityPersistenceTests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/ScoutShadow/ScoutShadowComparatorTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Shadow_BothFlagged_IsBoth",
+                                                "Shadow_RulesOnly_IsRecorded",
+                                                "Shadow_MethodOnly_IsRecorded",
+                                                "Shadow_NeitherFlagged_IsNotStored",
+                                                "Shadow_RulesMode_EscalationUnchanged",
+                                                "Shadow_ApiReturnsCounts"
+                                            ]
+                  },
+                  {
+                      "id":  "SD6",
+                      "title":  "Entity KPI seed and Grain in API/portal/console",
+                      "phase":  "SD",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0",
+                                        "SD1"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/SeedKpiDefinitions.sql",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/KpiDefinitionAdminFunctions.cs",
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/app.js",
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/index.html",
+                                           "Portal/src/JourneyMonitor.HealthConsole/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/KpiProfileApiTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/KpiGrainApiTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/HealthConsole/**",
+                                           "Portal/docker/init-sql.sh",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/GetPillarHealthService.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/UseCases/GetPillarHealthServiceTests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Functions/KpiGrainApiTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Seed_DeclaresEntityKpisPerDomain",
+                                                "KpiApi_GrainRoundTrips",
+                                                "KpiApi_SameKeyDifferentGrain_Coexist"
+                                            ]
+                  },
+                  {
+                      "id":  "SD7",
+                      "title":  "Simian Army shadow card and case list",
+                      "phase":  "SD",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0",
+                                        "SD5"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "daemons-web",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/app.js",
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/index.html",
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/styles.css",
+                                           "Portal/src/JourneyMonitor.Web/Program.cs",
+                                           "Portal/src/JourneyMonitor.Web/Services/JourneyMonitorApiClient.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Web/**",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/RunMonkeyNowFunction.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/RunMonkeyNow*.cs"
+                                       ],
+                      "requiredTestFiles":  [
+
+                                            ],
+                      "requiredTestNames":  [
+
+                                            ]
+                  },
+                  {
+                      "id":  "SDRV",
+                      "title":  "Final review of the scout-detection phase",
+                      "phase":  "SD",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0",
+                                        "SD5",
+                                        "SD6",
+                                        "SD7",
+                                        "AGE2E",
+                                        "FX1",
+                                        "FX2",
+                                        "FX3",
+                                        "FX4"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "full",
+                      "allowedPaths":  [
+                                           "docs/architecture/**"
+                                       ],
+                      "requiredTestFiles":  [
+
+                                            ],
+                      "requiredTestNames":  [
+
+                                            ]
+                  },
+                  {
+                      "id":  "AG1",
+                      "title":  "KPI domains come from the company profile services",
+                      "phase":  "AG",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Kpi/**",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/KpiIngestionService.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/KpiDefinitionAdminFunctions.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Kpi*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Company/coupling-allowlist.txt",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringCompanyProfile.sql",
+                                           "Portal/tests/JourneyMonitor.Tests/Company/**",
+                                           "Portal/tests/JourneyMonitor.Tests/EndToEnd/IncumbentProfileRegressionTests.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringScoutShadow.sql",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/KpiEntityPersistenceTests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/KpiDomainFromProfileTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "KpiDomain_MustBeProfileService",
+                                                "KpiDomain_UnknownReturns400",
+                                                "KpiDomain_UnknownAtRuntime_WarnsAndSkips",
+                                                "KpiDomain_IncumbentSeedUnchanged"
+                                            ]
+                  },
+                  {
+                      "id":  "AG2",
+                      "title":  "KPI source resolved through the telemetry source catalog",
+                      "phase":  "AG",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0",
+                                        "SD2"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Infrastructure/AppInsights/AppInsightsKpiSource.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/Spec1000ServiceCollectionExtensions.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/AppInsightsKpiSource*.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Infrastructure/AppInsightsKpiSourceCatalogTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "KpiSource_ResolvesAppFromProfileAliases",
+                                                "KpiSource_FallsBackToInsightsOptionsForIncumbent",
+                                                "KpiSource_NoAlias_IsUnavailable"
+                                            ]
+                  },
+                  {
+                      "id":  "AG3",
+                      "title":  "KPIs backed by audited custom KQL (kql:{queryKey})",
+                      "phase":  "AG",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0",
+                                        "AG2"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Infrastructure/AppInsights/CatalogKqlKpiSource.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Kpi/**",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/KpiDefinitionAdminFunctions.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/Spec1000ServiceCollectionExtensions.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/CatalogKqlKpiSource*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Kpi*.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/KqlQueryAdminService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Configuration/KqlQueryKeys.cs",
+                                           "Portal/src/JourneyMonitor.Core/Abstractions/IKqlQueryStore.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/UseCases/KqlQueryAdmin*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/KqlQuery*.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Infrastructure/CatalogKqlKpiSourceTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "KqlKpi_UsesCatalogQuery",
+                                                "KqlKpi_RejectsUnknownTokens",
+                                                "KqlKpi_DryRunFailure_Returns400",
+                                                "KqlKpi_OutputContractValidated",
+                                                "KqlKpi_EntityGrainSupported"
+                                            ]
+                  },
+                  {
+                      "id":  "AG4",
+                      "title":  "Partners in the company profile + dependency KPIs",
+                      "phase":  "AG",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0",
+                                        "AG1",
+                                        "SD3"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Company/CompanyProfileValidator.cs",
+                                           "Portal/src/JourneyMonitor.Core/Company/CompanyKqlTemplater.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Kql/kpi-dependency*",
+                                           "Portal/src/JourneyMonitor.Infrastructure/AppInsights/AppInsightsKpiSource.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Kpi/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Company/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/AppInsightsKpiSource*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Kpi/PartnerKpiTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Profile_PartnersOptionalAndValidated",
+                                                "DependencyKpi_OneSeriesPerPartner",
+                                                "PartnerAnomaly_TriageStageIsPartnerKey"
+                                            ]
+                  },
+                  {
+                      "id":  "AG5",
+                      "title":  "Profile-agnostic triage business evidence",
+                      "phase":  "AG",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0",
+                                        "AG1"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Evidence/**",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Fabric/FabricBusinessEvidenceProvider.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/Spec1000ServiceCollectionExtensions.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Evidence/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Evidence/KpiBusinessEvidenceTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "BusinessEvidence_NonIncumbent_UsesKpiBuckets",
+                                                "BusinessEvidence_Incumbent_StillFabric",
+                                                "Evidence_FilteredByProfileKey"
+                                            ]
+                  },
+                  {
+                      "id":  "AG6",
+                      "title":  "Evidence redaction before any LLM prompt",
+                      "phase":  "AG",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Privacy/**",
+                                           "Portal/src/JourneyMonitor.Core/Company/CompanyProfileValidator.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Inspector/**",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/ServiceCollectionExtensions.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/Spec1000ServiceCollectionExtensions.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Privacy/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Inspector/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Company/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Privacy/EvidenceRedactorTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Redactor_MasksEmailPhoneCard",
+                                                "Redactor_MasksProfilePiiDimensions",
+                                                "Triage_PromptIsRedacted",
+                                                "Inspector_PromptIsRedacted",
+                                                "Redaction_AuditStoresCountsNotValues",
+                                                "NewProfile_DefaultsToNoRawEvidence"
+                                            ]
+                  },
+                  {
+                      "id":  "AG7",
+                      "title":  "Onboarding suggests disabled KPIs per service and partner",
+                      "phase":  "AG",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0",
+                                        "AG1",
+                                        "AG4"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Onboarding/**",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/TelemetryDiscoveryFunctions.cs",
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/app.js",
+                                           "Portal/tests/JourneyMonitor.Tests/Onboarding/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Onboarding/SuggestedKpiTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Draft_SuggestsKpisPerService",
+                                                "Draft_SuggestsKpiPerDiscoveredPartner",
+                                                "SuggestedKpis_AreDisabled"
+                                            ]
+                  },
+                  {
+                      "id":  "AGE2E",
+                      "title":  "Second company end-to-end (agnostic E2E level)",
+                      "phase":  "AG",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0",
+                                        "AG3",
+                                        "AG4",
+                                        "AG5",
+                                        "AG6",
+                                        "AG7",
+                                        "AG6B",
+                                        "AG8"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "agnostic",
+                      "allowedPaths":  [
+                                           "Portal/tests/e2e/agnostic.ps1",
+                                           "Portal/tests/JourneyMonitor.Tests/EndToEnd/**",
+                                           "Portal/tests/e2e/fixtures/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/EndToEnd/AgnosticDaemonPipelineTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Acme_KpiIngestedDetectedAndTriaged",
+                                                "Acme_AndArrivia_AreIsolated",
+                                                "CouplingAllowlist_DoesNotGrow"
+                                            ]
+                  },
+                  {
+                      "id":  "AG6B",
+                      "title":  "Redaction for RCA, Scout assessor and Doctor LLM calls; redacted persisted triage evidence for non-incumbent profiles",
+                      "phase":  "AG",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0",
+                                        "AG6"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/RcaAgentService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/ScoutAssessorService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/DoctorAgentService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Inspector/TriageMonkeyService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Privacy/**",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/ServiceCollectionExtensions.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Privacy/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/RcaAgentServiceTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/ScoutAssessor*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/DoctorAgentServiceTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Inspector/Triage*.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Privacy/OtherAgentsRedactionTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Rca_PromptIsRedacted",
+                                                "ScoutAssessor_PromptIsRedacted",
+                                                "Doctor_PromptIsRedacted",
+                                                "Triage_PersistedCorrelation_RedactedForNonIncumbent",
+                                                "Incumbent_PromptsUnchanged"
+                                            ]
+                  },
+                  {
+                      "id":  "AG8",
+                      "title":  "Telemetry source ownership per profile + DI-order guard for KQL admin",
+                      "phase":  "AG",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "SD0",
+                                        "AG3",
+                                        "AG7"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Abstractions/ITelemetrySourceStore.cs",
+                                           "Portal/src/JourneyMonitor.Core/Configuration/TelemetrySourceDefaults.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/TelemetrySourceAdminFunctions.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/CompanyProfileAdminFunctions.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Monitoring/InMemoryTelemetrySourceStore.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlTelemetrySourceStore.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringTelemetrySource.sql",
+                                           "Portal/src/JourneyMonitor.Core/Company/CompanyProfileValidator.cs",
+                                           "Portal/src/JourneyMonitor.Core/Onboarding/OnboardingModels.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/*TelemetrySource*.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/*CompanyProfile*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/Spec1000ServiceCollectionExtensions.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/TelemetrySource*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Company/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Spec1000DependencyInjectionTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/TelemetrySource*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/UseCases/KqlQueryAdmin*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/CreateMonitoringCompanyProfile.sql"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Company/TelemetrySourceOwnershipTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Profile_CannotUseAliasOwnedByAnotherProfile",
+                                                "Profile_CanUseOwnOrSharedAlias",
+                                                "TelemetrySource_NewRowOwnedByCreatingProfile",
+                                                "ExistingCatalogRows_OwnedByIncumbent",
+                                                "KqlAdmin_InUseRevert_Returns409_WithProductionDiOrder"
+                                            ]
+                  },
+                  {
+                      "id":  "FX1",
+                      "title":  "Tenant isolation at read time: InsightsOptions fallback incumbent-only; alias ownership enforced on every resolution",
+                      "phase":  "FX",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "AGE2E"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "agnostic",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Infrastructure/AppInsights/AppInsightsKpiSource.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/AppInsights/CatalogKqlKpiSource.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Company/ComposedScoutBoardQueryTextSource.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/TelemetrySourceOwnership.cs",
+                                           "Portal/src/JourneyMonitor.Core/Abstractions/ITelemetrySourceStore.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/Spec1000ServiceCollectionExtensions.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/AppInsightsKpiSource*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Infrastructure/CatalogKqlKpiSource*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Company/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/TenantIsolation*.cs",
+                                           "Portal/src/JourneyMonitor.Core/Configuration/KqlSourceResolver.cs",
+                                           "Portal/src/JourneyMonitor.Core/Configuration/InsightsSourceResolver.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/ScoutBoardService.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/ScoutBoard*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Configuration/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/TenantIsolationReadTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Fallback_InsightsOptions_OnlyForIncumbent",
+                                                "KqlKpi_NonIncumbentWithoutAlias_Unavailable",
+                                                "Resolution_AliasOwnedByOtherProfile_Unavailable_Kpi",
+                                                "Resolution_AliasOwnedByOtherProfile_Unavailable_ScoutBoard",
+                                                "Resolution_AfterTransfer_OldOwnerLosesAccess"
+                                            ]
+                  },
+                  {
+                      "id":  "FX2",
+                      "title":  "Entity backfill bounded by entity retention",
+                      "phase":  "FX",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "AGE2E"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/UseCases/KpiIngestionService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Ingestion/**",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/KpiDefinitionAdminFunctions.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Kpi/KpiDomainPolicy.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/UseCases/KpiIngestionServiceTests.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Ingestion/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Functions/Kpi*.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Ingestion/EntityRetentionBoundTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "EntityBackfill_NeverReachesBeyondRetention",
+                                                "EntityKpi_LookbackBeyondRetention_Returns400",
+                                                "EntityKpi_LongLookback_DoesNotRequeryEveryCycle"
+                                            ]
+                  },
+                  {
+                      "id":  "FX3",
+                      "title":  "Triage evidence includes entity-grain series (top entities)",
+                      "phase":  "FX",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "AGE2E"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "detection",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Evidence/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Evidence/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/Evidence/EntityEvidenceTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Evidence_EntityKpi_IncludesTopEntitySeries",
+                                                "Evidence_PartnerSignal_IncludesPartnerSeries",
+                                                "Evidence_EntitySeries_BoundedAndRedacted"
+                                            ]
+                  },
+                  {
+                      "id":  "FX4",
+                      "title":  "Tenant isolation for Scout drill-down and Inspector log tools",
+                      "phase":  "FX",
+                      "status":  "approved",
+                      "prompt":  ".github/prompts/spec1000-sd-scout-detection.prompt.md",
+                      "dependsOn":  [
+                                        "FX1"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "agnostic",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/ScoutEvidenceCollector.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Inspector/LogsAgentTools.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Inspector/InspectorSpecialists.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Kql/scout-drilldown.kql.txt",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/TelemetrySourceOwnership.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/ServiceCollectionExtensions.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/Spec1000ServiceCollectionExtensions.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/ScoutEvidence*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/LogsAgentTools*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/Inspector/**",
+                                           "Portal/tests/JourneyMonitor.Tests/Monitoring/TenantIsolation*.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Monitoring/TenantIsolationDrilldownTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Drilldown_NonIncumbentCase_UsesOnlyOwnSources",
+                                                "Drilldown_NonIncumbentWithoutSources_QueriesNothing",
+                                                "InspectorLogs_NonIncumbentCase_UsesOnlyOwnSources",
+                                                "Incumbent_DrilldownAndLogs_Unchanged"
+                                            ]
+                  },
+                  {
+                      "id":  "DT0",
+                      "title":  "Demo skeleton, Kusto schema, app() rewriter, compose demo profile, compatibility go/no-go",
+                      "phase":  "DT",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-dt-demo-telemetry.prompt.md",
+                      "dependsOn":  [
+
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "schema",
+                      "allowedPaths":  [
+                                           "Portal/demo/**",
+                                           "Portal/JourneyMonitor.slnx",
+                                           "Portal/docker-compose.yml",
+                                           "Portal/docker/**",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/init-sql.sh",
+                                           "Portal/.env.example"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/demo/FakeAppInsights.Tests/AppReferenceRewriterTests.cs",
+                                                "Portal/demo/compat/compat-report.md"
+                                            ],
+                      "requiredTestNames":  [
+                                                "AppRewriter_ArmIdBecomesDatabase",
+                                                "AppRewriter_NameAndAppIdResolve",
+                                                "AppRewriter_TablesWithoutPrefixUntouched",
+                                                "AppRewriter_WorkspaceRejected",
+                                                "AppRewriter_UnknownAppRejected",
+                                                "Timespan_FiltersAllSixTables",
+                                                "Timespan_ParsesIsoFormats"
+                                            ]
+                  },
+                  {
+                      "id":  "DT1",
+                      "title":  "FakeAppInsights HTTP server imitating App Insights REST",
+                      "phase":  "DT",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-dt-demo-telemetry.prompt.md",
+                      "dependsOn":  [
+                                        "DT0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "schema",
+                      "allowedPaths":  [
+                                           "Portal/demo/FakeAppInsights/**",
+                                           "Portal/demo/FakeAppInsights.Tests/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/demo/FakeAppInsights.Tests/QueryEndpointTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Query_WithoutApiKey_Returns401",
+                                                "Query_UnknownApp_Returns404",
+                                                "Query_ReturnsAppInsightsShape",
+                                                "Query_DynamicSerializedAsJsonString",
+                                                "Query_DatetimeIsUtcIso",
+                                                "Query_KqlError_Returns400BadArgument",
+                                                "Query_MultipleTables_NamedPrimaryResultThenTable1",
+                                                "Query_TimespanApplied"
+                                            ]
+                  },
+                  {
+                      "id":  "DT2",
+                      "title":  "Platform demo mode: configurable query endpoint, wildcard API key, DEMO banner, knowledge subPath",
+                      "phase":  "DT",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-dt-demo-telemetry.prompt.md",
+                      "dependsOn":  [
+
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Options/**",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/KnowledgeImportService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Abstractions/IKnowledge*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/AppInsights/AppInsightsTelemetrySource.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Monitoring/FileSystemKnowledgeDocumentSource.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/**",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/ImportKnowledgeCorpusFunction.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Program.cs",
+                                           "Portal/src/JourneyMonitor.Web/Program.cs",
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/app.js",
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/index.html",
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/styles.css",
+                                           "Portal/tests/JourneyMonitor.Tests/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/Demo/DemoModeTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "QueryEndpoint_DefaultIsAppInsights",
+                                                "QueryEndpoint_OverrideUsedForQuery",
+                                                "QueryApiKeys_WildcardAppliesToAnyApp",
+                                                "QueryApiKeys_SpecificKeyWinsOverWildcard",
+                                                "DemoMode_DisabledByDefault",
+                                                "DemoMode_EndpointReportsEnabled",
+                                                "KnowledgeImport_SubPathRestrictsToFolder",
+                                                "KnowledgeImport_SubPathRejectsTraversal"
+                                            ]
+                  },
+                  {
+                      "id":  "DT3",
+                      "title":  "DemoGenerator: backfill, live feeder, scenarios API, PackValidator",
+                      "phase":  "DT",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-dt-demo-telemetry.prompt.md",
+                      "dependsOn":  [
+                                        "DT0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "schema",
+                      "allowedPaths":  [
+                                           "Portal/demo/DemoGenerator/**",
+                                           "Portal/demo/DemoGenerator.Tests/**",
+                                           "Portal/demo/FakeAppInsights/README.md"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/demo/DemoGenerator.Tests/GeneratorTests.cs",
+                                                "Portal/demo/DemoGenerator.Tests/PackValidatorTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Archetype_LoadsAndValidates",
+                                                "Archetype_InvalidStepReferenceRejected",
+                                                "Synthesis_IsDeterministicForSeed",
+                                                "Synthesis_LatencyMatchesP50P95Within10Percent",
+                                                "Synthesis_OperationIdSharedAcrossTables",
+                                                "Scenario_EntityOnlyAffectsOnlyThoseEntities",
+                                                "Scenario_DependencyFailureMarksDependencyAndRequest",
+                                                "Backfill_IncludesHistoricalIncidents",
+                                                "Scale_TinyIsOnePercentOfLaptop",
+                                                "PackValidator_FixturePackIsValid",
+                                                "PackValidator_DetectsUncoveredStepUrl",
+                                                "PackValidator_DetectsMissingSourceForApp"
+                                            ]
+                  },
+                  {
+                      "id":  "DT4T",
+                      "title":  "Company pack \u0027tourism\u0027 - Arrivia (demo)",
+                      "phase":  "DT",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-dt-demo-telemetry.prompt.md",
+                      "dependsOn":  [
+                                        "DT3"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "schema",
+                      "allowedPaths":  [
+                                           "Portal/demo/packs/tourism/**",
+                                           "Portal/demo/DemoGenerator.Tests/Packs/TourismPackTests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/demo/DemoGenerator.Tests/Packs/TourismPackTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "TourismPack_IsValid",
+                                                "TourismPack_HasScenarioLibrary",
+                                                "TourismPack_HasHistoricalIncidentsAndBusinessKpis",
+                                                "TourismPack_CorpusMatchesScenarios"
+                                            ]
+                  },
+                  {
+                      "id":  "DT4B",
+                      "title":  "Company pack \u0027bank\u0027 - Banco Andino (demo)",
+                      "phase":  "DT",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-dt-demo-telemetry.prompt.md",
+                      "dependsOn":  [
+                                        "DT3"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "schema",
+                      "allowedPaths":  [
+                                           "Portal/demo/packs/bank/**",
+                                           "Portal/demo/DemoGenerator.Tests/Packs/BankPackTests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/demo/DemoGenerator.Tests/Packs/BankPackTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "BankPack_IsValid",
+                                                "BankPack_HasScenarioLibrary",
+                                                "BankPack_HasHistoricalIncidentsAndBusinessKpis",
+                                                "BankPack_CorpusMatchesScenarios"
+                                            ]
+                  },
+                  {
+                      "id":  "DT4A",
+                      "title":  "Company pack \u0027aml\u0027 - Kinectify (demo)",
+                      "phase":  "DT",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-dt-demo-telemetry.prompt.md",
+                      "dependsOn":  [
+                                        "DT3"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "schema",
+                      "allowedPaths":  [
+                                           "Portal/demo/packs/aml/**",
+                                           "Portal/demo/DemoGenerator.Tests/Packs/AmlPackTests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/demo/DemoGenerator.Tests/Packs/AmlPackTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "AmlPack_IsValid",
+                                                "AmlPack_HasScenarioLibrary",
+                                                "AmlPack_HasHistoricalIncidentsAndBusinessKpis",
+                                                "AmlPack_CorpusMatchesScenarios"
+                                            ]
+                  },
+                  {
+                      "id":  "DT4R",
+                      "title":  "Company pack \u0027retail\u0027 - Mercado Libre (demo)",
+                      "phase":  "DT",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-dt-demo-telemetry.prompt.md",
+                      "dependsOn":  [
+                                        "DT3"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "schema",
+                      "allowedPaths":  [
+                                           "Portal/demo/packs/retail/**",
+                                           "Portal/demo/DemoGenerator.Tests/Packs/RetailPackTests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/demo/DemoGenerator.Tests/Packs/RetailPackTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "RetailPack_IsValid",
+                                                "RetailPack_HasScenarioLibrary",
+                                                "RetailPack_HasHistoricalIncidentsAndBusinessKpis",
+                                                "RetailPack_CorpusMatchesScenarios"
+                                            ]
+                  },
+                  {
+                      "id":  "DT5",
+                      "title":  "Demo kit scripts, README and E2E demo stage",
+                      "phase":  "DT",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-dt-demo-telemetry.prompt.md",
+                      "dependsOn":  [
+                                        "DT1",
+                                        "DT2",
+                                        "DT3",
+                                        "DT4T",
+                                        "DT4B",
+                                        "DT4A",
+                                        "DT4R"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "demo",
+                      "allowedPaths":  [
+                                           "Portal/demo/scripts/**",
+                                           "Portal/demo/README.md",
+                                           "Portal/tests/e2e/demo.ps1",
+                                           "Portal/docker-compose.yml",
+                                           "Portal/demo/compat/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/e2e/demo.ps1",
+                                                "Portal/demo/scripts/demo-reset.ps1"
+                                            ],
+                      "requiredTestNames":  [
+
+                                            ]
+                  },
+                  {
+                      "id":  "DTRV",
+                      "title":  "Final review of the DT phase",
+                      "phase":  "DT",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-dt-demo-telemetry.prompt.md",
+                      "dependsOn":  [
+                                        "DT5"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "demo",
+                      "allowedPaths":  [
+                                           "docs/**"
+                                       ],
+                      "requiredTestFiles":  [
+
+                                            ],
+                      "requiredTestNames":  [
+
+                                            ]
+                  },
+                  {
+                      "id":  "MC0",
+                      "title":  "Multi-company UI contract in code (theme, ProfileKey SQL, interfaces, DI stubs, proxy routes)",
+                      "phase":  "MC",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-mc-multi-company-ui.prompt.md",
+                      "dependsOn":  [
+
+                                    ],
+                      "contractsFrozen":  false,
+                      "e2eLevel":  "schema",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Company/CompanyModel.cs",
+                                           "Portal/src/JourneyMonitor.Core/Company/CompanyProfileValidator.cs",
+                                           "Portal/src/JourneyMonitor.Core/Abstractions/IProfile*.cs",
+                                           "Portal/src/JourneyMonitor.Core/Abstractions/IEntityCatalog.cs",
+                                           "Portal/src/JourneyMonitor.Core/Domain/ProfileJourney.cs",
+                                           "Portal/src/JourneyMonitor.Core/Domain/ProfileReads.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/**",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/**",
+                                           "Portal/src/JourneyMonitor.Functions/Program.cs",
+                                           "Portal/src/JourneyMonitor.Web/Program.cs",
+                                           "Portal/docker/init-sql.sh",
+                                           "Portal/tests/JourneyMonitor.Tests/MultiCompany/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/MultiCompany/ContractV6Tests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Theme_IsOptionalInProfileJson",
+                                                "Theme_ColorsMustBeHex",
+                                                "Theme_ShortNameLimited",
+                                                "Sql_ProfileKeyAddedIdempotently",
+                                                "Proxy_ProfileJourneysForwardsQueryString",
+                                                "Proxy_ClubInventoryForwardsQueryString"
+                                            ]
+                  },
+                  {
+                      "id":  "MC1",
+                      "title":  "Generic profile journeys and entity catalog",
+                      "phase":  "MC",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-mc-multi-company-ui.prompt.md",
+                      "dependsOn":  [
+                                        "MC0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/UseCases/ProfileJourney*.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/EntityCatalog*.cs",
+                                           "Portal/src/JourneyMonitor.Core/Company/**",
+                                           "Portal/src/JourneyMonitor.Infrastructure/ProfileJourneys/**",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/AddProfileJourneys*.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/ProfileJourney*.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/GetEntities*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/MultiCompany/Journeys/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/MultiCompany/Journeys/ProfileJourneyTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Journeys_ClassifiedByProfileSteps",
+                                                "Journeys_StatusCompletedDroppedFailed",
+                                                "Journeys_IsolatedByProfile",
+                                                "Entities_FromIdentitySources"
+                                            ]
+                  },
+                  {
+                      "id":  "MC2",
+                      "title":  "Exceptions ingested and read per profile",
+                      "phase":  "MC",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-mc-multi-company-ui.prompt.md",
+                      "dependsOn":  [
+                                        "MC0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/UseCases/*Incident*.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/*Exception*.cs",
+                                           "Portal/src/JourneyMonitor.Core/Domain/Incident*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlIncident*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlExceptionOccurrenceCounter.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/ProfileExceptions/**",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/AddProfileExceptions*.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/*Incident*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/MultiCompany/Exceptions/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/MultiCompany/Exceptions/ProfileExceptionTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Exceptions_IngestedPerProfile",
+                                                "Exceptions_DedupIncludesProfile",
+                                                "Exceptions_ReadFilteredByProfile",
+                                                "Exceptions_IncumbentUnchanged"
+                                            ]
+                  },
+                  {
+                      "id":  "MC3",
+                      "title":  "Analytics and Overview per profile",
+                      "phase":  "MC",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-mc-multi-company-ui.prompt.md",
+                      "dependsOn":  [
+                                        "MC0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/UseCases/*Dashboard*.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/*Overview*.cs",
+                                           "Portal/src/JourneyMonitor.Core/Domain/Overview*.cs",
+                                           "Portal/src/JourneyMonitor.Core/Domain/Dashboard*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlDashboardMetricStore.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlOverviewReader.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/ProfileAnalytics/**",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/AddProfileAnalytics*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/DependencyInjection/AddProfileOverview*.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/*Dashboard*.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/*Overview*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/MultiCompany/Analytics/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/MultiCompany/Analytics/ProfileAnalyticsTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Analytics_MetricsPerProfileStep",
+                                                "Analytics_ReadFilteredByProfile",
+                                                "Overview_ComposedOnlyFromProfile",
+                                                "Overview_IncumbentOnlyWidgetsOmitted"
+                                            ]
+                  },
+                  {
+                      "id":  "MC4",
+                      "title":  "Existing reads honor profileKey",
+                      "phase":  "MC",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-mc-multi-company-ui.prompt.md",
+                      "dependsOn":  [
+                                        "MC0"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/**",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/**",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/**",
+                                           "Portal/tests/JourneyMonitor.Tests/MultiCompany/Reads/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/MultiCompany/Reads/ProfileReadIsolationTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "HealthPillars_FilteredByProfile",
+                                                "Triage_FilteredByProfile",
+                                                "Monkeys_FilteredByProfile",
+                                                "Inspector_FilteredByProfile",
+                                                "Knowledge_FilteredByProfile",
+                                                "DaemonActivity_ProfileAndGlobal",
+                                                "ClubInventory_IncumbentOnly"
+                                            ]
+                  },
+                  {
+                      "id":  "MC5",
+                      "title":  "UI: company theme, active company everywhere, profile-driven filters and tabs",
+                      "phase":  "MC",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-mc-multi-company-ui.prompt.md",
+                      "dependsOn":  [
+                                        "MC1",
+                                        "MC2",
+                                        "MC3",
+                                        "MC4"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/**",
+                                           "Portal/tests/JourneyMonitor.Tests/MultiCompany/Ui/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/MultiCompany/Ui/UiCompanyScopingTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Ui_EveryReadCarriesActiveCompany",
+                                                "Ui_NoHardcodedArriviaOptions",
+                                                "Ui_ThemeVariablesDefined"
+                                            ]
+                  },
+                  {
+                      "id":  "MC6",
+                      "title":  "Company themes for the 4 profiles + E2E company switch",
+                      "phase":  "MC",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-mc-multi-company-ui.prompt.md",
+                      "dependsOn":  [
+                                        "MC5",
+                                        "MC7",
+                                        "GS1",
+                                        "DT4T",
+                                        "DT4B",
+                                        "DT4A",
+                                        "DT4R"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "allowedPaths":  [
+                                           "Portal/demo/packs/*/profile.json",
+                                           "Portal/tests/e2e/company-switch.ps1",
+                                           "Portal/tests/e2e/company-switch/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/e2e/company-switch.ps1"
+                                            ],
+                      "requiredTestNames":  [
+
+                                            ]
+                  },
+                  {
+                      "id":  "MCRV",
+                      "title":  "Final review of the MC phase",
+                      "phase":  "MC",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-mc-multi-company-ui.prompt.md",
+                      "dependsOn":  [
+                                        "MC6",
+                                        "MC7",
+                                        "GS1"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "full",
+                      "allowedPaths":  [
+                                           "docs/**"
+                                       ],
+                      "requiredTestFiles":  [
+
+                                            ],
+                      "requiredTestNames":  [
+
+                                            ]
+                  },
+                  {
+                      "id":  "GS1",
+                      "title":  "Demo generator sessions + journeys grouped by session",
+                      "phase":  "MC",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-mc-multi-company-ui.prompt.md",
+                      "dependsOn":  [
+                                        "MC1"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "allowedPaths":  [
+                                           "Portal/demo/DemoGenerator/**",
+                                           "Portal/demo/DemoGenerator.Tests/GeneratorTests.cs",
+                                           "Portal/demo/DemoGenerator.Tests/SessionTests.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/ProfileJourney*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/ProfileJourneys/**",
+                                           "Portal/tests/JourneyMonitor.Tests/MultiCompany/Journeys/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/demo/DemoGenerator.Tests/SessionTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Sessions_DoNotChangeKpiSeries",
+                                                "Sessions_OrderedFunnelWithDropOff",
+                                                "Journeys_GroupedBySessionWhenPresent"
+                                            ]
+                  },
+                  {
+                      "id":  "MC7",
+                      "title":  "Follow-ups: daemon activity tagged per company, monkeys text per profile, label/hint cleanup",
+                      "phase":  "MC",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-mc-multi-company-ui.prompt.md",
+                      "dependsOn":  [
+                                        "MC5"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/**",
+                                           "Portal/src/JourneyMonitor.Infrastructure/**",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/**",
+                                           "Portal/src/JourneyMonitor.Web/wwwroot/**",
+                                           "Portal/tests/JourneyMonitor.Tests/MultiCompany/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/MultiCompany/Followups/FollowupTests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "DaemonActivity_PerCompanyEntriesTagged",
+                                                "DaemonActivity_OtherCompanyEntriesHidden",
+                                                "Monkeys_DescriptionsUseProfileVocabulary"
+                                            ]
+                  },
+                  {
+                      "id":  "FXM1",
+                      "title":  "H1 Doctor findings and knowledge per company + M1 proxy routes forward profileKey",
+                      "phase":  "MC",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-mc-multi-company-ui.prompt.md",
+                      "dependsOn":  [
+                                        "MCRV"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Doctor*.cs",
+                                           "Portal/src/JourneyMonitor.Core/Monitoring/Knowledge*.cs",
+                                           "Portal/src/JourneyMonitor.Core/Domain/Finding*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlFindings*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlKnowledgeRetriever.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Monitoring/InMemoryKnowledgeRetriever.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/monitoring/**",
+                                           "Portal/src/JourneyMonitor.Web/Program.cs",
+                                           "Portal/src/JourneyMonitor.Web/Services/**",
+                                           "Portal/tests/JourneyMonitor.Tests/MultiCompany/Fix1/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/MultiCompany/Fix1/Fix1Tests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Doctor_FindingStoredUnderItsOwnCompany",
+                                                "Knowledge_LegacyUntaggedIsIncumbentNotShared",
+                                                "Proxy_AllCompanyReadsForwardProfileKey"
+                                            ]
+                  },
+                  {
+                      "id":  "FXM2",
+                      "title":  "M2 journey quality (multi-step share, Completed semantics) + M3 overview latency",
+                      "phase":  "MC",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-mc-multi-company-ui.prompt.md",
+                      "dependsOn":  [
+                                        "MCRV"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "allowedPaths":  [
+                                           "Portal/demo/DemoGenerator/**",
+                                           "Portal/demo/DemoGenerator.Tests/SessionTests.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/ProfileJourney*.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/ProfileOverviewComposer.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Sql/SqlOverviewReader.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/MultiCompany/Fix2/**",
+                                           "Portal/tests/JourneyMonitor.Tests/MultiCompany/Journeys/ProfileJourneyTests.cs"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/MultiCompany/Fix2/Fix2Tests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "Journeys_SingleStepIsNotCompletedUnlessFlowHasOneStep",
+                                                "Overview_LatencyIsRequestDurationNotSessionSpan",
+                                                "Sessions_MultiStepShareAtLeastQuarter"
+                                            ]
+                  },
+                  {
+                      "id":  "FXM3",
+                      "title":  "M4 Arrivia legacy journey pipeline stopped (diagnose and fix)",
+                      "phase":  "MC",
+                      "status":  "pending",
+                      "prompt":  ".github/prompts/spec1000-mc-multi-company-ui.prompt.md",
+                      "dependsOn":  [
+                                        "MCRV"
+                                    ],
+                      "contractsFrozen":  true,
+                      "e2eLevel":  "portal",
+                      "allowedPaths":  [
+                                           "Portal/src/JourneyMonitor.Core/UseCases/Sync*Journey*.cs",
+                                           "Portal/src/JourneyMonitor.Core/UseCases/GetJourneysService.cs",
+                                           "Portal/src/JourneyMonitor.Core/Company/ClubFilter*.cs",
+                                           "Portal/src/JourneyMonitor.Infrastructure/Kql/**",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/Sync*Journey*.cs",
+                                           "Portal/src/JourneyMonitor.Functions/Functions/RefreshJourneys*.cs",
+                                           "Portal/tests/JourneyMonitor.Tests/MultiCompany/Fix3/**"
+                                       ],
+                      "requiredTestFiles":  [
+                                                "Portal/tests/JourneyMonitor.Tests/MultiCompany/Fix3/Fix3Tests.cs"
+                                            ],
+                      "requiredTestNames":  [
+                                                "LegacyJourneySync_RunsAgainstDemoTelemetry"
+                                            ]
+                  }
+              ],
+    "noPush":  true,
+    "noPushReason":  "User rule 2026-11-06: NEVER git push nor gh pr create for feature/company-profile-decoupling or its task branches."
+}

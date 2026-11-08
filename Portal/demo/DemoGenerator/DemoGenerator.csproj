@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The six App Insights tables (contract v5 section 4.1); applied to every app database on reset. -->
+    <EmbeddedResource Include="..\kusto\schema.kql" LogicalName="DemoGenerator.schema.kql" />
+  </ItemGroup>
+
+</Project>

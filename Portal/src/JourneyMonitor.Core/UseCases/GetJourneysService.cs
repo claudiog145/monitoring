@@ -25,13 +25,17 @@ public sealed record JourneysOutcome(JourneysResult Result, int StatusCode);
 /// <summary>
 /// One live query for every club in a vertical. <see cref="RowsByClub"/> keys are the club id
 /// (hotels) or ICE partner id (cruises). Clubs absent from the dictionary had no rows.
+/// <see cref="ClubsFromTelemetry"/> is true for the demo telemetry: its keys are the club ids the
+/// telemetry carries (the ones the Club filter lists), not brand-catalog ids, so the sync stores
+/// every key instead of walking the catalog.
 /// </summary>
 public sealed record VerticalJourneysOutcome(
     int StatusCode,
     string? Error,
     string Window,
     string Environment,
-    IReadOnlyDictionary<string, IReadOnlyList<TelemetryJourneyRow>> RowsByClub);
+    IReadOnlyDictionary<string, IReadOnlyList<TelemetryJourneyRow>> RowsByClub,
+    bool ClubsFromTelemetry = false);
 
 /// <summary>
 /// Use case behind GET /api/journeys. Direct port of handleJourneysApi in server.js,
@@ -119,24 +123,68 @@ public sealed class GetJourneysService(
         {
             var matchHostDomain = normalized == "hotels"
                 && InsightsEnvironment.Normalize(environment) == InsightsEnvironment.Staging;
-            var kql = ClubFilter.InjectVerticalJourneyKql(
-                normalized,
-                kqlProvider.GetJourneyKql(normalized),
-                window,
-                clubIds,
-                hosts,
-                partners,
-                source.ClubResource,
-                source.CoreResource,
-                rowCap,
-                environment);
+            var demo = UsesDemoTelemetry(insightsOptions.Value);
+            var kql = demo
+                ? InjectDemoVerticalJourneyKql(kqlProvider.GetByKey(DemoJourneyKey(normalized)), window, rowCap)
+                : ClubFilter.InjectVerticalJourneyKql(
+                    normalized,
+                    kqlProvider.GetJourneyKql(normalized),
+                    window,
+                    clubIds,
+                    hosts,
+                    partners,
+                    source.ClubResource,
+                    source.CoreResource,
+                    rowCap,
+                    environment);
             var rawRows = await telemetrySource.QueryAsync(new TelemetryQueryRequest(kql, source.AppInsightsAppId, source.TenantId), ct);
-            return new VerticalJourneysOutcome(200, null, window, environment, GroupByClub(rawRows, clubIds, matchHostDomain));
+            var grouped = GroupByClub(rawRows, clubIds, matchHostDomain || demo);
+            if (normalized == "hotels")
+            {
+                foreach (var clubId in grouped.Keys.ToList())
+                {
+                    grouped[clubId] = HotelVisitMerger.Merge(grouped[clubId]);
+                }
+            }
+
+            return new VerticalJourneysOutcome(200, null, window, environment, grouped, demo);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return new VerticalJourneysOutcome(502, ex.Message, window, environment, new Dictionary<string, IReadOnlyList<TelemetryJourneyRow>>());
         }
+    }
+
+    /// <summary>Built-in key of the demo-shaped journey query for a vertical (hotels, cars, cruises).</summary>
+    public static string DemoJourneyKey(string domain) => $"journey-demo:{domain.Trim().ToLowerInvariant()}";
+
+    /// <summary>
+    /// True when App Insights queries go to the demo stack's fake endpoint (Insights:QueryEndpoint set
+    /// to anything but the public API). The demo packs do not emit the production telemetry shape
+    /// the legacy journey queries filter on (T-Mobile hosts, catalog club ids,
+    /// customDimensions.UserId/CorrelationId), so the legacy text returns no rows there.
+    /// </summary>
+    public static bool UsesDemoTelemetry(InsightsOptions options) =>
+        !string.IsNullOrWhiteSpace(options.QueryEndpoint)
+        && !string.Equals(
+            options.QueryEndpoint.Trim().TrimEnd('/'),
+            InsightsOptions.DefaultQueryEndpoint,
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Fills win and the per-club row cap into a demo journey query.</summary>
+    public static string InjectDemoVerticalJourneyKql(string raw, string window, int rowCap)
+    {
+        if (!ClubFilter.IsValidWin(window) && !ClubFilter.IsValidCruiseWin(window)) throw new ClubFilterException("win must look like 2h, 15m or 7d");
+
+        var text = ReplaceOnce(raw, @"let win = \w+;", $"let win = {window};");
+        return ReplaceOnce(text, @"let rowCap = \d+;", $"let rowCap = {(rowCap > 0 ? rowCap : ClubFilter.FilterRowCap)};").Trim();
+    }
+
+    private static string ReplaceOnce(string text, string pattern, string replacement)
+    {
+        var regex = new System.Text.RegularExpressions.Regex(pattern);
+        if (!regex.IsMatch(text)) throw new ClubFilterException($"demo journey query has no '{pattern}' to fill");
+        return regex.Replace(text, replacement, 1);
     }
 
     private static Dictionary<string, IReadOnlyList<TelemetryJourneyRow>> GroupByClub(
@@ -310,9 +358,11 @@ public sealed class GetJourneysService(
             kqlProvider.GetJourneyKql(domain), win, clubId, host, source.ClubResource, source.CoreResource, rowCap, partnerId, environment);
         kql = await sourceResolver.ResolveAsync(kql, source.Environment, ct);
         var rawRows = await telemetrySource.QueryAsync(new TelemetryQueryRequest(kql, source.AppInsightsAppId, source.TenantId), ct);
+        // Hotel visit folding runs here, on the returned rows, so the KQL stays one session per
+        // row and finishes inside the ingest timeout. Other domains are unchanged. The browser
+        // still maps the raw row shape.
+        var rows = domain == "hotels" ? HotelVisitMerger.Merge(rawRows) : rawRows.ToList();
 
-        // Rows are returned RAW (not mapped) - map-v6.js maps them client-side, exactly like
-        // the original app. See the note on TelemetryJourneyRow/JourneysResult.
         var result = new JourneysResult
         {
             Source = "live",
@@ -323,8 +373,8 @@ public sealed class GetJourneysService(
             Host = host,
             RowCap = rowCap,
             FetchedAt = DateTimeOffset.UtcNow.ToString("O"),
-            RowCount = rawRows.Count,
-            Rows = rawRows.ToList(),
+            RowCount = rows.Count,
+            Rows = rows,
         };
         await cache.SetAsync(key, JsonSerializer.Serialize(result), CacheTtl, ct);
         return new JourneysOutcome(result, 200);

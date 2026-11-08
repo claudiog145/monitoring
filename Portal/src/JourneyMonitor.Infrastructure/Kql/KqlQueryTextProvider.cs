@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using JourneyMonitor.Core.Abstractions;
+using JourneyMonitor.Core.UseCases;
 
 namespace JourneyMonitor.Infrastructure.Kql;
 
@@ -22,6 +23,11 @@ public sealed class KqlQueryTextProvider : IKqlQueryTextProvider
         [KqlQueryKeys.Journey("cars")] = Prefix + "TMobile_Cars_Query_KQL_v6.txt",
         [KqlQueryKeys.Journey("cruises")] = Prefix + "TMobile_CRUISE_Query_KQL_v2.txt",
         [KqlQueryKeys.Journey("air")] = Prefix + "TMobile_AIR_Query_KQL_v6_demo_2h.txt",
+
+        // Demo stack only (fake App Insights): same row contract, read from the demo pack's shape.
+        [GetJourneysService.DemoJourneyKey("hotels")] = Prefix + "demo-journeys-hotels.kql.txt",
+        [GetJourneysService.DemoJourneyKey("cars")] = Prefix + "demo-journeys-cars.kql.txt",
+        [GetJourneysService.DemoJourneyKey("cruises")] = Prefix + "demo-journeys-cruises.kql.txt",
 
         [KqlQueryKeys.IncidentExceptions] = Prefix + "incident-exceptions.txt",
         [KqlQueryKeys.ScoutDrillDown] = Prefix + "scout-drilldown.kql.txt",

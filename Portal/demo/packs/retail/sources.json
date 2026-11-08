@@ -1,0 +1,12 @@
+[
+  { "alias": "retail-storefront", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/retail-storefront",
+    "appId": "demo-retail-storefront", "ownerProfileKey": "mercadolibre", "enabled": true, "notes": "Synthetic demo source: Mercado Libre (demo) storefront web." },
+  { "alias": "retail-search-api", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/retail-search-api",
+    "appId": "demo-retail-search-api", "ownerProfileKey": "mercadolibre", "enabled": true, "notes": "Synthetic demo source: Mercado Libre (demo) search API." },
+  { "alias": "retail-checkout-api", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/retail-checkout-api",
+    "appId": "demo-retail-checkout-api", "ownerProfileKey": "mercadolibre", "enabled": true, "notes": "Synthetic demo source: Mercado Libre (demo) checkout API." },
+  { "alias": "retail-payments", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/retail-payments",
+    "appId": "demo-retail-payments", "ownerProfileKey": "mercadolibre", "enabled": true, "notes": "Synthetic demo source: Mercado Libre (demo) payments." },
+  { "alias": "retail-shipping", "environment": "production", "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/retail-shipping",
+    "appId": "demo-retail-shipping", "ownerProfileKey": "mercadolibre", "enabled": true, "notes": "Synthetic demo source: Mercado Libre (demo) shipping." }
+]

@@ -1,0 +1,69 @@
+// KPI ingestion - request latency of one service of a company profile (Spec 1000 contract v4 §2,
+// AppInsightsKpiSource).
+//
+// Nothing in this file names a company, a host, a step or a customer. CompanyKqlTemplater fills
+// the source union, host filter, entity identity and service/step classifier placeholders from the
+// definition's ProfileKey, scoped to the service named by the domain token: the domain covers every
+// host of that service. IKqlSourceResolver then turns each source alias into a resource id.
+// (Placeholders are never written inside a comment: a multi-line fragment would end the comment.)
+// AppInsightsKpiSource validates and formats every other token: from/to as datetime literals,
+// bucket as a timespan, perBucket and maxEntities as integers, stage and domain as quoted strings
+// (stage empty = every stage) and grain as the bare word domain or entity.
+//
+// Domain grain output (contract v1): kind ("bucket"|"sample"), BucketStart, TotalCount, Value,
+// Timestamp, OperationId.
+// Entity grain output: only kind "bucket" rows, one per entity x bucket, keeping the maxEntities
+// entities with the most requests per bucket. EntityKey is the entity alone (the board's identity:
+// profile identity sources, then the host); the stage is the definition's Stage, and an empty
+// Stage aggregates every stage of the service per entity (contract v4 §6 A1). TotalCount = requests,
+// FailedCount = failed requests, P50/P95/Mean = duration in ms, Value = null. No samples.
+let fromTs = {{from}};
+let toTs = {{to}};
+let bucketSize = {{bucket}};
+let stageFilter = {{stage}};
+let serviceKey = {{domain}};
+let maxEntities = {{maxEntities}};
+let historyStart = fromTs;
+let tEnd = toTs;
+let unknownEntity = "(entity unavailable)";
+let base =
+    union
+{{SOURCE_UNION}}
+    | where timestamp >= fromTs and timestamp < toTs
+    | extend Host = tolower(tostring(parse_url(url).Host))
+    | where {{HOST_FILTER}}
+{{SERVICE_AND_STEP_CLASSIFIER}}
+    | where ServiceKey == serviceKey and isnotempty(Step)
+    | extend Stage = Step
+    | where isempty(stageFilter) or Stage == stageFilter
+    | extend BucketStart = bin_at(timestamp, bucketSize, datetime(1970-01-01))
+    | project BucketStart, timestamp, Ms = todouble(duration), itemCount, operation_Id, success,
+              customDimensions, url, Host, cloud_RoleName, Stage;
+let buckets =
+    base
+    | summarize TotalCount = sum(itemCount) by BucketStart
+    | project ['kind'] = "bucket", BucketStart, TotalCount = tolong(TotalCount), Value = real(null),
+              Timestamp = datetime(null), OperationId = "";
+// Known limitation: sample picks stored rows, so percentiles are not weighted by itemCount (TotalCount is).
+let samples =
+    base
+    | partition hint.strategy=native by BucketStart (sample {{perBucket}})
+    | project ['kind'] = "sample", BucketStart, TotalCount = tolong(0), Value = Ms,
+              Timestamp = timestamp, OperationId = operation_Id;
+let domainRows =
+    union buckets, samples
+    | project ['kind'], BucketStart, TotalCount, Value, Timestamp, OperationId;
+let entityRows =
+    base
+    | extend Entity = tostring({{ENTITY_IDENTITY}})
+    | extend Entity = case(isnotempty(Entity), Entity, isnotempty(Host), Host, unknownEntity)
+    | summarize TotalCount = sum(itemCount), FailedCount = sumif(itemCount, success == false),
+                P50 = percentile(Ms, 50), P95 = percentile(Ms, 95), Mean = avg(Ms)
+                by BucketStart, Entity
+    | sort by BucketStart asc, TotalCount desc, Entity asc
+    | extend EntityRank = row_number(1, prev(BucketStart) != BucketStart)
+    | where EntityRank <= maxEntities
+    | project ['kind'] = "bucket", BucketStart, EntityKey = Entity,
+              TotalCount = tolong(TotalCount), Value = real(null), P50, P95, Mean,
+              FailedCount = tolong(FailedCount), Timestamp = datetime(null), OperationId = "";
+{{grain}}Rows

@@ -1,0 +1,72 @@
+{
+  "companyKey": "fixture",
+  "profileKey": "fixture-demo",
+  "displayName": "Fixture Shop (demo)",
+  "apps": [
+    { "appId": "demo-fixture-web", "database": "fixture-web", "roleName": "shop-web", "host": "web.fixtureshop.demo" },
+    { "appId": "demo-fixture-api", "database": "fixture-api", "roleName": "stock-api", "host": "api.fixtureshop.demo" }
+  ],
+  "entities": { "kind": "store", "dimension": "StoreId", "count": 20, "zipf": 1.1, "idFormat": "S-{0:00}", "hostTemplate": null },
+  "traffic": {
+    "requestsPerDay": 20000,
+    "hourlyCurve": [2, 1, 1, 1, 1, 2, 4, 6, 8, 9, 10, 10, 10, 10, 9, 9, 9, 10, 11, 12, 11, 8, 5, 3],
+    "weekendFactor": 0.7
+  },
+  "steps": [
+    {
+      "app": "demo-fixture-web", "name": "GET /checkout/cart", "url": "/checkout/cart", "weight": 0.5,
+      "p50Ms": 120, "p95Ms": 600, "errorRate": 0.002,
+      "exceptions": [
+        { "type": "System.NullReferenceException", "message": "Cart session was not found", "method": "Cart.Load", "weight": 3 },
+        { "type": "System.InvalidOperationException", "message": "Cart is locked by another request", "method": "Cart.Lock", "weight": 1 }
+      ]
+    },
+    {
+      "app": "demo-fixture-web", "name": "POST /checkout/pay", "url": "/checkout/pay", "weight": 0.2,
+      "p50Ms": 300, "p95Ms": 1500, "errorRate": 0.004,
+      "exceptions": [ { "type": "System.TimeoutException", "message": "Payment gateway timeout", "method": "Payments.Charge", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "pay-gw", "target": "gw.paygate.demo", "type": "HTTP", "name": "POST /charge", "p50Ms": 150, "p95Ms": 700, "failureRate": 0.002 }
+      ],
+      "businessEvent": { "name": "OrderPaid", "onSuccessOnly": true, "measurements": { "Amount": { "min": 5, "max": 500 } } }
+    },
+    {
+      "app": "demo-fixture-api", "name": "GET /api/stock", "url": "/api/stock?sku=123", "weight": 0.3,
+      "p50Ms": 40, "p95Ms": 200, "errorRate": 0.001,
+      "dependencies": [
+        { "partner": "inventory-db", "target": "sql-inv.fixtureshop.internal", "type": "SQL", "name": "SELECT stock", "p50Ms": 5, "p95Ms": 40, "failureRate": 0.0005 },
+        { "partner": "pay-gw", "target": "gw.paygate.demo", "type": "HTTP", "name": "GET /limits", "p50Ms": 60, "p95Ms": 300, "failureRate": 0.001 }
+      ],
+      "businessEvent": { "name": "StockChecked", "onSuccessOnly": false }
+    }
+  ],
+  "scenarios": [
+    {
+      "key": "pay-gw-down", "title": "Payment gateway down", "description": "The payment gateway refuses most charges.", "defaultDurationMinutes": 30,
+      "effects": [
+        { "kind": "dependency-failure", "partner": "pay-gw", "rate": 0.8 },
+        { "kind": "latency-multiplier", "partner": "pay-gw", "factor": 4 }
+      ]
+    },
+    {
+      "key": "store-degraded", "title": "One store degraded", "description": "Store S-03 sees slow and failing carts.", "defaultDurationMinutes": 30,
+      "effects": [
+        { "kind": "entity-only", "entities": ["S-03"] },
+        { "kind": "latency-multiplier", "step": "GET /checkout/cart", "factor": 8 },
+        { "kind": "error-rate", "step": "GET /checkout/cart", "rate": 0.3, "exceptionType": "System.TimeoutException" }
+      ]
+    },
+    {
+      "key": "cart-errors", "title": "Cart exception storm", "description": "The cart throws after a deploy.", "defaultDurationMinutes": 20,
+      "effects": [ { "kind": "error-rate", "step": "GET /checkout/cart", "rate": 0.25, "exceptionType": "System.InvalidOperationException" } ]
+    },
+    {
+      "key": "flash-sale", "title": "Flash sale (legitimate peak)", "description": "Traffic doubles; nothing is broken.", "defaultDurationMinutes": 60,
+      "effects": [ { "kind": "traffic-multiplier", "factor": 2 } ]
+    }
+  ],
+  "historicalIncidents": [
+    { "scenario": "pay-gw-down", "hoursAgo": 30, "durationMinutes": 45 },
+    { "scenario": "store-degraded", "hoursAgo": 10, "durationMinutes": 60 }
+  ]
+}

@@ -3,6 +3,7 @@ using System.Text.Json;
 using JourneyMonitor.Core.Abstractions;
 using JourneyMonitor.Core.Company;
 using JourneyMonitor.Core.Domain;
+using JourneyMonitor.Core.Monitoring.Privacy;
 using JourneyMonitor.Core.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -30,9 +31,29 @@ public sealed class RcaAgentService(
     // Trailing and optional: the composition root builds this type with an explicit `new`, so a
     // required parameter here would be a compile break in a file this change does not own. Null
     // means the neutral vocabulary - see the note in the report accompanying this change.
-    ICompanyAdapterProvider? companyAdapters = null) : IRcaAgent
+    ICompanyAdapterProvider? companyAdapters = null,
+    // Contract v4 §5 (AG6B): same rule as Triage and the Inspector. Null redactor still redacts;
+    // null store means the profile is known only by the case's key (incumbent untouched, others closed).
+    ICompanyProfileStore? profiles = null,
+    IEvidenceRedactor? redactor = null) : IRcaAgent
 {
     private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
+
+    private readonly IEvidenceRedactor _redactor = redactor ?? new EvidenceRedactor();
+
+    /// <summary>The whole prompt - case facts, precedents and vocabulary - goes through the redactor before it leaves for the provider.</summary>
+    private string Redact(ForensicCase forensicCase, string text, CompanyProfile profile, string what)
+    {
+        var counts = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var redacted = PromptPrivacy.Redact(_redactor, text, profile, counts);
+        if (counts.Count > 0)
+        {
+            logger.LogInformation(
+                "[RcaAgent] case {CaseId} [{ProfileKey}]: {What} redacted before the LLM call ({Redactions}).",
+                forensicCase.Id, profile.ProfileKey, what, PromptPrivacy.Describe(counts));
+        }
+        return redacted;
+    }
 
     public async Task<RcaReport> ComposeAsync(ForensicCase forensicCase, CancellationToken ct = default)
     {
@@ -45,11 +66,13 @@ public sealed class RcaAgentService(
             Stage = forensicCase.Stage,
         };
 
-        var precedents = await RetrievePrecedentsAsync(forensicCase, settings.ResolvedMaxPrecedents, ct);
+        var profile = await PromptPrivacy.ResolveProfileAsync(profiles, forensicCase.ProfileKey, logger, "RcaAgent", ct);
+        var precedents = await RetrievePrecedentsAsync(forensicCase, profile, settings.ResolvedMaxPrecedents, ct);
         report.Precedents = precedents.Select(p => new RcaPrecedent(
             p.DocumentTitle ?? "(untitled)", p.SectionTitle ?? "(whole document)", p.Domain, p.SourceType)).ToList();
 
         var prompt = BuildPrompt(forensicCase, precedents, await CompanyVocabulary.ResolveAsync(companyAdapters, logger, ct));
+        prompt = Redact(forensicCase, prompt, profile, "prompt");
         var (content, tokensIn, tokensOut, modelUsed) = await llmClient.CompleteAsync(prompt, settings.ResolvedMaxTokens, ct);
 
         report.LlmCalls = 1;
@@ -90,7 +113,7 @@ public sealed class RcaAgentService(
     /// Scoped to the company the case belongs to, because a precedent is a real past incident of a
     /// real customer: handing company B the RCA documents of company A is a data leak, not noise.
     /// </summary>
-    private async Task<IReadOnlyList<KnowledgeChunk>> RetrievePrecedentsAsync(ForensicCase forensicCase, int top, CancellationToken ct)
+    private async Task<IReadOnlyList<KnowledgeChunk>> RetrievePrecedentsAsync(ForensicCase forensicCase, CompanyProfile profile, int top, CancellationToken ct)
     {
         var query = string.Join(' ', new[]
         {
@@ -101,6 +124,9 @@ public sealed class RcaAgentService(
         }.Where(part => !string.IsNullOrWhiteSpace(part)));
 
         if (string.IsNullOrWhiteSpace(query)) return [];
+
+        // The retriever embeds the query with the provider, so it follows the same rule as the prompt.
+        query = Redact(forensicCase, query, profile, "search query");
 
         // An unattributed case cannot be scoped, so it gets the whole corpus - and says so out
         // loud. Silence here is the dangerous failure mode: it looks exactly like a scoped lookup.

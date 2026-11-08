@@ -2,22 +2,32 @@ using System.Data;
 using System.Text.Json;
 using Dapper;
 using JourneyMonitor.Core.Abstractions;
+using JourneyMonitor.Core.Company;
+using JourneyMonitor.Core.Domain;
 using JourneyMonitor.Core.Options;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
 
 namespace JourneyMonitor.Infrastructure.Sql;
 
-/// <summary>Calls incident.usp_IngestExceptions. The grouping rules stay in Core.</summary>
-public sealed class SqlIncidentStore(IOptions<JourneyStoreOptions> storeOptions) : IIncidentStore
+/// <summary>
+/// Calls incident.usp_IngestExceptions. The grouping rules stay in Core. The incumbent path writes under
+/// <see cref="KpiProfiles.Default"/>; <see cref="IngestForProfileAsync"/> writes under any company (contract v6 §4.3).
+/// </summary>
+public sealed class SqlIncidentStore(IOptions<JourneyStoreOptions> storeOptions) : IIncidentStore, IProfileIncidentStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = null,
     };
 
-    public async Task<IncidentIngestResult> IngestAsync(IncidentIngestRequest request, CancellationToken cancellationToken)
+    public Task<IncidentIngestResult> IngestAsync(IncidentIngestRequest request, CancellationToken cancellationToken) =>
+        IngestForProfileAsync(KpiProfiles.Default, request, cancellationToken);
+
+    public async Task<IncidentIngestResult> IngestForProfileAsync(
+        string profileKey, IncidentIngestRequest request, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(profileKey)) throw new ArgumentException("A profile key is required.", nameof(profileKey));
         var options = storeOptions.Value;
         if (!options.IsConfigured)
         {
@@ -35,6 +45,7 @@ public sealed class SqlIncidentStore(IOptions<JourneyStoreOptions> storeOptions)
         parameters.Add("InsertedIncidents", null, DbType.Int32, ParameterDirection.Output);
         parameters.Add("UpdatedIncidents", null, DbType.Int32, ParameterDirection.Output);
         parameters.Add("InsertedOccurrences", null, DbType.Int32, ParameterDirection.Output);
+        parameters.Add("ProfileKey", profileKey.Trim(), DbType.String, size: 128);
 
         await using var connection = new SqlConnection(options.ConnectionString);
         var command = new CommandDefinition(

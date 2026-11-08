@@ -13,7 +13,10 @@ namespace JourneyMonitor.Functions.Functions;
 /// so the HTTP refresh path can reuse the exact same behavior.
 ///
 /// Hotels and cruises used to share one timer function, so a hotel pass held cruises. Each
-/// vertical now has its own function, so the two runs overlap instead of waiting. Both read
+/// vertical now has its own function, so the runs overlap instead of waiting. Cars uses that
+/// same timer shape and the Hotel App Insights app. The hotel
+/// timer then reads the Fabric warehouse settings from App Configuration and queries
+/// <c>dbo.vw_Alert_HotelBookingKPIs</c>. Both read
 /// <c>platform_reliability_cron_setting</c> (App Configuration key platform-reliability-cron-setting,
 /// hyphens as underscores, every 5 minutes). The Functions host resolves that expression while
 /// indexing functions, so it has to arrive as an environment variable. A missing value fails
@@ -23,6 +26,7 @@ namespace JourneyMonitor.Functions.Functions;
 public sealed class SyncJourneysFunction(
     SyncJourneysService syncJourneysService,
     SyncIncidentsService syncIncidentsService,
+    GetHotelBookingKpisService getHotelBookingKpis,
     IIncidentSchemaGate incidentSchemaGate,
     IOptions<JourneyStoreOptions> storeOptions,
     IOptions<JourneySyncOptions> syncOptions,
@@ -31,16 +35,39 @@ public sealed class SyncJourneysFunction(
     private static int _incidentSchemaWarningLogged;
 
     [Function("SyncHotelJourneys")]
-    public Task SyncHotelsAsync(
+    public async Task SyncHotelsAsync(
         [TimerTrigger("%platform_reliability_cron_setting%")] TimerInfo timer,
-        CancellationToken cancellationToken) =>
-        RunDomainAsync("hotels", cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        await RunDomainAsync("hotels", cancellationToken);
+        await ReadHotelBookingKpisAsync(cancellationToken);
+    }
 
     [Function("SyncCruiseJourneys")]
     public Task SyncCruisesAsync(
         [TimerTrigger("%platform_reliability_cron_setting%")] TimerInfo timer,
         CancellationToken cancellationToken) =>
         RunDomainAsync("cruises", cancellationToken);
+
+    [Function("SyncCarJourneys")]
+    public Task SyncCarsAsync(
+        [TimerTrigger("%platform_reliability_cron_setting%")] TimerInfo timer,
+        CancellationToken cancellationToken) =>
+        RunDomainAsync("cars", cancellationToken);
+
+    private async Task ReadHotelBookingKpisAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await getHotelBookingKpis.ReadAlertStatusAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // Journey rows are already stored. A Fabric failure must not fail this invocation
+            // and make the host run the hotel sync again.
+            logger.LogError(ex, "Hotel booking KPI alert status query failed.");
+        }
+    }
 
     private async Task RunDomainAsync(string domain, CancellationToken cancellationToken)
     {

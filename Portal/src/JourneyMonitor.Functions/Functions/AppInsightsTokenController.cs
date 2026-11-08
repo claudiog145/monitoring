@@ -1,344 +1,242 @@
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
+using System.Net;
+using System.Text.Json;
 using JourneyMonitor.Core.Monitoring;
+using JourneyMonitor.Core.Monitoring.TokenRefresh;
+using JourneyMonitor.Core.Options;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
-namespace JourneyMonitor.Functions.Functions
+namespace JourneyMonitor.Functions.Functions;
+
+/// <summary>
+/// App Insights token management (contracts-company §2.4), fronted by the Web proxy. Fail-closed:
+/// writes (save, refresh, deactivate) need X-Settings-Write-Secret; reads (list, status, tenants) need
+/// X-Internal-Api-Secret because they expose emails, tenant ids and client ids. No response ever
+/// carries a token, the encrypted token or a client secret.
+/// </summary>
+public sealed class AppInsightsTokenController(
+    IAppInsightsTokenService tokenService,
+    IAppInsightsTokenRefreshService refreshService,
+    ITenantResolver tenantResolver,
+    IOptions<MonitoringOptions> monitoringOptions,
+    ILogger<AppInsightsTokenController> logger)
 {
-    /// <summary>
-    /// API endpoints for managing AppInsights tokens
-    /// Users can paste their Azure tokens here to enable AppInsights access
-    /// </summary>
-    [ApiController]
-    [Route("api/[controller]")]
-    [AllowAnonymous]  // Can add auth later if needed
-    public class AppInsightsTokenController : ControllerBase
+    private Task<HttpResponseData>? RequireWriteSecret(HttpRequestData req) =>
+        SettingsWriteSecretGuard.HasMatchingWriteSecret(req, monitoringOptions.Value.SettingsWriteSecret)
+            ? null
+            : Spec1000Http.WriteJsonAsync(req, HttpStatusCode.Unauthorized, new
+            {
+                error = "Missing or invalid X-Settings-Write-Secret header. Monitoring:SettingsWriteSecret must be configured for this endpoint to accept writes.",
+            });
+
+    private Task<HttpResponseData>? RequireInternalSecret(HttpRequestData req) =>
+        SettingsWriteSecretGuard.HasMatchingSecret(req, monitoringOptions.Value.InternalApiSecret, SettingsWriteSecretGuard.InternalApiSecretHeaderName)
+            ? null
+            : Spec1000Http.WriteJsonAsync(req, HttpStatusCode.Unauthorized, new
+            {
+                error = "Missing or invalid X-Internal-Api-Secret header. Monitoring:InternalApiSecret must be configured for this endpoint to accept requests.",
+            });
+
+    private static readonly JsonSerializerOptions BodyOptions = new() { PropertyNameCaseInsensitive = true };
+
+    /// <summary>Metadata only: never EncryptedToken, a token or a secret.</summary>
+    public static object ToView(AppInsightsToken token) => new
     {
-        private readonly IAppInsightsTokenService _tokenService;
-        private readonly ITenantResolver _tenantResolver;
-        private readonly ILogger<AppInsightsTokenController> _logger;
+        id = token.Id,
+        tenantKey = token.TenantKey,
+        email = token.Email,
+        createdAt = token.CreatedAt,
+        expiresAt = token.ExpiresAt,
+        isActive = token.IsActive,
+        isExpired = token.IsExpired,
+        isValid = token.IsValid,
+        usageCount = token.UsageCount,
+        lastUsedAt = token.LastUsedAt,
+        notes = token.Notes,
+        refreshMode = AppInsightsTokenRefreshModes.Normalize(token.RefreshMode) ?? AppInsightsTokenRefreshModes.Manual,
+        aadTenantId = token.AadTenantId,
+        clientId = token.ClientId,
+        hasClientSecret = token.HasClientSecret,
+        hasToken = !string.IsNullOrEmpty(token.EncryptedToken),
+        lastRefreshAt = token.LastRefreshAt,
+        lastRefreshError = token.LastRefreshError,
+        refreshCount = token.RefreshCount,
+    };
 
-        public AppInsightsTokenController(
-            IAppInsightsTokenService tokenService,
-            ITenantResolver tenantResolver,
-            ILogger<AppInsightsTokenController> logger)
+    [Function("GetAppInsightsTokens")]
+    public async Task<HttpResponseData> GetTokensAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "appinsights/tokens")] HttpRequestData req)
+    {
+        var denied = RequireInternalSecret(req);
+        if (denied is not null) return await denied;
+
+        try
         {
-            _tokenService = tokenService ?? throw new ArgumentNullException(nameof(tokenService));
-            _tenantResolver = tenantResolver ?? throw new ArgumentNullException(nameof(tenantResolver));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        }
-
-        /// <summary>
-        /// Add a new AppInsights token for a tenant
-        /// 
-        /// HOW TO USE:
-        /// 1. Open Terminal/PowerShell
-        /// 2. Run: az login --tenant YOUR-TENANT-ID
-        /// 3. Run: az account get-access-token --scope https://api.applicationinsights.io/.default
-        /// 4. Copy the "accessToken" value (the long JWT string)
-        /// 5. POST to this endpoint with the token
-        /// 
-        /// Example request:
-        /// POST /api/appinsights/tokens
-        /// {
-        ///   "tenantKey": "arrivia",
-        ///   "email": "cgareca@arrivia.com",
-        ///   "token": "eyJ0eXAi..."
-        /// }
-        /// </summary>
-        [HttpPost("tokens")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status409Conflict)]
-        public async Task<IActionResult> AddToken([FromBody] AddTokenRequest request)
-        {
-            try
+            var tokens = await tokenService.GetAllTokensAsync();
+            return await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.OK, new
             {
-                // Validate request
-                if (request == null)
-                    return BadRequest("Request body is required");
-
-                if (string.IsNullOrWhiteSpace(request.TenantKey))
-                    return BadRequest("Tenant key is required (e.g., 'arrivia', 'ice')");
-
-                if (string.IsNullOrWhiteSpace(request.Email))
-                    return BadRequest("Email is required");
-
-                if (string.IsNullOrWhiteSpace(request.Token))
-                    return BadRequest("Token is required. Get it with: az account get-access-token --scope https://api.applicationinsights.io/.default");
-
-                _logger.LogInformation(
-                    $"AddToken request for tenant {request.TenantKey} by {request.Email}");
-
-                // Save token (validates and encrypts it)
-                await _tokenService.SaveTokenAsync(
-                    request.TenantKey,
-                    request.Email,
-                    request.Token,
-                    request.Notes);
-
-                _logger.LogInformation(
-                    $"Token saved successfully for tenant {request.TenantKey}");
-
-                return Ok(new
-                {
-                    success = true,
-                    message = $"Token saved successfully for tenant '{request.TenantKey}'",
-                    tenant = request.TenantKey,
-                    email = request.Email,
-                    expiresIn = "~1 hour",
-                    note = "Generate new token with: az account get-access-token --scope https://api.applicationinsights.io/.default"
-                });
-            }
-            catch (InvalidOperationException ex)
-            {
-                _logger.LogWarning($"Token validation failed: {ex.Message}");
-                return BadRequest(new
-                {
-                    success = false,
-                    error = ex.Message,
-                    hint = "Token might be invalid or expired. Generate a new one with: az account get-access-token --scope https://api.applicationinsights.io/.default"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error adding token: {ex}");
-                return StatusCode(500, new
-                {
-                    success = false,
-                    error = "An error occurred while saving the token",
-                    details = ex.Message
-                });
-            }
-        }
-
-        /// <summary>
-        /// Validate a token without saving it
-        /// Useful for testing token validity before pasting
-        /// </summary>
-        [HttpPost("tokens/validate")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<IActionResult> ValidateToken([FromBody] ValidateTokenRequest request)
-        {
-            try
-            {
-                if (request == null || string.IsNullOrWhiteSpace(request.Token))
-                    return BadRequest("Token is required");
-
-                await _tokenService.ValidateTokenAsync(request.Token);
-
-                return Ok(new
-                {
-                    valid = true,
-                    message = "Token is valid"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning($"Token validation failed: {ex.Message}");
-                return BadRequest(new
-                {
-                    valid = false,
-                    error = ex.Message
-                });
-            }
-        }
-
-        /// <summary>
-        /// Get all stored tokens (for management UI)
-        /// Shows token status without exposing the actual tokens
-        /// </summary>
-        [HttpGet("tokens")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        public async Task<IActionResult> GetAllTokens()
-        {
-            try
-            {
-                var tokens = await _tokenService.GetAllTokensAsync();
-
-                // Don't expose encrypted tokens, just metadata
-                var tokenMetadata = new List<object>();
-                foreach (var token in tokens)
-                {
-                    tokenMetadata.Add(new
-                    {
-                        id = token.Id,
-                        tenantKey = token.TenantKey,
-                        email = token.Email,
-                        createdAt = token.CreatedAt,
-                        expiresAt = token.ExpiresAt,
-                        isActive = token.IsActive,
-                        isExpired = token.IsExpired,
-                        isValid = token.IsValid,
-                        usageCount = token.UsageCount,
-                        lastUsedAt = token.LastUsedAt,
-                        notes = token.Notes
-                    });
-                }
-
-                return Ok(new
-                {
-                    success = true,
-                    count = tokenMetadata.Count,
-                    tokens = tokenMetadata
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error getting tokens: {ex}");
-                return StatusCode(500, new { error = "Failed to retrieve tokens" });
-            }
-        }
-
-        /// <summary>
-        /// Get available tenants (for UI dropdown)
-        /// </summary>
-        [HttpGet("tenants")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        public async Task<IActionResult> GetTenants()
-        {
-            try
-            {
-                var tenants = await _tenantResolver.GetAllTenantsAsync();
-                
-                return Ok(new
-                {
-                    success = true,
-                    count = tenants.Count,
-                    tenants = tenants.Select(t => new
-                    {
-                        key = t.TenantKey,
-                        displayName = t.TenantKey.ToUpper(),
-                        subscriptionId = t.SubscriptionId,
-                        resourceGroup = t.ResourceGroup,
-                        appInsightsName = t.AppInsightsName
-                    })
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error getting tenants: {ex}");
-                return StatusCode(500, new { error = "Failed to retrieve tenants" });
-            }
-        }
-
-        /// <summary>
-        /// Check if a tenant has a valid token configured
-        /// </summary>
-        [HttpGet("tokens/{tenantKey}/status")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        public async Task<IActionResult> GetTokenStatus(string tenantKey)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(tenantKey))
-                    return BadRequest("Tenant key is required");
-
-                var hasValid = await _tokenService.HasValidTokenAsync(tenantKey);
-
-                return Ok(new
-                {
-                    tenantKey,
-                    hasValidToken = hasValid,
-                    message = hasValid 
-                        ? $"Token configured for {tenantKey}" 
-                        : $"No valid token for {tenantKey}. Add one at /settings/appinsights"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error checking token status: {ex}");
-                return StatusCode(500, new { error = "Failed to check token status" });
-            }
-        }
-
-        /// <summary>
-        /// Deactivate a token (don't delete, just disable it)
-        /// </summary>
-        [HttpPost("tokens/{tenantKey}/deactivate")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> DeactivateToken(string tenantKey)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(tenantKey))
-                    return BadRequest("Tenant key is required");
-
-                await _tokenService.DeactivateTokenAsync(tenantKey);
-
-                return Ok(new
-                {
-                    success = true,
-                    message = $"Token deactivated for {tenantKey}"
-                });
-            }
-            catch (InvalidOperationException ex)
-            {
-                return NotFound(new { error = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error deactivating token: {ex}");
-                return StatusCode(500, new { error = "Failed to deactivate token" });
-            }
-        }
-
-        /// <summary>
-        /// Health check endpoint
-        /// </summary>
-        [HttpGet("health")]
-        public IActionResult Health()
-        {
-            return Ok(new
-            {
-                status = "healthy",
-                service = "AppInsights Token Manager",
-                timestamp = DateTime.UtcNow
+                success = true,
+                count = tokens.Count,
+                tokens = tokens.Select(ToView).ToList(),
             });
         }
+        catch (Exception ex)
+        {
+            logger.LogError("GetAppInsightsTokens failed: {ErrorType}", ex.GetType().Name);
+            return await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.InternalServerError, new { error = "Failed to retrieve tokens" });
+        }
     }
 
     /// <summary>
-    /// Request model for adding a token
+    /// Save or update a token. Body: tenantKey, email (or userEmail), token, notes, refreshMode,
+    /// aadTenantId, clientId, clientSecret. The token may be blank for azure-cli / service-principal.
     /// </summary>
-    public class AddTokenRequest
+    [Function("SaveAppInsightsToken")]
+    public async Task<HttpResponseData> SaveTokenAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "appinsights/tokens")] HttpRequestData req,
+        CancellationToken ct)
     {
-        /// <summary>
-        /// Tenant key (arrivia, ice, acme, etc.)
-        /// </summary>
-        public string TenantKey { get; set; }
+        var denied = RequireWriteSecret(req);
+        if (denied is not null) return await denied;
 
-        /// <summary>
-        /// Email of user adding token (for audit trail)
-        /// Example: cgareca@arrivia.com
-        /// </summary>
-        public string Email { get; set; }
+        TokenSaveBody? body;
+        try
+        {
+            body = await JsonSerializer.DeserializeAsync<TokenSaveBody>(req.Body, BodyOptions, ct);
+        }
+        catch (JsonException)
+        {
+            body = null;
+        }
 
-        /// <summary>
-        /// Azure access token from: az account get-access-token --scope https://management.azure.com/
-        /// </summary>
-        public string Token { get; set; }
+        if (body is null)
+            return await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.BadRequest, new { success = false, error = "Request body must be a valid JSON object." });
 
-        /// <summary>
-        /// Optional notes
-        /// </summary>
-        public string Notes { get; set; }
+        var email = string.IsNullOrWhiteSpace(body.Email) ? body.UserEmail : body.Email;
+        if (string.IsNullOrWhiteSpace(body.TenantKey) || string.IsNullOrWhiteSpace(email))
+            return await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.BadRequest, new { success = false, error = "Missing required fields (tenantKey, email/userEmail)." });
+
+        try
+        {
+            await tokenService.SaveTokenAsync(new AppInsightsTokenSaveRequest(
+                body.TenantKey.Trim(), email.Trim(), body.Token, body.Notes, body.RefreshMode, body.AadTenantId, body.ClientId, body.ClientSecret));
+            return await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.OK, new
+            {
+                success = true,
+                message = $"Token saved successfully for tenant '{body.TenantKey.Trim()}'",
+                tenant = body.TenantKey.Trim(),
+            });
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+        {
+            return await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.BadRequest, new { success = false, error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError("SaveAppInsightsToken failed: {ErrorType}", ex.GetType().Name);
+            return await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.InternalServerError, new { success = false, error = "An error occurred while saving the token" });
+        }
     }
 
-    /// <summary>
-    /// Request model for validating a token
-    /// </summary>
-    public class ValidateTokenRequest
+    /// <summary>200 with the new expiresAt, 404 unknown key, 409 manual / deactivated / changed meanwhile, 502 acquisition failure.</summary>
+    [Function("RefreshAppInsightsToken")]
+    public async Task<HttpResponseData> RefreshTokenAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "appinsights/tokens/{tenantKey}/refresh")] HttpRequestData req,
+        string tenantKey,
+        CancellationToken ct)
     {
-        /// <summary>
-        /// Azure access token to validate
-        /// </summary>
-        public string Token { get; set; }
+        var denied = RequireWriteSecret(req);
+        if (denied is not null) return await denied;
+
+        var result = await refreshService.RefreshNowAsync(tenantKey, ct);
+        return result.Status switch
+        {
+            TokenRefreshNowStatus.Refreshed => await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.OK, new { success = true, tenantKey, expiresAt = result.ExpiresAt }),
+            TokenRefreshNowStatus.NotFound => await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.NotFound, new { success = false, error = result.Error }),
+            TokenRefreshNowStatus.ManualRejected => await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.Conflict, new { success = false, error = AppInsightsTokenRefreshService.RefreshManualRejectedMessage }),
+            TokenRefreshNowStatus.Inactive => await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.Conflict, new { success = false, error = AppInsightsTokenRefreshService.RefreshInactiveMessage }),
+            TokenRefreshNowStatus.Changed => await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.Conflict, new { success = false, error = AppInsightsTokenRefreshService.RefreshChangedMessage }),
+            _ => await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.BadGateway, new { success = false, error = result.Error }),
+        };
+    }
+
+    [Function("DeactivateAppInsightsToken")]
+    public async Task<HttpResponseData> DeactivateTokenAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "appinsights/tokens/{tenantKey}/deactivate")] HttpRequestData req,
+        string tenantKey)
+    {
+        var denied = RequireWriteSecret(req);
+        if (denied is not null) return await denied;
+
+        try
+        {
+            await tokenService.DeactivateTokenAsync(tenantKey);
+            return await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.OK, new { success = true, message = $"Token deactivated for {tenantKey}" });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.NotFound, new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError("DeactivateAppInsightsToken failed: {ErrorType}", ex.GetType().Name);
+            return await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.InternalServerError, new { error = "Failed to deactivate token" });
+        }
+    }
+
+    [Function("GetAppInsightsTokenStatus")]
+    public async Task<HttpResponseData> GetTokenStatusAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "appinsights/tokens/{tenantKey}/status")] HttpRequestData req,
+        string tenantKey)
+    {
+        var denied = RequireInternalSecret(req);
+        if (denied is not null) return await denied;
+
+        try
+        {
+            var hasValid = await tokenService.HasValidTokenAsync(tenantKey);
+            return await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.OK, new
+            {
+                tenantKey,
+                hasValidToken = hasValid,
+                message = hasValid ? $"Token configured for {tenantKey}" : $"No valid token for {tenantKey}.",
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError("GetAppInsightsTokenStatus failed: {ErrorType}", ex.GetType().Name);
+            return await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.InternalServerError, new { error = "Failed to check token status" });
+        }
+    }
+
+    [Function("GetAppInsightsTenants")]
+    public async Task<HttpResponseData> GetTenantsAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "appinsights/tenants")] HttpRequestData req)
+    {
+        var denied = RequireInternalSecret(req);
+        if (denied is not null) return await denied;
+
+        var tenants = await tenantResolver.GetAllTenantsAsync();
+        return await Spec1000Http.WriteJsonAsync(req, HttpStatusCode.OK, new
+        {
+            success = true,
+            count = tenants.Count,
+            tenants = tenants.Select(t => new { key = t.TenantKey, displayName = t.TenantKey.ToUpperInvariant() }),
+        });
+    }
+
+    public sealed class TokenSaveBody
+    {
+        public string? TenantKey { get; set; }
+        public string? Email { get; set; }
+        public string? UserEmail { get; set; }
+        public string? Token { get; set; }
+        public string? Notes { get; set; }
+        public string? RefreshMode { get; set; }
+        public string? AadTenantId { get; set; }
+        public string? ClientId { get; set; }
+        public string? ClientSecret { get; set; }
     }
 }

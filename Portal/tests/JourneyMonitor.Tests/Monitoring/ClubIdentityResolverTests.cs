@@ -10,8 +10,14 @@ public class ClubIdentityResolverTests
     private static ClubIdentityResolver Build(params ClubInventoryRow[] clubs) =>
         new(new FakeClubInventoryStore(clubs), NullLogger<ClubIdentityResolver>.Instance);
 
-    private static ClubInventoryRow Row(string brandName, string clubId, string? icePartnerId, string? site, string? clubName = null) =>
-        new(Array.Empty<ClubProductStatus>(), brandName, int.Parse(clubId), clubName, null, icePartnerId, site, "Fusion", 0, null, "", "Production");
+    private static ClubInventoryRow Row(
+        string brandName,
+        string clubId,
+        string? icePartnerId,
+        string? site,
+        string? clubName = null,
+        string fusionPlatform = "Fusion") =>
+        new(Array.Empty<ClubProductStatus>(), brandName, int.Parse(clubId), clubName, null, icePartnerId, site, fusionPlatform, 0, null, "", "Production");
 
     [Fact]
     public async Task ResolvesANumericClubKeyAgainstClubId()
@@ -37,6 +43,24 @@ public class ClubIdentityResolverTests
         var identity = await resolver.ResolveAsync("club:308");
 
         Assert.Equal("T-Mobile", identity.BrandName);
+        Assert.Equal(ClubResolution.IcePartnerIdMatch, identity.ResolvedBy);
+    }
+
+    [Fact]
+    public async Task IgnoresSorClubIdCollisionsWhenResolvingCruiseIcePartnerIds()
+    {
+        // Application Map seeds SOR ClubId 308 (Resort Escapes) alongside Fusion IcePartnerId 308
+        // (T-Mobile). Identity resolution must stay Fusion/Hybrid-scoped or Cruise club:308 maps
+        // to the wrong customer.
+        var resolver = Build(
+            Row("RESORT ESCAPES INTERNATIONAL, LLC", "308", null, null, "Resort Escapes Vacation Club", "SOR"),
+            Row("T-Mobile USA, Inc", "15639", "308", "stays.tmobiletravel.com", "T-Mobile Travel", "Fusion"));
+
+        var identity = await resolver.ResolveAsync("club:308");
+
+        Assert.Equal("T-Mobile USA, Inc", identity.BrandName);
+        Assert.Equal("T-Mobile Travel", identity.ClubName);
+        Assert.Equal("15639", identity.ClubId);
         Assert.Equal(ClubResolution.IcePartnerIdMatch, identity.ResolvedBy);
     }
 

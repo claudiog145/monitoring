@@ -49,17 +49,33 @@ public sealed class KnowledgeImportService(
     /// The profile key is the company these documents belong to. Null stores them as SHARED,
     /// readable by every company - correct for generic runbooks, and a cross-client leak for one
     /// customer's incident history, so the caller decides rather than drifting into the default.
+    ///
+    /// <paramref name="subPath"/> restricts the read to that sub-folder of the corpus (one company's
+    /// pack in the demo stack); see <see cref="KnowledgeCorpusSubPath"/>. An invalid or missing
+    /// sub-folder throws <see cref="InvalidKnowledgeSubPathException"/>.
     /// </summary>
-    public async Task<KnowledgeImportResult> ImportAsync(int maxDocuments, IReadOnlySet<string>? onlyTypes = null, string? profileKey = null, CancellationToken ct = default)
+    public async Task<KnowledgeImportResult> ImportAsync(int maxDocuments, IReadOnlySet<string>? onlyTypes = null, string? profileKey = null, CancellationToken ct = default, string? subPath = null)
     {
         var warnings = new List<string>();
         var byType = new Dictionary<string, int>(StringComparer.Ordinal);
 
-        if (!source.IsAvailable)
+        if (!KnowledgeCorpusSubPath.TryNormalize(subPath, out var normalizedSubPath, out var subPathError))
+        {
+            throw new InvalidKnowledgeSubPathException(subPathError!);
+        }
+
+        var corpus = source;
+        if (!corpus.IsAvailable)
         {
             // An unmounted corpus and an empty corpus produce the same zero; only this flag tells them apart.
-            return new KnowledgeImportResult(false, source.Location, 0, 0, 0, 0, 0, 0, byType,
-                [$"The document corpus is not available at '{source.Location}'. Nothing was imported."]);
+            return new KnowledgeImportResult(false, corpus.Location, 0, 0, 0, 0, 0, 0, byType,
+                [$"The document corpus is not available at '{corpus.Location}'. Nothing was imported."]);
+        }
+
+        if (normalizedSubPath is not null)
+        {
+            corpus = corpus.Scope(normalizedSubPath)
+                ?? throw new InvalidKnowledgeSubPathException($"subPath '{normalizedSubPath}' does not exist under the corpus.");
         }
 
         var seenHashes = new HashSet<string>(await knowledgeRetriever.GetIndexedHashesAsync(ct), StringComparer.Ordinal);
@@ -71,7 +87,7 @@ public sealed class KnowledgeImportService(
         var withoutEmbedding = 0;
         var controlCharacters = 0;
 
-        await foreach (var file in source.ReadAllAsync(ct))
+        await foreach (var file in corpus.ReadAllAsync(ct))
         {
             if (documentsRead >= maxDocuments) break;
             ct.ThrowIfCancellationRequested();
@@ -143,7 +159,7 @@ public sealed class KnowledgeImportService(
             documentsRead, chunksCreated, duplicates);
 
         return new KnowledgeImportResult(
-            true, source.Location, documentsRead, skippedByType, chunksCreated, duplicates, withoutEmbedding, controlCharacters, byType, warnings);
+            true, corpus.Location, documentsRead, skippedByType, chunksCreated, duplicates, withoutEmbedding, controlCharacters, byType, warnings);
     }
 
     /// <summary>
@@ -153,4 +169,54 @@ public sealed class KnowledgeImportService(
     /// </summary>
     private static string BuildEmbeddingInput(ParsedKnowledgeDocument document, KnowledgeSection section) =>
         $"[{document.Domain}] {document.Title}\n{section.Title}\n{section.Body}";
+}
+
+/// <summary>The <c>subPath</c> of an import is malformed, escapes the corpus or does not exist (HTTP 400).</summary>
+public sealed class InvalidKnowledgeSubPathException(string message) : ArgumentException(message);
+
+/// <summary>
+/// Validates the <c>?subPath=</c> of a knowledge import: a path relative to the corpus root, using
+/// '/' or '\', with no '..' segment, no drive or root and no ':'. Whether it exists is the
+/// document source's call (<see cref="IKnowledgeDocumentSource.Scope"/>).
+/// </summary>
+public static class KnowledgeCorpusSubPath
+{
+    /// <summary>
+    /// Null/blank is valid and means the whole corpus (<paramref name="normalized"/> = null).
+    /// Otherwise <paramref name="normalized"/> is the '/'-joined segments, without '.' or empty ones.
+    /// </summary>
+    public static bool TryNormalize(string? raw, out string? normalized, out string? error)
+    {
+        normalized = null;
+        error = null;
+        if (string.IsNullOrWhiteSpace(raw)) return true;
+
+        var value = raw.Trim();
+        if (value.StartsWith('/') || value.StartsWith('\\') || value.Contains(':'))
+        {
+            error = $"subPath '{value}' must be relative to the corpus root.";
+            return false;
+        }
+
+        var segments = new List<string>();
+        foreach (var segment in value.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (segment == ".") continue;
+            if (segment == "..")
+            {
+                error = $"subPath '{value}' must not contain '..'.";
+                return false;
+            }
+            if (segment.IndexOfAny(['*', '?', '"', '<', '>', '|', '\0']) >= 0)
+            {
+                error = $"subPath '{value}' contains invalid characters.";
+                return false;
+            }
+            segments.Add(segment);
+        }
+
+        if (segments.Count == 0) return true;
+        normalized = string.Join('/', segments);
+        return true;
+    }
 }

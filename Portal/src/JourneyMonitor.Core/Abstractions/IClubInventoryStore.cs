@@ -1,7 +1,7 @@
 namespace JourneyMonitor.Core.Abstractions;
 
 /// <summary>
-/// Read-only access to <c>brand.ClubInventory</c> (the Club and Fusion application map).
+/// Read-only access to <c>brand.ClubInventory</c> (Application Map inventory).
 /// </summary>
 public interface IClubInventoryStore
 {
@@ -11,13 +11,17 @@ public interface IClubInventoryStore
     Task<IReadOnlyList<ClubInventoryRow>> GetAllAsync(CancellationToken cancellationToken);
 }
 
-/// <summary>One product link for a club, with maturity status 0-3.</summary>
+/// <summary>One product on a club, with maturity status 0–3.</summary>
 public sealed record ClubProductStatus(
     string Name,
     int MaturityStatus,
     string MaturityStatusName);
 
-/// <summary>One row of the club application map (club identity + per-product status).</summary>
+/// <summary>
+/// One Application Map club row (identity + per-product maturity).
+/// <see cref="FusionPlatform"/> is the platform family (Fusion, Hybrid, SOR, NG);
+/// the property/column name is historical.
+/// </summary>
 public sealed record ClubInventoryRow(
     IReadOnlyList<ClubProductStatus> Products,
     string BrandName,

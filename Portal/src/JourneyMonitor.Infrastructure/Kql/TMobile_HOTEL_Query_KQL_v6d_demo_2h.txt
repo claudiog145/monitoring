@@ -1,40 +1,43 @@
 // LOCAL PORTAL PREVIEW — not the production v6 file. Do not commit as the default until signed off.
-// T-Mobile HOTEL v6d — v6c with a single CorrelationId per member.
+// T-Mobile HOTEL — one journey row per inactivity session, not per member.
 // Run in PROD only: sor-frontend-ai-prod-usw. Host: stays.tmobiletravel.com.
 // Portal Time range injects let win (15m, 1h, 2h, 6h, 24h or 7d). Default file is 2h.
 // Single query. Keep this file as one contiguous block: Azure Logs treats blank lines as query separators.
-// Grouping is UNCHANGED: one row per UserId. CorrelationId is reported, not used to group.
-// What v6d changes vs v6c:
-//   1. One CorrelationId column: the session of the member's LAST call, so the login-only
-//      session that usually comes first is not the one reported.
-//   2. Sessions[] is gone. SessionCount still says how many browser sessions existed.
-//   3. Journey.calls[] no longer carries correlationId, so a call seen in two sessions
-//      is one row again (same grouping as v6) instead of one row per session.
-// Everything else is v6c: Corr-based attachment of TMO requests and background ZH calls.
+// A CorrelationId splits when consecutive steps are more than 30 minutes apart.
+// The row's CorrelationId is rawId-seq (ABC123-1). A step with no correlation id inherits
+// the id stamped on the same operation_Id. A step that still has none attaches to the
+// nearest session of the same member within 2 minutes, and is dropped when nothing is
+// that close. Purchase results never move onto another session.
+// HotelVisitMerger, in Core, folds a session into the next stage of the same member when
+// that next stage starts within 2 minutes and the earlier session did not book. That fold
+// stays out of this query so the live call finishes inside the ingest timeout.
+// BookOk counts only the purchase rows that landed in that session. UserId is the member,
+// not the journey identity. A later booking does not convert an earlier session.
 // IsBookSuccessful is true when BookOk > 0. PassedSearch is true when SearchAt is set
-// (stage 02 Hotel Search). Exceptions is FailedCalls for that member
+// (stage 02 Hotel Search). Exceptions is FailedCalls for that session
 // (the per-journey sum of first-party failures). Keep Exceptions as a long.
-// Set userFilter to a member id to inspect one journey; leave "" for the full window.
+// Set userFilter to a member id to inspect that member's sessions; leave "" for the full window.
 let win = 15m;
 let userFilter = "";
 // Replaced from the Club dropdown (host, ICE partner id, club id) before this query runs.
 let tmoHost = "stays.tmobiletravel.com";
 let tmoPartner = "308";
 let tmoClub = "15639";
-let ev =
+// materialize: ev and tr are each read by several blocks (idmap, userByCorr, corrByOp).
+let ev = materialize(
     customEvents
     | where timestamp > ago(win)
     | extend PartnerId = coalesce(tostring(customDimensions.PartnerId), tostring(customDimensions.partner_id)),
              Club = coalesce(tostring(customDimensions.VacationClubId), tostring(customDimensions.VacationClubID), tostring(customDimensions.ClubId), tostring(customDimensions.club_id)),
              UserId = coalesce(tostring(customDimensions.UserId), tostring(customDimensions.UserID), tostring(customDimensions.MemberId), tostring(customDimensions.travel_platform_user_id)),
-             Corr = coalesce(tostring(customDimensions.CorrelationId), tostring(customDimensions.correlationId), tostring(customDimensions.correlation_id));
-let tr =
+             Corr = coalesce(tostring(customDimensions.CorrelationId), tostring(customDimensions.correlationId), tostring(customDimensions.correlation_id)));
+let tr = materialize(
     traces
     | where timestamp > ago(win)
     | extend PartnerId = coalesce(tostring(customDimensions.PartnerId), tostring(customDimensions.partner_id)),
              Club = coalesce(tostring(customDimensions.VacationClubID), tostring(customDimensions.VacationClubId), tostring(customDimensions.ClubId), tostring(customDimensions.club_id)),
              UserId = coalesce(tostring(customDimensions.UserId), tostring(customDimensions.UserID), tostring(customDimensions.MemberId), tostring(customDimensions.travel_platform_user_id)),
-             Corr = coalesce(tostring(customDimensions.CorrelationId), tostring(customDimensions.correlationId), tostring(customDimensions.correlation_id));
+             Corr = coalesce(tostring(customDimensions.CorrelationId), tostring(customDimensions.correlationId), tostring(customDimensions.correlation_id)));
 let idmap =
     union (ev | project operation_Id, UserId), (tr | project operation_Id, UserId)
     | where isnotempty(UserId) and UserId != "0" and isnotempty(operation_Id)
@@ -53,7 +56,7 @@ let excByOp =
     | where type !startswith "ErrorEvent"
     | extend ExcMsg = substring(replace_regex(coalesce(outerMessage, ""), @"\s+", " "), 0, 140)
     | summarize ExcText = take_any(strcat(type, ": ", ExcMsg)) by operation_Id;
-let httpCalls =
+let httpCalls = materialize(
     requests
     | where timestamp > ago(win)
     | where url has tmoHost
@@ -99,7 +102,7 @@ let httpCalls =
         strcat("HTTP ", tostring(resultCode)))
     | project UserId, StageNo, Stage, Kind = "api", Service,
               Ms = todouble(duration), Failed = (success == false), Detail,
-              Ts = timestamp, operation_Id, Corr, Attach;
+              Ts = timestamp, operation_Id, Corr, Attach);
 let opStage =
     httpCalls
     | summarize UserId = take_any(UserId), StageNo = take_any(StageNo), Stage = take_any(Stage) by operation_Id;
@@ -204,21 +207,7 @@ let purchaseResultCalls =
                                iff(Ok =~ "True", "OK", strcat("FAIL ", FailingStep))),
               Ms = real(null), Failed = (Ok !~ "True"),
               Detail = iff(Ok =~ "True", Supplier, FailureDetail),
-              Ts = timestamp, operation_Id, Corr, Attach = "op", Seq = AttemptNo;
-let cpFails =
-    cpNumbered
-    | where Ok !~ "True" and isnotempty(FailureDetail)
-    | summarize arg_max(timestamp, FailureDetail) by UserId
-    | project UserId, FailReason = FailureDetail;
-let cpSummary =
-    cpHotel
-    | summarize BookOk = countif(Ok =~ "True"),
-                BookFail = countif(Ok !~ "True"),
-                DistinctOkRes = dcountif(Res, Ok =~ "True"),
-                BookedReservations = make_set_if(Res, Ok =~ "True", 8)
-      by UserId
-    | join kind=leftouter cpFails on UserId
-    | project-away UserId1;
+              Ts = timestamp, operation_Id, Corr, Attach = "op", Seq = AttemptNo, Res;
 let cpSessions = cpHotel | where isnotempty(Sess) | summarize PUser = take_any(UserId) by Sess;
 let phaseCalls =
     traces
@@ -247,36 +236,106 @@ let hotelUsers =
     | distinct UserId
     | where userFilter == "" or UserId == userFilter;
 let scopedCalls = allCalls | where UserId in (hotelUsers);
-// The reported session: the one carrying the member's last call. Login-only sessions
-// come first in time, so taking the last call avoids reporting them.
-let lastCorr =
+// Session key is rawId-seq (ABC123-1). Numbering restarts on each correlation id, and again when the
+// gap since the previous step of that id exceeds 30 minutes. A step whose own stamp is empty
+// takes the correlation of its operation_Id (parent request first, then an event or trace).
+// What is still empty is an intermediate step: same member, inside a real session or within
+// 2 minutes of it. Equal distance prefers the session whose furthest stage is the closest
+// stage below this step, then the later session. Kind == "result" is never attached this way,
+// so a purchase cannot mark a neighboring session booked. BookOk comes from the purchase rows
+// that resolved into that session.
+let corrByOp =
+    union
+        (httpCalls
+            | where isnotempty(Corr) and Corr != "00000000-0000-0000-0000-000000000000"
+            | project operation_Id, Corr, Pref = 0),
+        (ev
+            | where isnotempty(operation_Id) and isnotempty(Corr) and Corr != "00000000-0000-0000-0000-000000000000"
+            | project operation_Id, Corr, Pref = 1),
+        (tr
+            | where isnotempty(operation_Id) and isnotempty(Corr) and Corr != "00000000-0000-0000-0000-000000000000"
+            | project operation_Id, Corr, Pref = 1)
+    | where isnotempty(operation_Id)
+    | summarize arg_min(Pref, Corr) by operation_Id
+    | project operation_Id, OpCorr = Corr;
+// materialize: resolvedCalls and correlatedCalls are each read by two later blocks.
+let resolvedCalls = materialize(
     scopedCalls
-    | where isnotempty(Corr)
-    | summarize arg_max(Ts, Corr) by UserId
-    | project UserId, CorrelationId = Corr;
-// SessionCount > 1 means other sessions exist even though only one id is reported.
-// CallsNoCorrelation > 0 means the id was missing on those rows and only UserId + operation_Id held them.
-let corrByUser =
-    scopedCalls
-    | summarize SessionCount = dcountif(Corr, isnotempty(Corr)),
-                CallsNoCorrelation = countif(isempty(Corr)),
+    | join kind=leftouter corrByOp on operation_Id
+    | extend RawCorrelationId = iff(isnotempty(Corr) and Corr != "00000000-0000-0000-0000-000000000000", Corr, "")
+    | extend ResolvedCorr = iff(isnotempty(RawCorrelationId), RawCorrelationId, OpCorr)
+    | project-away operation_Id1, OpCorr);
+let correlatedCalls = materialize(
+    resolvedCalls
+    | where isnotempty(ResolvedCorr)
+    | sort by ResolvedCorr asc, Ts asc
+    | extend SessionStartTs = row_window_session(Ts, 365d, 30m, prev(ResolvedCorr) != ResolvedCorr)
+    | extend SessionSeq = row_rank_dense(SessionStartTs, prev(ResolvedCorr) != ResolvedCorr)
+    | extend CorrelationId = strcat(ResolvedCorr, "-", tostring(SessionSeq)));
+let sessionSpan =
+    correlatedCalls
+    | summarize SessionStart = min(Ts), SessionEnd = max(Ts), MaxStage = max(StageNo) by CorrelationId, UserId;
+let orphans = materialize(
+    resolvedCalls
+    | where isempty(ResolvedCorr) and Kind != "result"
+    | sort by UserId asc, Ts asc, operation_Id asc, Service asc, StageNo asc
+    | extend OrphanId = row_number(1, false));
+let attached =
+    orphans
+    | lookup kind=inner sessionSpan on UserId
+    | extend DistanceSec = case(
+        Ts >= SessionStart and Ts <= SessionEnd, 0,
+        Ts < SessionStart, datetime_diff("second", SessionStart, Ts),
+        datetime_diff("second", Ts, SessionEnd))
+    | where DistanceSec <= 120
+    | extend StagePref = case(
+        MaxStage < StageNo, StageNo - MaxStage,
+        MaxStage == StageNo, 50,
+        100 + (MaxStage - StageNo))
+    | sort by OrphanId asc, DistanceSec asc, StagePref asc, SessionEnd desc
+    | extend Keep = row_number(1, prev(OrphanId) != OrphanId)
+    | where Keep == 1
+    | project OrphanId, CorrelationId;
+let orphanCalls =
+    orphans
+    | join kind=inner attached on OrphanId
+    | project-away OrphanId, OrphanId1;
+let sessionCalls = materialize(union correlatedCalls, orphanCalls);
+let cpFails =
+    sessionCalls
+    | where Kind == "result" and Failed and isnotempty(Detail)
+    | summarize arg_max(Ts, Detail) by CorrelationId
+    | project CorrelationId, FailReason = Detail;
+let cpSummary =
+    sessionCalls
+    | where Kind == "result"
+    | summarize BookOk = countif(Failed == false),
+                BookFail = countif(Failed == true),
+                DistinctOkRes = dcountif(Res, Failed == false and isnotempty(Res)),
+                BookedReservations = make_set_if(Res, Failed == false and isnotempty(Res), 8),
+                UserId = take_anyif(UserId, isnotempty(UserId) and UserId != "0")
+      by CorrelationId
+    | join kind=leftouter cpFails on CorrelationId
+    | project-away CorrelationId1;
+let sessionFacts =
+    sessionCalls
+    | summarize CallsNoCorrelation = countif(isempty(RawCorrelationId)),
                 CallsViaCorrelation = countif(Attach == "corr")
-      by UserId
-    | join kind=leftouter lastCorr on UserId
-    | project-away UserId1;
+      by CorrelationId
+    | extend SessionCount = 1;
 // Seq: purchase uses AttemptNo already on result rows. API/vendor/phase are numbered
-// per user + stage + kind + call name so errors[].n is the execution that failed.
+// per session + stage + kind + call name so errors[].n is the execution that failed.
 let sequenced =
     union
-      (scopedCalls
+      (sessionCalls
        | where Kind != "result"
-       | sort by UserId asc, StageNo asc, Kind asc, Service asc, Ts asc
-       | extend Seq = row_number(1, prev(UserId) != UserId or prev(StageNo) != StageNo
+       | sort by CorrelationId asc, StageNo asc, Kind asc, Service asc, Ts asc
+       | extend Seq = row_number(1, prev(CorrelationId) != CorrelationId or prev(StageNo) != StageNo
                                     or prev(Kind) != Kind or prev(Service) != Service)),
-      (scopedCalls | where Kind == "result");
+      (sessionCalls | where Kind == "result");
 let callMetrics =
     sequenced
-    | sort by UserId asc, StageNo asc, Kind asc, Service asc, Seq asc
+    | sort by CorrelationId asc, StageNo asc, Kind asc, Service asc, Seq asc
     | summarize N = count(),
                 CallTotalMs = round(sum(Ms)),
                 P50Ms = round(percentile(Ms, 50)),
@@ -288,8 +347,10 @@ let callMetrics =
                 Detail = take_anyif(Detail, isnotempty(Detail) and Failed == false),
                 Errors = make_list_if(bag_pack("n", Seq, "t", Ts, "message", Detail),
                                       Failed and isnotempty(Detail), 8),
-                Ts = min(Ts)
-      by UserId, StageNo, Stage, Kind, Service
+                LastTs = max(Ts),
+                Ts = min(Ts),
+                UserId = take_anyif(UserId, isnotempty(UserId) and UserId != "0")
+      by CorrelationId, StageNo, Stage, Kind, Service
     | extend FailureRatePct = round(todouble(Fails) / N * 100.0, 2),
              Status = case(
                 isnull(P95Ms), "N/A",
@@ -297,7 +358,7 @@ let callMetrics =
                 P95Ms < 5000, "YELLOW",
                 "RED");
 let stageApiMetrics =
-    scopedCalls
+    sessionCalls
     | where Kind == "api" and isnotnull(Ms)
     | summarize StageTotalMs = round(sum(Ms)),
                 StepP50 = round(percentile(Ms, 50)),
@@ -305,10 +366,10 @@ let stageApiMetrics =
                 StepP95 = round(percentile(Ms, 95)),
                 StepP99 = round(percentile(Ms, 99)),
                 StepMax = round(max(Ms))
-      by UserId, StageNo, Stage;
+      by CorrelationId, StageNo, Stage;
 let stageRows =
     callMetrics
-    | sort by UserId asc, StageNo asc, Kind asc, P95Ms desc, Service asc
+    | sort by CorrelationId asc, StageNo asc, Kind asc, P95Ms desc, Service asc
     | summarize Calls = make_list(bag_pack(
             "kind", Kind, "call", Service, "t", Ts, "n", N,
             "callTotalMs", CallTotalMs, "p50Ms", P50Ms, "p90Ms", P90Ms,
@@ -316,11 +377,13 @@ let stageRows =
             "failureRatePct", FailureRatePct, "status", Status,
             "detail", Detail, "errors", Errors), 80),
         StepStart = min(Ts),
+        StepEnd = max(LastTs),
         CallCount = sum(N),
         StepFails = sumif(Fails, Kind != "result"),
-        StepTotal = sumif(N, Kind != "result")
-      by UserId, StageNo, Stage
-    | join kind=leftouter stageApiMetrics on UserId, StageNo, Stage
+        StepTotal = sumif(N, Kind != "result"),
+        UserId = take_anyif(UserId, isnotempty(UserId) and UserId != "0")
+      by CorrelationId, StageNo, Stage
+    | join kind=leftouter stageApiMetrics on CorrelationId, StageNo, Stage
     | extend StepFailPct = iff(StepTotal > 0, round(todouble(StepFails) / StepTotal * 100.0, 2), real(null)),
              StepStatus = case(
                 isnull(StepP95), "N/A",
@@ -328,7 +391,7 @@ let stageRows =
                 StepP95 < 5000, "YELLOW",
                 "RED");
 stageRows
-| sort by UserId asc, StageNo asc
+| sort by CorrelationId asc, StageNo asc
 | summarize Journey = make_list(bag_pack(
         "stageNo", StageNo, "stage", Stage, "t", StepStart,
         "callCount", CallCount, "stageTotalMs", StageTotalMs,
@@ -346,15 +409,21 @@ stageRows
     ConfirmAt = minif(StepStart, StageNo == 8),
     CancelAt = minif(StepStart, StageNo == 9),
     FirstSeen = min(StepStart),
-    LastSeen = max(StepStart)
-  by UserId
-| join kind=leftouter cpSummary on UserId
+    LastSeen = max(StepEnd),
+    UserId = take_anyif(UserId, isnotempty(UserId) and UserId != "0")
+  by CorrelationId
+| join kind=leftouter cpSummary on CorrelationId
+| project-away CorrelationId1
+| extend UserId = coalesce(UserId, UserId1)
 | project-away UserId1
-| join kind=leftouter corrByUser on UserId
-| project-away UserId1
+| join kind=leftouter sessionFacts on CorrelationId
+| project-away CorrelationId1
 | extend BookOk = coalesce(BookOk, 0),
          BookFail = coalesce(BookFail, 0),
-         DistinctOkRes = coalesce(DistinctOkRes, 0)
+         DistinctOkRes = coalesce(DistinctOkRes, 0),
+         SessionCount = coalesce(SessionCount, 1),
+         CallsViaCorrelation = coalesce(CallsViaCorrelation, 0),
+         CallsNoCorrelation = coalesce(CallsNoCorrelation, 0)
 | extend IsBookSuccessful = BookOk > 0,
          PassedSearch = isnotnull(SearchAt)
 | extend MultiNote = iff(DistinctOkRes > 1, strcat(" x", tostring(DistinctOkRes)), "")

@@ -5,6 +5,7 @@ using JourneyMonitor.Core.Company;
 using JourneyMonitor.Core.Configuration;
 using JourneyMonitor.Core.Domain;
 using JourneyMonitor.Core.Options;
+using JourneyMonitor.Core.UseCases;
 using Microsoft.Extensions.Options;
 
 namespace JourneyMonitor.Core.Monitoring;
@@ -76,7 +77,8 @@ public sealed class ScoutBoardService(
     ICompanyAdapterProvider companyAdapters,
     IOptions<InsightsOptions> insightsOptions,
     IOptionsMonitor<ScoutOptions> scoutOptions,
-    IScoutBoardQueryTextSource? boardQueryText = null) : IScoutBoardReader
+    IScoutBoardQueryTextSource? boardQueryText = null,
+    TelemetrySourceOwnershipCheck? ownership = null) : IScoutBoardReader
 {
     private readonly IScoutBoardQueryTextSource _boardQueryText =
         boardQueryText ?? new EmbeddedScoutBoardQueryTextSource(kqlProvider);
@@ -103,12 +105,32 @@ public sealed class ScoutBoardService(
             ct);
 
         var kql = Substitute(template, request);
+        await EnsureSourcesReadableAsync(request.Board, adapter.ProfileKey, kql, ct);
         kql = await sourceResolver.ResolveAsync(kql, options.ResolvedEntryEnvironment, ct);
         var rows = await telemetrySource.QueryAsync(
             new TelemetryQueryRequest(kql, source.AppInsightsAppId, source.TenantId), ct);
 
         var parsed = rows.Select(r => ToBoardRow(request.Board, r, adapter)).Where(r => r is not null).Select(r => r!).ToList();
         return new ScoutBoardResult(parsed, kql);
+    }
+
+    /// <summary>
+    /// FX1 read-time ownership, after the text source answered: a composed board has already
+    /// skipped the sources another profile owns, so anything foreign still in the text comes from a
+    /// fixed (embedded or stored) board that cannot drop one branch of its union. Running it would
+    /// read another company's telemetry, so the board fails with the reason instead.
+    /// </summary>
+    private async Task EnsureSourcesReadableAsync(string board, string profileKey, string kql, CancellationToken ct)
+    {
+        if (ownership is null) return;
+        var aliases = KqlSourceResolver.PlaceholderPattern.Matches(kql).Select(m => m.Groups["alias"].Value);
+        var foreign = await ownership.FindForeignOrBuiltInAsync(profileKey, aliases, ct);
+        if (foreign.Count > 0)
+        {
+            throw new KqlSourceResolutionException(
+                $"The \"{board}\" scout board cannot run for profile \"{profileKey}\": " +
+                string.Join(" ", foreign.Select(f => f.Message)));
+        }
     }
 
     /// <summary>

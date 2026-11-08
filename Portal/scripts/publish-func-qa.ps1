@@ -5,6 +5,11 @@
 # Prerequisites: az login in the ICE tenant, Contributor on the registry + container app.
 # Run from anywhere:  .\Portal\scripts\publish-func-qa.ps1
 #
+# Manual order when a staging Functions app also exists:
+#   1. this script
+#   2. .\Portal\scripts\publish-func-qa-test.ps1
+#   3. .\Portal\scripts\publish-web-qa.ps1   only when the portal itself changed
+#
 # The Doctor Monkey's GitHub Copilot token is NOT set by this script - as of 2026-09-23 it is not
 # configured for QA at all, so the Doctor Monkey runs but always returns "unknown"/confidence 0
 # (never fails, never invents a diagnosis) until one is set. PREFERRED: once this image is
@@ -71,11 +76,53 @@ finally {
     Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# Spec 1000: the KpiIngestion and *HealthMonitor timers must fire every minute, so the app never
+# scales to zero (--min-replicas 1). maxReplicas keeps its current value (1 when unset).
+# The image fails indexing without both spec1000_*_cron settings, so they are added here, but only
+# when missing: a value already changed in Azure (e.g. HealthMonitoring__Enabled=true to turn on
+# shadow mode) is never overwritten by a publish. Safe defaults: Enabled=false, Triage__Mode=Shadow.
+$Spec1000Defaults = [ordered]@{
+    spec1000_ingestion_cron   = "0 */1 * * * *"
+    spec1000_monitor_cron     = "30 */1 * * * *"
+    spec1000_token_refresh_cron = "0 */5 * * * *"
+    HealthMonitoring__Enabled = "false"
+    Triage__Mode              = "Shadow"
+}
+
+$existingEnvNames = @(az containerapp show `
+  --name $ContainerApp `
+  --resource-group $ResourceGroup `
+  --query "properties.template.containers[0].env[].name" `
+  --output tsv)
+if ($LASTEXITCODE -ne 0) { throw "az containerapp show (env) failed with exit $LASTEXITCODE" }
+
+$maxReplicas = az containerapp show `
+  --name $ContainerApp `
+  --resource-group $ResourceGroup `
+  --query "properties.template.scale.maxReplicas" `
+  --output tsv
+if ($LASTEXITCODE -ne 0) { throw "az containerapp show (scale) failed with exit $LASTEXITCODE" }
+$parsedMax = 0
+if (-not [int]::TryParse("$maxReplicas".Trim(), [ref]$parsedMax) -or $parsedMax -lt 1) { $parsedMax = 1 }
+
+$missingEnvVars = @($Spec1000Defaults.Keys |
+  Where-Object { $existingEnvNames -notcontains $_ } |
+  ForEach-Object { "$_=$($Spec1000Defaults[$_])" })
+
+$envArgs = @()
+if ($missingEnvVars.Count -gt 0) {
+    Write-Host "Adding Spec 1000 settings: $($missingEnvVars -join '; ')"
+    $envArgs = @("--set-env-vars") + $missingEnvVars
+}
+
 az containerapp update `
   --name $ContainerApp `
   --resource-group $ResourceGroup `
   --image $image `
-  --query "{image:properties.template.containers[0].image, revision:properties.latestRevisionName, status:properties.runningStatus}" `
+  --min-replicas 1 `
+  --max-replicas $parsedMax `
+  @envArgs `
+  --query "{image:properties.template.containers[0].image, revision:properties.latestRevisionName, status:properties.runningStatus, scale:properties.template.scale}" `
   --output json
 if ($LASTEXITCODE -ne 0) { throw "az containerapp update failed with exit $LASTEXITCODE" }
 

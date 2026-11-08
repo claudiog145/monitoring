@@ -7,12 +7,17 @@ namespace JourneyMonitor.Core.Monitoring;
 /// <summary>
 /// Maps the board's Entity key to a brand.ClubInventory row.
 ///
-/// Reads the full 368-club application map instead of the much smaller brand.Information table:
-/// measured against brand.Information only ~10% of entities resolved (see docs/sessions -
+/// Reads Fusion/Hybrid rows from brand.ClubInventory instead of the much smaller brand.Information
+/// table: measured against brand.Information only ~10% of entities resolved (see docs/sessions -
 /// 2026-10-15 club-name mapping analysis), because that table is a hand-maintained Club dropdown
 /// seed, not the inventory of every club actually observed. brand.Information stays the source for
 /// the Club dropdown and for Journey/Incident club resolution (deliberately unchanged here) - this
 /// resolver is the one consumer that needed the fuller catalogue.
+///
+/// Application Map may return SOR/NG as well, but identity resolution stays Fusion/Hybrid only:
+/// SaveOn ClubIds collide with ICE partner ids used by Cruise (e.g. club:308 is T-Mobile's
+/// IcePartnerId, while ClubId 308 is a different SOR club). Matching ClubId first against the
+/// full inventory would mis-attribute Cruise traffic.
 ///
 /// Two things make this non-obvious and both are load-bearing:
 /// (1) Cruise telemetry carries no VacationClubId - its ICE partner id IS the club - so
@@ -144,7 +149,13 @@ public sealed class ClubIdentityResolver(IClubInventoryStore clubInventoryStore,
                 return _cache;
             }
 
-            _cache = await clubInventoryStore.GetAllAsync(ct);
+            var all = await clubInventoryStore.GetAllAsync(ct);
+            // Scout/Inspector identity catalog: Fusion/Hybrid only (see class summary).
+            _cache = all
+                .Where(c =>
+                    string.Equals(c.FusionPlatform, "Fusion", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(c.FusionPlatform, "Hybrid", StringComparison.OrdinalIgnoreCase))
+                .ToList();
             _cacheExpiry = DateTimeOffset.UtcNow.Add(CacheTtl);
             return _cache;
         }

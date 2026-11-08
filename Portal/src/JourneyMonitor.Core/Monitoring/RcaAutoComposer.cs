@@ -38,7 +38,7 @@ public sealed class RcaAutoComposer(
         if (!settings.IsEnabled || !settings.IsAutoComposeEnabled) return null;
 
         if (forensicCase.Status != ForensicCaseStatus.Escalated) return null;
-        if (string.IsNullOrWhiteSpace(forensicCase.ProbableRootCause)) return null;
+        if (!HasEnoughToCompose(forensicCase, settings)) return null;
 
         if (await pauseResolver.IsPausedAsync(MonkeyKey.RcaMonkey, ct))
         {
@@ -83,4 +83,12 @@ public sealed class RcaAutoComposer(
             return null;
         }
     }
+
+    /// <summary>
+    /// A named probable root cause always qualifies. Rca:AutoComposeMinConfidence (unset by default) also lets an
+    /// escalated case without one through when the Inspector's confidence exceeds it.
+    /// </summary>
+    public static bool HasEnoughToCompose(ForensicCase forensicCase, RcaOptions settings) =>
+        !string.IsNullOrWhiteSpace(forensicCase.ProbableRootCause)
+        || (settings.AutoComposeMinConfidence is { } min && forensicCase.Confidence > min);
 }

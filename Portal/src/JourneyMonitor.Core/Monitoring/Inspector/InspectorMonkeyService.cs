@@ -47,6 +47,17 @@ public sealed class InspectorMonkeyService(
     private const int MaxErrorLength = 1024;
     private const int MaxAlertReasonLength = 1024;
 
+    /// <summary>Contract v4 §5 audit: how many occurrences of each pattern the case's prompts hid - never the values.</summary>
+    private void LogRedactionAudit(ForensicCase forensicCase)
+    {
+        var redactions = recorder.RedactionsFor(forensicCase.Id);
+        if (redactions.Count == 0) return;
+        logger.LogInformation(
+            "[InspectorMonkey] {CaseId} [{ProfileKey}]: redaction audit {Redactions}.",
+            forensicCase.CaseId, forensicCase.ProfileKey,
+            string.Join(", ", redactions.OrderBy(r => r.Key, StringComparer.Ordinal).Select(r => $"{r.Key}={r.Value}")));
+    }
+
     /// <summary>
     /// Investigates one package and returns the case, failed or not. A caller must check
     /// <see cref="ForensicCase.Status"/> rather than rely on an exception: the only exceptions that
@@ -134,6 +145,7 @@ public sealed class InspectorMonkeyService(
             await ReportRemainingPhasesAsync(forensicCase, ct);
 
             var saved = await FinalizeAsync(forensicCase, stopwatch, ct);
+            LogRedactionAudit(forensicCase);
             await NotifyAsync(saved, vocabulary, ct);
 
             // After the case is persisted and announced, never before: the RCA describes a closed
@@ -223,6 +235,7 @@ public sealed class InspectorMonkeyService(
 
     private async Task<ForensicCase> CloseAsFailedAsync(ForensicCase forensicCase, string error, Stopwatch stopwatch, CancellationToken ct)
     {
+        LogRedactionAudit(forensicCase);
         forensicCase.Status = ForensicCaseStatus.Failed;
         forensicCase.ErrorMessage = InspectorJson.Truncate(error, MaxErrorLength);
         forensicCase.Decision = null;

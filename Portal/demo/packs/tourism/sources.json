@@ -1,0 +1,56 @@
+[
+  {
+    "alias": "sor-frontend",
+    "environment": "production",
+    "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/tourism-sor-frontend",
+    "appId": "demo-tourism-sor-frontend",
+    "ownerProfileKey": "arrivia",
+    "enabled": true,
+    "notes": "Hotels and Cars storefront (synthetic demo source)."
+  },
+  {
+    "alias": "club",
+    "environment": "production",
+    "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/tourism-club",
+    "appId": "demo-tourism-club",
+    "ownerProfileKey": "arrivia",
+    "enabled": true,
+    "notes": "Club front end (synthetic demo source)."
+  },
+  {
+    "alias": "cruise-core",
+    "environment": "production",
+    "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/tourism-cruise-core",
+    "appId": "demo-tourism-cruise-core",
+    "ownerProfileKey": "arrivia",
+    "enabled": true,
+    "notes": "Cruise Core site (synthetic demo source)."
+  },
+  {
+    "alias": "cruise-api",
+    "environment": "production",
+    "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/tourism-cruise-api",
+    "appId": "demo-tourism-cruise-api",
+    "ownerProfileKey": "arrivia",
+    "enabled": true,
+    "notes": "Cruise web API (synthetic demo source)."
+  },
+  {
+    "alias": "air-ui",
+    "environment": "production",
+    "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/tourism-air-ui",
+    "appId": "demo-tourism-air-ui",
+    "ownerProfileKey": "arrivia",
+    "enabled": true,
+    "notes": "Air UI (synthetic demo source)."
+  },
+  {
+    "alias": "air-api",
+    "environment": "production",
+    "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo/providers/microsoft.insights/components/tourism-air-api",
+    "appId": "demo-tourism-air-api",
+    "ownerProfileKey": "arrivia",
+    "enabled": true,
+    "notes": "Air API (synthetic demo source)."
+  }
+]

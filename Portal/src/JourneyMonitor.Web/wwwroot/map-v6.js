@@ -153,7 +153,7 @@ function mapV6RowToJourney(row, clubLabel = 'T-Mobile / T Life', domain = 'hotel
   const resolvedClub = resolveClubLabel(row, clubLabel, clubLabels);
   return {
     source: 'v6',
-    id: String((domain === 'cruises' || domain === 'cars') ? (row.CorrelationId || row.SessionId || row.UserId) : row.UserId),
+    id: String(row.CorrelationId || row.SessionId || row.UserId),
     correlationId: String(row.CorrelationId || row.UserId),
     domain,
     customer: String(row.UserId),
@@ -177,7 +177,7 @@ function mapV6RowToJourney(row, clubLabel = 'T-Mobile / T Life', domain = 'hotel
       const listed = asSessionList(row.Sessions);
       if (listed.length) return listed;
       if (row.CorrelationId) {
-        return [{ session: 1, correlationId: String(row.CorrelationId), changeReason: 'Latest session' }];
+        return [{ session: 1, correlationId: String(row.CorrelationId), changeReason: 'This session' }];
       }
       return [];
     })(),

@@ -203,4 +203,13 @@ public static class MonkeyKey
     /// and anything that did not qualify can still be composed on demand from the case file.
     /// </summary>
     public const string RcaMonkey = "rca-monkey";
+
+    public const string KpiIngestion = "kpi-ingestion";
+    public const string ApplicationHealthMonitor = "application-health-monitor";
+    public const string BusinessHealthMonitor = "business-health-monitor";
+    public const string InfrastructureHealthMonitor = "infrastructure-health-monitor";
+    public const string TriageMonkey = "triage-monkey";
+
+    /// <summary>Renews stored App Insights tokens that use azure-cli or service-principal refresh (contracts-company §2.3).</summary>
+    public const string TokenRefresh = "token-refresh";
 }

@@ -55,8 +55,30 @@ public static class TelemetrySourceDefaults
         Source(SorFrontend, InsightsEnvironment.Production,
             "/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/sor-appinsights-rg-usw/providers/microsoft.insights/components/sor-frontend-ai-prod-usw",
             "SaveOnResorts front end. No UAT twin registered yet."),
+        DemoSource(InsightsEnvironment.Production),
+        DemoSource(InsightsEnvironment.Staging),
     ];
 
+    /// <summary>
+    /// Every shipped source except the demo's belongs to the incumbent profile, matching the
+    /// backfill in CreateMonitoringTelemetrySource.sql.
+    /// </summary>
+    public const string IncumbentOwnerProfileKey = Company.KpiProfiles.Default;
+
+    /// <summary>The seeded demo profile's own alias: owned by 'demo', disabled, placeholder resource (no real telemetry).</summary>
+    public const string DemoClub = "demo-club";
+
+    public const string DemoOwnerProfileKey = "demo";
+
     private static TelemetrySourceEntry Source(string alias, string environment, string resourceId, string notes) =>
-        new(alias, environment, TelemetrySourceKind.AppInsights, resourceId, Notes: notes, UpdatedBy: "seed");
+        new(alias, environment, TelemetrySourceKind.AppInsights, resourceId, Notes: notes, UpdatedBy: "seed",
+            OwnerProfileKey: IncumbentOwnerProfileKey);
+
+    private static TelemetrySourceEntry DemoSource(string environment) =>
+        new(DemoClub, environment, TelemetrySourceKind.AppInsights,
+            "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/demo-rg/providers/microsoft.insights/components/demo-club",
+            Enabled: false,
+            Notes: "Demo profile placeholder. Disabled: register a real resource before enabling.",
+            UpdatedBy: "seed",
+            OwnerProfileKey: DemoOwnerProfileKey);
 }

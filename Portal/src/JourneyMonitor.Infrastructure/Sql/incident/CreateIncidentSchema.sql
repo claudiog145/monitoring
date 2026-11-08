@@ -12,6 +12,11 @@
 -- usp_IngestExceptions writes QueryRun, Incident, Occurrence and JourneyLink.
 -- Activity and ExternalReference are triage (someone assigns, changes status, or files a defect)
 -- and are not written by ingestion.
+--
+-- Contract v6 §3: QueryRun, Incident and JourneyLink carry ProfileKey (default 'arrivia', the incumbent,
+-- so rows written before it existed keep their meaning). The dedupe key is
+-- (ProfileKey, ClubId, Environment, Fingerprint). Only the incumbent is held to the
+-- hotels/cruises/cars/air domain list; another company's Domain is one of its own service keys.
 
 IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'incident')
     EXEC(N'CREATE SCHEMA incident');
@@ -33,7 +38,10 @@ BEGIN
         [RowCount]    int               NOT NULL
             CONSTRAINT DF_incident_QueryRun_RowCount DEFAULT 0,
         Status        nvarchar(16)      NOT NULL,
-        CONSTRAINT CK_incident_QueryRun_Domain CHECK (Domain IN (N'hotels', N'cruises', N'cars', N'air')),
+        ProfileKey    nvarchar(128)     NOT NULL
+            CONSTRAINT DF_incident_QueryRun_ProfileKey DEFAULT N'arrivia',
+        CONSTRAINT CK_incident_QueryRun_Domain
+            CHECK (ProfileKey <> N'arrivia' OR Domain IN (N'hotels', N'cruises', N'cars', N'air')),
         CONSTRAINT CK_incident_QueryRun_RowCount CHECK ([RowCount] >= 0)
     );
 
@@ -67,13 +75,19 @@ BEGIN
         UsersAffected    int               NOT NULL
             CONSTRAINT DF_incident_Incident_UsersAffected DEFAULT 0,
         LastQueryRunId   uniqueidentifier  NOT NULL,
+        Source           nvarchar(16)      NOT NULL
+            CONSTRAINT DF_incident_Incident_Source DEFAULT N'Server',
+        ProfileKey       nvarchar(128)     NOT NULL
+            CONSTRAINT DF_incident_Incident_ProfileKey DEFAULT N'arrivia',
         CONSTRAINT UQ_incident_Incident_ExternalId UNIQUE (ExternalId),
-        CONSTRAINT UQ_incident_Incident_Fingerprint UNIQUE (ClubId, Environment, Fingerprint),
+        CONSTRAINT UQ_incident_Incident_Fingerprint UNIQUE (ProfileKey, ClubId, Environment, Fingerprint),
         CONSTRAINT FK_incident_Incident_QueryRun
             FOREIGN KEY (LastQueryRunId) REFERENCES incident.QueryRun (QueryRunId),
-        CONSTRAINT CK_incident_Incident_Domain CHECK (Domain IN (N'hotels', N'cruises', N'cars', N'air')),
+        CONSTRAINT CK_incident_Incident_Domain
+            CHECK (ProfileKey <> N'arrivia' OR Domain IN (N'hotels', N'cruises', N'cars', N'air')),
         CONSTRAINT CK_incident_Incident_OccurrenceCount CHECK (OccurrenceCount >= 0),
-        CONSTRAINT CK_incident_Incident_UsersAffected CHECK (UsersAffected >= 0)
+        CONSTRAINT CK_incident_Incident_UsersAffected CHECK (UsersAffected >= 0),
+        CONSTRAINT CK_incident_Incident_Source CHECK (Source IN (N'Server', N'Browser'))
     );
 
     CREATE INDEX IX_incident_Incident_Queue
@@ -116,7 +130,10 @@ BEGIN
         Message        nvarchar(1024)    NOT NULL,
         StackTrace     nvarchar(max)     NULL,
         ItemId         nvarchar(128)     NOT NULL,
+        Source         nvarchar(16)      NOT NULL
+            CONSTRAINT DF_incident_Occurrence_Source DEFAULT N'Server',
         CONSTRAINT UQ_incident_Occurrence_ItemId UNIQUE (ItemId),
+        CONSTRAINT CK_incident_Occurrence_Source CHECK (Source IN (N'Server', N'Browser')),
         CONSTRAINT FK_incident_Occurrence_Incident
             FOREIGN KEY (IncidentId) REFERENCES incident.Incident (IncidentId),
         CONSTRAINT FK_incident_Occurrence_QueryRun
@@ -138,10 +155,13 @@ BEGIN
         Domain         nvarchar(32)   NOT NULL,
         JourneyKey     nvarchar(128)  NOT NULL,
         JourneyId      bigint         NULL,
+        ProfileKey     nvarchar(128)  NOT NULL
+            CONSTRAINT DF_incident_JourneyLink_ProfileKey DEFAULT N'arrivia',
         CONSTRAINT UQ_incident_JourneyLink UNIQUE (IncidentId, Domain, JourneyKey),
         CONSTRAINT FK_incident_JourneyLink_Incident
             FOREIGN KEY (IncidentId) REFERENCES incident.Incident (IncidentId),
-        CONSTRAINT CK_incident_JourneyLink_Domain CHECK (Domain IN (N'hotels', N'cruises', N'cars', N'air'))
+        CONSTRAINT CK_incident_JourneyLink_Domain
+            CHECK (ProfileKey <> N'arrivia' OR Domain IN (N'hotels', N'cruises', N'cars', N'air'))
     );
 END
 GO
@@ -189,6 +209,109 @@ BEGIN
 END
 GO
 
+-- Databases created before Source existed get the column here. New installs already have it
+-- from the CREATE TABLE above. Existing rows are Server until a later sync stores client_Type.
+-- The incident value follows the latest occurrence.
+IF COL_LENGTH(N'incident.Incident', N'Source') IS NULL
+BEGIN
+    ALTER TABLE incident.Incident ADD
+        Source nvarchar(16) NOT NULL
+            CONSTRAINT DF_incident_Incident_Source DEFAULT N'Server'
+            CONSTRAINT CK_incident_Incident_Source CHECK (Source IN (N'Server', N'Browser'));
+END
+GO
+
+IF COL_LENGTH(N'incident.Occurrence', N'Source') IS NULL
+BEGIN
+    ALTER TABLE incident.Occurrence ADD
+        Source nvarchar(16) NOT NULL
+            CONSTRAINT DF_incident_Occurrence_Source DEFAULT N'Server'
+            CONSTRAINT CK_incident_Occurrence_Source CHECK (Source IN (N'Server', N'Browser'));
+END
+GO
+
+-- Contract v6 §3. Databases created before ProfileKey existed get it here; every existing row is the
+-- incumbent's. Each step is guarded, so a re-run changes nothing.
+IF COL_LENGTH(N'incident.QueryRun', N'ProfileKey') IS NULL
+    ALTER TABLE incident.QueryRun ADD ProfileKey nvarchar(128) NOT NULL
+        CONSTRAINT DF_incident_QueryRun_ProfileKey DEFAULT N'arrivia';
+GO
+
+IF COL_LENGTH(N'incident.Incident', N'ProfileKey') IS NULL
+    ALTER TABLE incident.Incident ADD ProfileKey nvarchar(128) NOT NULL
+        CONSTRAINT DF_incident_Incident_ProfileKey DEFAULT N'arrivia';
+GO
+
+IF COL_LENGTH(N'incident.JourneyLink', N'ProfileKey') IS NULL
+    ALTER TABLE incident.JourneyLink ADD ProfileKey nvarchar(128) NOT NULL
+        CONSTRAINT DF_incident_JourneyLink_ProfileKey DEFAULT N'arrivia';
+GO
+
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_incident_QueryRun_Domain'
+           AND parent_object_id = OBJECT_ID(N'incident.QueryRun') AND definition NOT LIKE N'%ProfileKey%')
+    ALTER TABLE incident.QueryRun DROP CONSTRAINT CK_incident_QueryRun_Domain;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_incident_QueryRun_Domain'
+               AND parent_object_id = OBJECT_ID(N'incident.QueryRun'))
+    ALTER TABLE incident.QueryRun ADD CONSTRAINT CK_incident_QueryRun_Domain
+        CHECK (ProfileKey <> N'arrivia' OR Domain IN (N'hotels', N'cruises', N'cars', N'air'));
+GO
+
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_incident_Incident_Domain'
+           AND parent_object_id = OBJECT_ID(N'incident.Incident') AND definition NOT LIKE N'%ProfileKey%')
+    ALTER TABLE incident.Incident DROP CONSTRAINT CK_incident_Incident_Domain;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_incident_Incident_Domain'
+               AND parent_object_id = OBJECT_ID(N'incident.Incident'))
+    ALTER TABLE incident.Incident ADD CONSTRAINT CK_incident_Incident_Domain
+        CHECK (ProfileKey <> N'arrivia' OR Domain IN (N'hotels', N'cruises', N'cars', N'air'));
+GO
+
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_incident_JourneyLink_Domain'
+           AND parent_object_id = OBJECT_ID(N'incident.JourneyLink') AND definition NOT LIKE N'%ProfileKey%')
+    ALTER TABLE incident.JourneyLink DROP CONSTRAINT CK_incident_JourneyLink_Domain;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_incident_JourneyLink_Domain'
+               AND parent_object_id = OBJECT_ID(N'incident.JourneyLink'))
+    ALTER TABLE incident.JourneyLink ADD CONSTRAINT CK_incident_JourneyLink_Domain
+        CHECK (ProfileKey <> N'arrivia' OR Domain IN (N'hotels', N'cruises', N'cars', N'air'));
+GO
+
+-- The dedupe key includes ProfileKey: the same error in two companies is two incidents.
+IF EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'UQ_incident_Incident_Fingerprint'
+      AND object_id = OBJECT_ID(N'incident.Incident'))
+   AND NOT EXISTS (
+    SELECT 1
+    FROM sys.indexes AS i
+    INNER JOIN sys.index_columns AS ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+    INNER JOIN sys.columns AS c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+    WHERE i.name = N'UQ_incident_Incident_Fingerprint'
+      AND i.object_id = OBJECT_ID(N'incident.Incident')
+      AND c.name = N'ProfileKey')
+    ALTER TABLE incident.Incident DROP CONSTRAINT UQ_incident_Incident_Fingerprint;
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'UQ_incident_Incident_Fingerprint'
+      AND object_id = OBJECT_ID(N'incident.Incident'))
+    ALTER TABLE incident.Incident ADD CONSTRAINT UQ_incident_Incident_Fingerprint
+        UNIQUE (ProfileKey, ClubId, Environment, Fingerprint);
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'IX_incident_Incident_Profile'
+      AND object_id = OBJECT_ID(N'incident.Incident'))
+    CREATE INDEX IX_incident_Incident_Profile
+        ON incident.Incident (ProfileKey, Status, Severity, LastSeen DESC);
+GO
+
 -- One call is one domain sync. A QueryRun is written per club that produced rows
 -- (ClubId is required on QueryRun; one KQL run can see several clubs).
 -- Existing incidents keep Status and AssignedTo. Counts and severity are recomputed
@@ -203,15 +326,17 @@ CREATE OR ALTER PROCEDURE incident.usp_IngestExceptions
     @QueryRunCount        int = NULL OUTPUT,
     @InsertedIncidents    int = NULL OUTPUT,
     @UpdatedIncidents     int = NULL OUTPUT,
-    @InsertedOccurrences  int = NULL OUTPUT
+    @InsertedOccurrences  int = NULL OUTPUT,
+    @ProfileKey           nvarchar(128) = N'arrivia'
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
     DECLARE @Now datetimeoffset(7) = SYSDATETIMEOFFSET();
+    DECLARE @Profile nvarchar(128) = ISNULL(NULLIF(LTRIM(RTRIM(@ProfileKey)), N''), N'arrivia');
 
-    CREATE TABLE #inc
+    DECLARE @inc TABLE
     (
         Fingerprint   nvarchar(612)  NOT NULL,
         ClubId        nvarchar(32)   NOT NULL,
@@ -225,7 +350,7 @@ BEGIN
         JourneyKeys   nvarchar(max)  NULL
     );
 
-    INSERT INTO #inc (Fingerprint, ClubId, ExceptionType, Component, Operation, Message, FirstSeen, LastSeen, Occurrences, JourneyKeys)
+    INSERT INTO @inc (Fingerprint, ClubId, ExceptionType, Component, Operation, Message, FirstSeen, LastSeen, Occurrences, JourneyKeys)
     SELECT
         Fingerprint, ClubId, ExceptionType, Component, Operation, Message, FirstSeen, LastSeen, Occurrences, JourneyKeys
     FROM OPENJSON(@IncidentsJson)
@@ -243,7 +368,7 @@ BEGIN
         JourneyKeys   nvarchar(max)     N'$.JourneyKeys' AS JSON
     );
 
-    CREATE TABLE #run
+    DECLARE @run TABLE
     (
         ClubId     nvarchar(32)     NOT NULL PRIMARY KEY,
         QueryRunId uniqueidentifier NOT NULL
@@ -251,25 +376,25 @@ BEGIN
 
     BEGIN TRANSACTION;
 
-    INSERT INTO #run (ClubId, QueryRunId)
+    INSERT INTO @run (ClubId, QueryRunId)
     SELECT ClubId, NEWID()
-    FROM (SELECT DISTINCT ClubId FROM #inc) AS clubs;
+    FROM (SELECT DISTINCT ClubId FROM @inc) AS clubs;
 
-    IF NOT EXISTS (SELECT 1 FROM #run)
+    IF NOT EXISTS (SELECT 1 FROM @run)
     BEGIN
-        INSERT INTO #run (ClubId, QueryRunId) VALUES (@FallbackClubId, NEWID());
+        INSERT INTO @run (ClubId, QueryRunId) VALUES (@FallbackClubId, NEWID());
     END
 
-    INSERT INTO incident.QueryRun (QueryRunId, Domain, ClubId, Environment, Window, FetchedAt, [RowCount], Status)
-    SELECT QueryRunId, @Domain, ClubId, @Environment, @Window, @Now, 0, N'Succeeded'
-    FROM #run;
+    INSERT INTO incident.QueryRun (QueryRunId, Domain, ClubId, Environment, Window, FetchedAt, [RowCount], Status, ProfileKey)
+    SELECT QueryRunId, @Domain, ClubId, @Environment, @Window, @Now, 0, N'Succeeded', @Profile
+    FROM @run;
 
     DECLARE @maxExternal int;
     SELECT @maxExternal = ISNULL(MAX(TRY_CONVERT(int, SUBSTRING(ExternalId, 5, 28))), 1999)
     FROM incident.Incident WITH (UPDLOCK, HOLDLOCK)
     WHERE ExternalId LIKE N'EXC-[0-9]%';
 
-    CREATE TABLE #new
+    DECLARE @new TABLE
     (
         Fingerprint nvarchar(612) NOT NULL,
         ClubId      nvarchar(32)  NOT NULL,
@@ -278,7 +403,7 @@ BEGIN
 
     -- One row per club and fingerprint. The unique index is case-insensitive, so two
     -- JSON rows that differ only by case would both look new and the second insert would fail.
-    INSERT INTO #new (Fingerprint, ClubId, Rn)
+    INSERT INTO @new (Fingerprint, ClubId, Rn)
     SELECT d.Fingerprint, d.ClubId, ROW_NUMBER() OVER (ORDER BY d.ClubId, d.Fingerprint)
     FROM
     (
@@ -286,7 +411,7 @@ BEGIN
             Fingerprint,
             ClubId,
             ROW_NUMBER() OVER (PARTITION BY ClubId, Fingerprint ORDER BY FirstSeen, ExceptionType, Operation) AS KeepRow
-        FROM #inc
+        FROM @inc
     ) AS d
     WHERE d.KeepRow = 1
       AND NOT EXISTS
@@ -294,28 +419,28 @@ BEGIN
           SELECT 1
           FROM incident.Incident AS existing
           WHERE existing.ClubId = d.ClubId
-            AND existing.Environment = @Environment
+            AND existing.Environment = @Environment AND existing.ProfileKey = @Profile
             AND existing.Fingerprint = d.Fingerprint
       );
 
     INSERT INTO incident.Incident
     (
         ExternalId, Fingerprint, Domain, ClubId, Environment, ExceptionType, Component, Operation, Message,
-        Severity, Status, AssignedTo, FirstSeen, LastSeen, OccurrenceCount, UsersAffected, LastQueryRunId
+        Severity, Status, AssignedTo, FirstSeen, LastSeen, OccurrenceCount, UsersAffected, LastQueryRunId, ProfileKey
     )
     SELECT
         CONCAT(N'EXC-', @maxExternal + n.Rn),
         i.Fingerprint, @Domain, i.ClubId, @Environment, i.ExceptionType, i.Component, i.Operation, i.Message,
-        N'Low', N'Open', NULL, i.FirstSeen, i.LastSeen, 0, 0, r.QueryRunId
-    FROM #new AS n
+        N'Low', N'Open', NULL, i.FirstSeen, i.LastSeen, 0, 0, r.QueryRunId, @Profile
+    FROM @new AS n
     INNER JOIN
     (
         SELECT
             *,
             ROW_NUMBER() OVER (PARTITION BY ClubId, Fingerprint ORDER BY FirstSeen, ExceptionType, Operation) AS KeepRow
-        FROM #inc
+        FROM @inc
     ) AS i ON i.ClubId = n.ClubId AND i.Fingerprint = n.Fingerprint AND i.KeepRow = 1
-    INNER JOIN #run AS r ON r.ClubId = i.ClubId;
+    INNER JOIN @run AS r ON r.ClubId = i.ClubId;
 
     SET @InsertedIncidents = @@ROWCOUNT;
 
@@ -325,29 +450,51 @@ BEGIN
         LastSeen = CASE WHEN i.LastSeen > existing.LastSeen THEN i.LastSeen ELSE existing.LastSeen END,
         LastQueryRunId = r.QueryRunId
     FROM incident.Incident AS existing
-    INNER JOIN #inc AS i
+    INNER JOIN @inc AS i
         ON i.ClubId = existing.ClubId
        AND i.Fingerprint = existing.Fingerprint
-       AND existing.Environment = @Environment
-    INNER JOIN #run AS r ON r.ClubId = i.ClubId
-    WHERE NOT EXISTS (SELECT 1 FROM #new AS n WHERE n.ClubId = i.ClubId AND n.Fingerprint = i.Fingerprint);
+       AND existing.Environment = @Environment AND existing.ProfileKey = @Profile
+    INNER JOIN @run AS r ON r.ClubId = i.ClubId
+    WHERE NOT EXISTS (SELECT 1 FROM @new AS n WHERE n.ClubId = i.ClubId AND n.Fingerprint = i.Fingerprint);
 
     SET @UpdatedIncidents = @@ROWCOUNT;
+
+    -- A later sync can fill a member id the first sighting did not have. Users Affected
+    -- is recomputed from these rows below, so a blank id would keep that count at 0.
+    UPDATE already
+    SET MemberId = NULLIF(o.MemberId, N'')
+    FROM @inc AS i
+    INNER JOIN incident.Incident AS existing
+        ON existing.ClubId = i.ClubId
+       AND existing.Environment = @Environment AND existing.ProfileKey = @Profile
+       AND existing.Fingerprint = i.Fingerprint
+    CROSS APPLY OPENJSON(i.Occurrences)
+    WITH
+    (
+        MemberId nvarchar(128) N'$.MemberId',
+        ItemId   nvarchar(128) N'$.ItemId'
+    ) AS o
+    INNER JOIN incident.Occurrence AS already
+        ON already.ItemId = o.ItemId
+       AND already.IncidentId = existing.IncidentId
+    WHERE NULLIF(already.MemberId, N'') IS NULL
+      AND NULLIF(o.MemberId, N'') IS NOT NULL;
 
     INSERT INTO incident.Occurrence
     (
         IncidentId, QueryRunId, OccurredAt, MemberId, SessionId, CorrelationId,
-        OperationId, Url, Message, StackTrace, ItemId
+        OperationId, Url, Message, StackTrace, ItemId, Source
     )
     SELECT
         existing.IncidentId, r.QueryRunId, o.OccurredAt, NULLIF(o.MemberId, N''), NULLIF(o.SessionId, N''),
-        NULLIF(o.CorrelationId, N''), o.OperationId, NULLIF(o.Url, N''), o.Message, o.StackTrace, o.ItemId
-    FROM #inc AS i
+        NULLIF(o.CorrelationId, N''), o.OperationId, NULLIF(o.Url, N''), o.Message, o.StackTrace, o.ItemId,
+        CASE WHEN o.Source = N'Browser' THEN N'Browser' ELSE N'Server' END
+    FROM @inc AS i
     INNER JOIN incident.Incident AS existing
         ON existing.ClubId = i.ClubId
-       AND existing.Environment = @Environment
+       AND existing.Environment = @Environment AND existing.ProfileKey = @Profile
        AND existing.Fingerprint = i.Fingerprint
-    INNER JOIN #run AS r ON r.ClubId = i.ClubId
+    INNER JOIN @run AS r ON r.ClubId = i.ClubId
     CROSS APPLY OPENJSON(i.Occurrences)
     WITH
     (
@@ -359,18 +506,19 @@ BEGIN
         Url           nvarchar(2048)    N'$.Url',
         Message       nvarchar(1024)    N'$.Message',
         StackTrace    nvarchar(max)     N'$.StackTrace',
-        ItemId        nvarchar(128)     N'$.ItemId'
+        ItemId        nvarchar(128)     N'$.ItemId',
+        Source        nvarchar(16)      N'$.Source'
     ) AS o
     WHERE NOT EXISTS (SELECT 1 FROM incident.Occurrence AS already WHERE already.ItemId = o.ItemId);
 
     SET @InsertedOccurrences = @@ROWCOUNT;
 
-    INSERT INTO incident.JourneyLink (IncidentId, Domain, JourneyKey, JourneyId)
-    SELECT DISTINCT existing.IncidentId, @Domain, keys.value, NULL
-    FROM #inc AS i
+    INSERT INTO incident.JourneyLink (IncidentId, Domain, JourneyKey, JourneyId, ProfileKey)
+    SELECT DISTINCT existing.IncidentId, @Domain, keys.value, NULL, @Profile
+    FROM @inc AS i
     INNER JOIN incident.Incident AS existing
         ON existing.ClubId = i.ClubId
-       AND existing.Environment = @Environment
+       AND existing.Environment = @Environment AND existing.ProfileKey = @Profile
        AND existing.Fingerprint = i.Fingerprint
     CROSS APPLY OPENJSON(i.JourneyKeys) AS keys
     WHERE keys.value <> N''
@@ -394,19 +542,26 @@ BEGIN
             WHEN counts.OccurrenceCount >= 25 THEN N'High'
             WHEN counts.OccurrenceCount >= 5 THEN N'Medium'
             ELSE N'Low'
-        END
+        END,
+        Source = COALESCE(counts.LatestSource, existing.Source)
     FROM incident.Incident AS existing
-    INNER JOIN #inc AS i
+    INNER JOIN @inc AS i
         ON i.ClubId = existing.ClubId
        AND i.Fingerprint = existing.Fingerprint
-       AND existing.Environment = @Environment
+       AND existing.Environment = @Environment AND existing.ProfileKey = @Profile
     CROSS APPLY
     (
         SELECT
             COUNT(*) AS OccurrenceCount,
             COUNT(DISTINCT NULLIF(o.MemberId, N'')) AS UsersAffected,
             MIN(o.OccurredAt) AS FirstSeen,
-            MAX(o.OccurredAt) AS LastSeen
+            MAX(o.OccurredAt) AS LastSeen,
+            (
+                SELECT TOP (1) src.Source
+                FROM incident.Occurrence AS src
+                WHERE src.IncidentId = existing.IncidentId
+                ORDER BY src.OccurredAt DESC, src.OccurrenceId DESC
+            ) AS LatestSource
         FROM incident.Occurrence AS o
         WHERE o.IncidentId = existing.IncidentId
     ) AS counts;
@@ -414,16 +569,16 @@ BEGIN
     UPDATE q
     SET [RowCount] = ISNULL(rows.Cnt, 0)
     FROM incident.QueryRun AS q
-    INNER JOIN #run AS r ON r.QueryRunId = q.QueryRunId
+    INNER JOIN @run AS r ON r.QueryRunId = q.QueryRunId
     OUTER APPLY
     (
         SELECT COUNT(*) AS Cnt
-        FROM #inc AS i
+        FROM @inc AS i
         CROSS APPLY OPENJSON(i.Occurrences) AS o
         WHERE i.ClubId = r.ClubId
     ) AS rows;
 
-    SET @QueryRunCount = (SELECT COUNT(*) FROM #run);
+    SET @QueryRunCount = (SELECT COUNT(*) FROM @run);
 
     COMMIT TRANSACTION;
 END

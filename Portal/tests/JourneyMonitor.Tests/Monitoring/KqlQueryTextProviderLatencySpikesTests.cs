@@ -25,6 +25,9 @@ public class KqlQueryTextProviderLatencySpikesTests
         Assert.Contains("let win = 15m;", kql);
         Assert.Contains("type !startswith \"ErrorEvent\"", kql);
         Assert.Contains("join kind=leftouter requestUrls on operation_Id", kql);
+        Assert.Contains("join kind=leftouter memberByOp on operation_Id", kql);
+        Assert.Contains("isnotempty(RelatedMemberId) and RelatedMemberId != \"0\" and (", kql);
+        Assert.Contains("operation_Name has \"CarSearch\"", kql);
         Assert.Contains("RequestUrl = tostring(url)", kql);
         Assert.Contains("ItemId", kql);
         Assert.Contains("ClubId", kql);

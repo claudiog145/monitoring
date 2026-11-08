@@ -5,8 +5,10 @@
 // ScoutBoardQueryComposer fills from its CompanyProfile and the board request. Onboarding an
 // enterprise is writing a profile; it is not editing this file.
 //
-// {{SOURCE:alias}} is the one placeholder left standing on purpose - IKqlSourceResolver turns each
-// alias into an Application Insights ARM resource id later, against the registered catalogue.
+// The SOURCE placeholder (double braces, "SOURCE:", then an alias) is the one left standing on purpose
+// - IKqlSourceResolver turns each alias into an Application Insights ARM resource id later, against the
+// registered catalogue. It is deliberately not spelled out here: the resolver scans the whole text,
+// comments included, and would try to resolve a literal example.
 //
 // Shape kept from the workbook-derived board this replaces: bucket by time, summarise requests and
 // exceptions per group, compare each bucket against the one before it, rank, then take the top

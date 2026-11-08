@@ -4,7 +4,7 @@ using JourneyMonitor.Core.Configuration;
 namespace JourneyMonitor.Core.Onboarding;
 
 /// <summary>
-/// Builds the three probe queries. Static and free of I/O so the generated text can be asserted
+/// Builds the probe queries. Static and free of I/O so the generated text can be asserted
 /// directly: a wrong probe does not fail loudly, it comes back as a generic Kusto syntax error or
 /// - worse - as a valid query over the wrong window, which reads exactly like "no data".
 ///
@@ -86,6 +86,29 @@ public static class TelemetryProbeKql
     }
 
     private static string Placeholder(string alias) => "{{SOURCE:" + alias + "}}";
+
+    /// <summary>
+    /// The most-called dependency targets, the candidates for <c>CompanyProfile.Partners</c>.
+    /// Same capped sample as the other probes; <c>SampledRows</c> is echoed so a share can be
+    /// computed against what was actually examined.
+    /// </summary>
+    public static string DependencyTargets(string alias, DateTimeOffset from, DateTimeOffset to, int maxSampledRows, int maxRows)
+    {
+        GuardAlias(alias);
+        return $"""
+            let _sampled = materialize(
+                app('{Placeholder(alias)}').{TelemetryProbeTables.Dependencies}
+                | where timestamp >= {Datetime(from)} and timestamp < {Datetime(to)}
+                | project target, type
+                | take {Count(maxSampledRows)});
+            let _sampledRows = toscalar(_sampled | count);
+            _sampled
+            | extend Target = tolower(trim(@"\s+", tostring(target))), DependencyType = tostring(type)
+            | summarize ObservationCount = count() by Target, DependencyType
+            | extend SampledRows = _sampledRows
+            | top {Count(maxRows)} by ObservationCount desc
+            """;
+    }
 
     private static string Datetime(DateTimeOffset value) =>
         $"datetime({value.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fff", CultureInfo.InvariantCulture)}Z)";

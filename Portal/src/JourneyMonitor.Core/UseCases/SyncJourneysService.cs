@@ -44,7 +44,7 @@ public sealed record JourneySyncScope(
 /// <see cref="GetJourneysService"/> rather than re-issuing the KQL so there is a single query
 /// path (club/host resolution, KQL injection and row shape stay identical to the live endpoint).
 /// Shared by the per-vertical timer triggers and the refresh endpoint.
-/// Each timer syncs its vertical in one KQL call (hotels and cruises), then upserts per club.
+/// Each timer syncs its vertical in one KQL call (hotels, cruises, and cars), then upserts per club.
 /// Hotels and cars use ClubId; air and cruises use IcePartnerId, matching
 /// <see cref="BrandClubOptions"/>.
 /// </summary>
@@ -103,7 +103,7 @@ public sealed class SyncJourneysService(
             return passes;
         }
 
-        if (domain is "hotels" or "cruises")
+        if (domain is "hotels" or "cruises" or "cars")
         {
             return await SyncVerticalAsync(domain, clubs, cancellationToken);
         }
@@ -144,6 +144,17 @@ public sealed class SyncJourneysService(
             domain, scope.Window, scope.Environment, scopedClubs, cancellationToken);
 
         var passes = new List<JourneySyncPass>();
+        if (journeys.StatusCode == 200 && journeys.ClubsFromTelemetry)
+        {
+            foreach (var (clubId, rows) in journeys.RowsByClub.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+            {
+                dashboards.TryGetValue(clubId, out var metrics);
+                passes.Add(await StoreClubAsync(domain, journeys, clubId, null, rows, metrics, cancellationToken));
+            }
+
+            return passes;
+        }
+
         foreach (var club in scopedClubs)
         {
             dashboards.TryGetValue(club.ClubId, out var metrics);
@@ -160,38 +171,51 @@ public sealed class SyncJourneysService(
                 continue;
             }
 
-            try
-            {
-                var result = await journeyStore.UpsertAsync(
-                    new JourneyUpsertRequest(
-                        Domain: domain,
-                        Window: journeys.Window,
-                        Environment: journeys.Environment,
-                        ClubId: club.ClubId,
-                        Host: string.IsNullOrEmpty(club.Host) ? null : club.Host,
-                        Source: "live",
-                        Rows: rows),
-                    cancellationToken);
-                passes.Add(new JourneySyncPass(
-                    domain,
-                    true,
-                    result.RecordCount,
-                    result.QueryRunId,
-                    null,
-                    SourceStatusCode: journeys.StatusCode,
-                    Inserted: result.Inserted,
-                    Updated: result.Updated,
-                    Unchanged: result.Unchanged,
-                    DashboardMetrics: metrics,
-                    ClubId: club.ClubId));
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                passes.Add(new JourneySyncPass(domain, false, 0, null, ex.Message, DashboardMetrics: metrics, ClubId: club.ClubId));
-            }
+            passes.Add(await StoreClubAsync(
+                domain, journeys, club.ClubId, string.IsNullOrEmpty(club.Host) ? null : club.Host, rows, metrics, cancellationToken));
         }
 
         return passes;
+    }
+
+    private async Task<JourneySyncPass> StoreClubAsync(
+        string domain,
+        VerticalJourneysOutcome journeys,
+        string clubId,
+        string? host,
+        IReadOnlyList<TelemetryJourneyRow> rows,
+        IReadOnlyList<DashboardMetricSyncPass>? metrics,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await journeyStore.UpsertAsync(
+                new JourneyUpsertRequest(
+                    Domain: domain,
+                    Window: journeys.Window,
+                    Environment: journeys.Environment,
+                    ClubId: clubId,
+                    Host: host,
+                    Source: "live",
+                    Rows: rows),
+                cancellationToken);
+            return new JourneySyncPass(
+                domain,
+                true,
+                result.RecordCount,
+                result.QueryRunId,
+                null,
+                SourceStatusCode: journeys.StatusCode,
+                Inserted: result.Inserted,
+                Updated: result.Updated,
+                Unchanged: result.Unchanged,
+                DashboardMetrics: metrics,
+                ClubId: clubId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new JourneySyncPass(domain, false, 0, null, ex.Message, DashboardMetrics: metrics, ClubId: clubId);
+        }
     }
 
     /// <summary>

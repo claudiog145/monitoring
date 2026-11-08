@@ -41,15 +41,76 @@ public static class CompanyProfileValidator
     /// <summary>Same bound <see cref="ProfileDrivenAdapter"/> compiles with, so a pattern that validates here is a pattern that runs there.</summary>
     private static readonly TimeSpan RegexProbeTimeout = TimeSpan.FromMilliseconds(100);
 
-    private static readonly HashSet<string> KnownMatcherKinds = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>
+    /// Every kind <see cref="StepMatcherKind"/> declares, read from the type itself so a kind added to the
+    /// model can never be one the validator rejects while the profile GET happily returns it.
+    /// </summary>
+    private static readonly HashSet<string> KnownMatcherKinds = new(
+        typeof(StepMatcherKind)
+            .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+            .Select(f => (string)f.GetRawConstantValue()!),
+        StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The kinds a step matcher accepts, sorted; what an error message lists as the options.</summary>
+    public static IReadOnlyList<string> StepMatcherKinds { get; } =
+        KnownMatcherKinds.OrderBy(k => k, StringComparer.Ordinal).ToList();
+
+    /// <summary>Same character limit as a KPI EntityKey consumer can show and the Triage stage <c>partner:{key}</c> can carry.</summary>
+    public const int MaxPartnerKeyLength = 64;
+
+    /// <summary>
+    /// Constructs RE2 (what KQL <c>matches regex</c> runs) does not support, by name, or null. .NET compiles all of
+    /// them, so without this check a partner regex would validate here and fail the whole dependency query (one
+    /// <c>case()</c> for every partner) at run time. Escapes are read as pairs, so an escaped backslash followed by
+    /// <c>Z</c> or a digit is a literal, not a construct.
+    /// </summary>
+    public static string? FindUnsupportedRe2Construct(string pattern)
     {
-        StepMatcherKind.UrlContains,
-        StepMatcherKind.PathContains,
-        StepMatcherKind.OperationEquals,
-        StepMatcherKind.OperationContains,
-        StepMatcherKind.PageNameContains,
-        StepMatcherKind.Regex,
-    };
+        var text = pattern ?? "";
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (c == '\\')
+            {
+                if (i + 1 >= text.Length) return null;
+                var next = text[i + 1];
+                // KQL accepts \1 but reads it as an octal escape, not a backreference: same text, different match.
+                if (next is >= '1' and <= '9') return $"backreference \\{next}";
+                if (next == 'k' && i + 2 < text.Length && text[i + 2] is '<' or '\'' or '{') return "named backreference \\k";
+                if (next == 'Z') return "end-of-string anchor \\Z (use $ or \\z)";
+                if (next == 'G') return "contiguous-match anchor \\G";
+                i++;
+                continue;
+            }
+
+            if (c != '(' || i + 2 >= text.Length || text[i + 1] != '?') continue;
+            var kind = text[i + 2];
+            switch (kind)
+            {
+                case '=': return "lookahead (?=";
+                case '!': return "negative lookahead (?!";
+                case '>': return "atomic group (?>";
+                case '(': return "conditional (?(";
+                case '#': return "inline comment (?#";
+                case '<' when i + 3 < text.Length && text[i + 3] == '=': return "lookbehind (?<=";
+                case '<' when i + 3 < text.Length && text[i + 3] == '!': return "negative lookbehind (?<!";
+            }
+
+            // Inline flags (?imsx-imsx) or (?imsx:...): App Insights refuses n (explicit capture); i, m, s and x run there.
+            var j = i + 2;
+            while (j < text.Length && (char.IsAsciiLetter(text[j]) || text[j] == '-')) j++;
+            if (j > i + 2 && j < text.Length && text[j] is ':' or ')')
+            {
+                var flags = text[(i + 2)..j];
+                if (flags.Contains('n')) return "inline flag n (explicit capture)";
+            }
+        }
+        return null;
+    }
+
+    private static bool HasTemplateToken(string? value) =>
+        value is not null && (value.Contains("{{", StringComparison.Ordinal) || value.Contains("}}", StringComparison.Ordinal));
 
     private static readonly HashSet<string> KnownIdentityKinds = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -81,8 +142,262 @@ public static class CompanyProfileValidator
         ValidateHeader(profile, findings);
         ValidateServices(profile, findings);
         ValidateIdentitySources(profile, findings);
+        ValidateTelemetryTenants(profile, findings);
+        ValidatePrivacy(profile, findings);
+        ValidatePartners(profile, findings);
+        ValidateTheme(profile, findings);
 
         return findings;
+    }
+
+    public const int MaxThemeShortNameLength = 32;
+
+    private static readonly Regex HexColor = new("^#[0-9A-Fa-f]{6}$", RegexOptions.CultureInvariant);
+
+    /// <summary>Contract v6 §2. Optional section: null means the default palette.</summary>
+    private static void ValidateTheme(CompanyProfile profile, List<CompanyProfileFinding> findings)
+    {
+        var theme = profile.Theme;
+        if (theme is null) return;
+
+        ValidateThemeColor(theme.PrimaryColor, "$.theme.primaryColor", findings);
+        ValidateThemeColor(theme.AccentColor, "$.theme.accentColor", findings);
+
+        if (theme.ShortName is { } shortName)
+        {
+            if (shortName.Length > MaxThemeShortNameLength)
+            {
+                Error(findings, "theme-short-name-too-long", "$.theme.shortName",
+                    $"The short name has {shortName.Length} characters; keep it to {MaxThemeShortNameLength} or fewer.");
+            }
+
+            if (shortName.IndexOfAny(['<', '>']) >= 0)
+            {
+                Error(findings, "theme-short-name-invalid", "$.theme.shortName",
+                    "The short name must not contain '<' or '>'.");
+            }
+        }
+    }
+
+    private static void ValidateThemeColor(string? color, string path, List<CompanyProfileFinding> findings)
+    {
+        if (color is null) return;
+        if (!HexColor.IsMatch(color))
+        {
+            Error(findings, "theme-color-invalid", path,
+                $"\"{color}\" is not a colour of the form #RRGGBB (six hex digits).");
+        }
+    }
+
+    /// <summary>
+    /// Contract v4 §5. Optional section: null or empty means the profile declares no partners. Each
+    /// partner needs a unique key (it is the EntityKey of the <c>appinsights:dependency</c> series and
+    /// the <c>partner:{key}</c> Triage stage) and at least one matcher of a known kind. A regex must
+    /// compile under the bounded timeout and must not match everything.
+    /// </summary>
+    private static void ValidatePartners(CompanyProfile profile, List<CompanyProfileFinding> findings)
+    {
+        var partners = profile.Partners;
+        if (partners is null || partners.Count == 0) return;
+
+        var kinds = string.Join(", ", PartnerMatcherKind.All);
+        var seenKeys = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        for (var p = 0; p < partners.Count; p++)
+        {
+            var partner = partners[p];
+            var path = $"$.partners[{p}]";
+
+            if (partner is null)
+            {
+                Error(findings, "partner-missing", path,
+                    "Remove this null entry from the partners array, or replace it with a real partner.");
+                continue;
+            }
+
+            var key = partner.Key?.Trim() ?? "";
+            if (key.Length == 0)
+            {
+                Error(findings, "partner-key-missing", $"{path}.key",
+                    "Give this partner a key. It names the partner's dependency KPI series and its Triage stage "
+                    + "(partner:{key}), so a blank one cannot be told apart from traffic no partner claims.");
+            }
+            else if (key.Length > MaxPartnerKeyLength)
+            {
+                Error(findings, "partner-key-too-long", $"{path}.key",
+                    $"Partner key \"{key}\" is {key.Length} characters; keep it to {MaxPartnerKeyLength} or fewer.");
+            }
+            else if (HasTemplateToken(key))
+            {
+                Error(findings, "partner-key-template-token", $"{path}.key",
+                    $"Partner key \"{key}\" contains \"{{{{\" or \"}}}}\". Those delimit KPI query tokens; use letters, digits, '-', '_' or '.'.");
+            }
+            else if (seenKeys.TryGetValue(key, out var first))
+            {
+                Error(findings, "partner-key-duplicate", $"{path}.key",
+                    $"Partner key \"{key}\" is already used by $.partners[{first}] (keys are compared case-insensitively). "
+                    + "Rename one of them: two partners with one key would merge into a single series.");
+            }
+            else
+            {
+                seenKeys[key] = p;
+            }
+
+            if (string.IsNullOrWhiteSpace(partner.DisplayName))
+            {
+                Warn(findings, "partner-display-name-missing", $"{path}.displayName",
+                    "Give this partner a display name; screens show the raw key when it is blank.");
+            }
+
+            if (partner.Matchers is null || partner.Matchers.Count == 0)
+            {
+                Error(findings, "partner-matchers-empty", $"{path}.matchers",
+                    "Give this partner at least one matcher (" + kinds + "). A partner with none never "
+                    + "claims a dependency call, so its KPI never has a series.");
+                continue;
+            }
+
+            for (var m = 0; m < partner.Matchers.Count; m++)
+            {
+                ValidatePartnerMatcher(partner.Matchers[m], $"{path}.matchers[{m}]", kinds, findings);
+            }
+        }
+    }
+
+    private static void ValidatePartnerMatcher(PartnerMatcher? matcher, string path, string kinds, List<CompanyProfileFinding> findings)
+    {
+        if (matcher is null)
+        {
+            Error(findings, "partner-matcher-missing", path,
+                "Remove this null entry from the matchers array, or replace it with a real matcher.");
+            return;
+        }
+
+        var kind = matcher.Kind?.Trim() ?? "";
+        var known = PartnerMatcherKind.All.Contains(kind, StringComparer.OrdinalIgnoreCase);
+        if (kind.Length == 0)
+        {
+            Error(findings, "partner-matcher-kind-missing", $"{path}.kind",
+                "Set a partner matcher kind. Use one of: " + kinds + ".");
+        }
+        else if (!known)
+        {
+            Error(findings, "partner-matcher-kind-unknown", $"{path}.kind",
+                $"Partner matcher kind \"{kind}\" is not one this build can evaluate. Use one of: {kinds}.");
+        }
+
+        if (string.IsNullOrWhiteSpace(matcher.Value))
+        {
+            Error(findings, "partner-matcher-value-missing", $"{path}.value",
+                "Give this matcher a value to test dependency calls for; an empty value never matches.");
+            return;
+        }
+
+        if (HasTemplateToken(matcher.Value))
+        {
+            Error(findings, "partner-matcher-value-template-token", $"{path}.value",
+                $"The value \"{matcher.Value}\" contains \"{{{{\" or \"}}}}\". Those delimit KPI query tokens, so the value "
+                + "would be read as a token when the query is built. Remove them.");
+            return;
+        }
+
+        if (!string.Equals(kind, PartnerMatcherKind.Regex, StringComparison.OrdinalIgnoreCase)) return;
+
+        try
+        {
+            var regex = new Regex(matcher.Value, RegexOptions.CultureInvariant | RegexOptions.IgnoreCase, RegexProbeTimeout);
+            if (regex.IsMatch(""))
+            {
+                Error(findings, "partner-regex-matches-empty", $"{path}.value",
+                    $"The regex \"{matcher.Value}\" matches the empty string, so it claims every dependency call. "
+                    + "Make it require the partner's host or name.");
+            }
+            else if (FindUnsupportedRe2Construct(matcher.Value) is { } construct)
+            {
+                Error(findings, "partner-regex-unsupported", $"{path}.value",
+                    $"The regex \"{matcher.Value}\" uses {construct}, which KQL (RE2) does not support, so the "
+                    + "dependency query of every partner would fail. Rewrite it without that construct.");
+            }
+        }
+        catch (ArgumentException ex)
+        {
+            Error(findings, "partner-regex-invalid", $"{path}.value",
+                $"The regex \"{matcher.Value}\" does not compile ({ex.Message.Trim()}). Fix the pattern or use "
+                + $"\"{PartnerMatcherKind.DependencyTargetContains}\".");
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            Error(findings, "partner-regex-too-slow", $"{path}.value",
+                $"The regex \"{matcher.Value}\" timed out on an empty input. Simplify it.");
+        }
+    }
+
+    /// <summary>
+    /// Contract v4 §5. Optional section: null means closed by default. Every extra pattern must
+    /// compile under the same bounded timeout the redactor runs it with, because a pattern that
+    /// does not compile is skipped at run time - silently leaving that data unredacted.
+    /// </summary>
+    private static void ValidatePrivacy(CompanyProfile profile, List<CompanyProfileFinding> findings)
+    {
+        var privacy = profile.Privacy;
+        if (privacy is null) return;
+
+        var dimensions = privacy.PiiDimensions ?? [];
+        var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < dimensions.Count; i++)
+        {
+            var path = $"$.privacy.piiDimensions[{i}]";
+            var name = dimensions[i]?.Trim() ?? "";
+            if (name.Length == 0)
+            {
+                Error(findings, "privacy-dimension-missing", path,
+                    "Name the customDimensions key whose value is personal data, or remove this empty entry.");
+                continue;
+            }
+
+            if (seen.TryGetValue(name, out var first))
+            {
+                Warn(findings, "privacy-dimension-duplicate", path,
+                    $"\"{name}\" is already listed at $.privacy.piiDimensions[{first}] (names are compared case-insensitively).");
+                continue;
+            }
+            seen[name] = i;
+        }
+
+        var patterns = privacy.Patterns ?? [];
+        for (var i = 0; i < patterns.Count; i++)
+        {
+            var path = $"$.privacy.patterns[{i}]";
+            var pattern = patterns[i];
+            if (string.IsNullOrWhiteSpace(pattern))
+            {
+                Error(findings, "privacy-pattern-missing", path,
+                    "Give this privacy pattern a regular expression, or remove the empty entry.");
+                continue;
+            }
+
+            try
+            {
+                var regex = new Regex(pattern, RegexOptions.CultureInvariant, RegexProbeTimeout);
+                if (regex.IsMatch(""))
+                {
+                    Error(findings, "privacy-pattern-matches-empty", path,
+                        $"The pattern \"{pattern}\" matches the empty string, so it would insert a redaction token between every character. Make it require at least one character.");
+                }
+            }
+            catch (ArgumentException ex)
+            {
+                Error(findings, "privacy-pattern-invalid", path,
+                    $"The privacy pattern \"{pattern}\" does not compile ({ex.Message.Trim()}). At run time an uncompilable "
+                    + "pattern is skipped, so the data it was meant to hide would reach the model.");
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                Error(findings, "privacy-pattern-too-slow", path,
+                    $"The privacy pattern \"{pattern}\" timed out on an empty input. Simplify it: at run time a timeout "
+                    + "hides the whole prompt.");
+            }
+        }
     }
 
     /// <summary>Convenience for callers that only need a go/no-go, e.g. a store refusing to publish a broken document.</summary>
@@ -468,6 +783,54 @@ public static class CompanyProfileValidator
             else
             {
                 seenSources[signature] = i;
+            }
+        }
+    }
+
+    /// <summary>Optional section: null or empty is valid and means "no tenant map".</summary>
+    private static void ValidateTelemetryTenants(CompanyProfile profile, List<CompanyProfileFinding> findings)
+    {
+        var tenants = profile.TelemetryTenants;
+        if (tenants is null || tenants.Count == 0) return;
+
+        var seenKeys = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        for (var i = 0; i < tenants.Count; i++)
+        {
+            var tenant = tenants[i];
+            var path = $"$.telemetryTenants[{i}]";
+
+            if (tenant is null)
+            {
+                Error(findings, "telemetry-tenant-missing", path,
+                    "Remove this null entry from the telemetryTenants array, or replace it with a real tenant.");
+                continue;
+            }
+
+            var key = tenant.TenantKey?.Trim() ?? "";
+            if (key.Length == 0)
+            {
+                Error(findings, "telemetry-tenant-key-missing", $"{path}.tenantKey",
+                    "Give the tenant a key. It is the name its App Insights token is stored under, so a blank one "
+                    + "can never find a token.");
+            }
+            else if (seenKeys.TryGetValue(key, out var sameKey))
+            {
+                Error(findings, "telemetry-tenant-key-duplicate", $"{path}.tenantKey",
+                    $"Tenant key \"{key}\" is also used by $.telemetryTenants[{sameKey}] (keys are compared "
+                    + "case-insensitively). Each key names one stored token, so a duplicate makes it undefined which "
+                    + "tenant and domains it answers for.");
+            }
+            else
+            {
+                seenKeys[key] = i;
+            }
+
+            if (!Guid.TryParse(tenant.AadTenantId?.Trim(), out _))
+            {
+                Error(findings, "telemetry-tenant-aad-invalid", $"{path}.aadTenantId",
+                    $"\"{tenant.AadTenantId}\" is not an Entra tenant id. Use the directory (tenant) GUID, e.g. "
+                    + "00000000-0000-0000-0000-000000000000; telemetry is matched against it and nothing else ever will.");
             }
         }
     }

@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json;
 using JourneyMonitor.Core.Abstractions;
+using JourneyMonitor.Core.Company;
+using JourneyMonitor.Core.Monitoring.Kpi;
 using JourneyMonitor.Core.Options;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -26,9 +28,17 @@ namespace JourneyMonitor.Functions.Functions;
 public sealed class GetKnowledgeDocumentsFunction(
     IKnowledgeRetriever knowledgeRetriever,
     IOptions<MonitoringOptions> monitoringOptions,
-    ILogger<GetKnowledgeDocumentsFunction> logger)
+    ILogger<GetKnowledgeDocumentsFunction> logger,
+    KpiProfileResolver? profileResolver = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    /// <summary>
+    /// Contract v6 §5: the company's documents plus the shared corpus. Missing <c>?profileKey=</c> → the
+    /// active company, "*" → the whole corpus.
+    /// </summary>
+    private Task<(ProfileReadScope? Scope, string? Error)> ReadScopeAsync(HttpRequestData req, CancellationToken ct) =>
+        ProfileReadScope.ResolveAsync(profileResolver, req.Query["profileKey"], ct);
 
     [Function("GetKnowledgeDocuments")]
     public async Task<HttpResponseData> RunAsync(
@@ -42,10 +52,14 @@ public sealed class GetKnowledgeDocumentsFunction(
 
         try
         {
-            var documents = await knowledgeRetriever.GetIndexedDocumentsAsync(ct);
+            var (scope, error) = await ReadScopeAsync(req, ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error });
+
+            var documents = await knowledgeRetriever.GetIndexedDocumentsForProfileAsync(scope.ProfileKey, ct);
 
             return await WriteJsonAsync(req, HttpStatusCode.OK, new
             {
+                profileKey = scope.Label,
                 documents = documents.Count,
                 chunks = documents.Sum(d => d.Chunks),
                 chunksWithEmbedding = documents.Sum(d => d.ChunksWithEmbedding),
@@ -109,7 +123,11 @@ public sealed class GetKnowledgeDocumentsFunction(
 
         try
         {
-            var sections = await knowledgeRetriever.GetDocumentSectionsAsync(title, req.Query["type"], ct);
+            var (scope, error) = await ReadScopeAsync(req, ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error });
+
+            // Another company's document does not exist for this one.
+            var sections = await knowledgeRetriever.GetDocumentSectionsForProfileAsync(title, req.Query["type"], scope.ProfileKey, ct);
             if (sections.Count == 0)
             {
                 return await WriteJsonAsync(req, HttpStatusCode.NotFound, new { error = "No indexed document with that title." });

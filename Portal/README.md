@@ -122,6 +122,14 @@ schemas (`IJourneyStore`). Live KQL results are cached in-process for 90 seconds
 `InMemoryTelemetryQueryCache` (same shape as the original Node `Map` cache). There is
 no `dbo.CachedQueries` table.
 
+### Application Map maturity (Observed)
+
+Seed leaves product maturity at **Not Observed (0)**. Showing **Observed (1)** on the
+Map requires a **manual** SQL patch after deploy (not applied by docker init):
+
+- Script: `src/JourneyMonitor.Infrastructure/Sql/PatchClubProductMaturity_Observed.sql`
+- How / when (local + QA/PROD): [workbooks/application-map/README.md](workbooks/application-map/README.md#observed-maturity-us-241624)
+
 ## Tests
 
 ```bash

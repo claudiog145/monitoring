@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Dapper;
 using JourneyMonitor.Core.Abstractions;
+using JourneyMonitor.Core.Company;
 using JourneyMonitor.Core.Domain;
 using JourneyMonitor.Core.Incidents;
 using JourneyMonitor.Core.Options;
@@ -18,7 +19,7 @@ namespace JourneyMonitor.Infrastructure.Sql;
 /// Parameterized SQL, same connection as the journey store, so a database that already
 /// has the incident tables can serve the Exceptions tab.
 /// </summary>
-public sealed class SqlIncidentReader(IOptions<JourneyStoreOptions> storeOptions) : IIncidentReader
+public sealed class SqlIncidentReader(IOptions<JourneyStoreOptions> storeOptions) : IIncidentReader, IProfileIncidentReader
 {
     /// <summary>SQL literal list for an unspecified domain. Matches <see cref="PortalDomains.All"/>.</summary>
     private static readonly string AllDomainSql =
@@ -42,6 +43,7 @@ public sealed class SqlIncidentReader(IOptions<JourneyStoreOptions> storeOptions
             i.LastSeen,
             i.OccurrenceCount,
             i.UsersAffected,
+            i.Source,
             latest.MemberId AS LatestMemberId,
             latest.Url AS LatestUrl,
             CASE
@@ -71,9 +73,9 @@ public sealed class SqlIncidentReader(IOptions<JourneyStoreOptions> storeOptions
                 )
             END AS JourneyKeys,
             (
-                SELECT o.OccurredAt, o.MemberId, o.Url, o.Message
+                SELECT o.OccurredAt, o.MemberId, o.Url, o.Message, o.Source
                 FROM (
-                    SELECT TOP (8) OccurredAt, MemberId, Url, Message, OccurrenceId
+                    SELECT TOP (8) OccurredAt, MemberId, Url, Message, Source, OccurrenceId
                     FROM incident.Occurrence
                     WHERE IncidentId = i.IncidentId
                     ORDER BY OccurredAt DESC, OccurrenceId DESC
@@ -118,8 +120,9 @@ public sealed class SqlIncidentReader(IOptions<JourneyStoreOptions> storeOptions
                 ORDER BY MAX(OccurredAt) DESC
             ) AS c
         ) AS hotelCorrelations
-        WHERE (
-                (@Domain IS NULL AND i.Domain IN ({AllDomainSql}))
+        WHERE i.ProfileKey = @ProfileKey
+          AND (
+                (@Domain IS NULL AND (@AnyDomain = 1 OR i.Domain IN ({AllDomainSql})))
                 OR i.Domain = @Domain
               )
           AND (@ClubId IS NULL OR i.ClubId = @ClubId)
@@ -151,12 +154,57 @@ public sealed class SqlIncidentReader(IOptions<JourneyStoreOptions> storeOptions
         ORDER BY i.LastSeen DESC, i.IncidentId DESC
         """;
 
+    /// <summary>Same filters as the list, counted per domain over LastSeen. Not capped at the list size.</summary>
+    private static readonly string CountSql = $"""
+        SELECT i.Domain, COUNT(*) AS IncidentCount
+        FROM incident.Incident AS i
+        WHERE i.ProfileKey = @ProfileKey
+          AND (
+                (@Domain IS NULL AND (@AnyDomain = 1 OR i.Domain IN ({AllDomainSql})))
+                OR i.Domain = @Domain
+              )
+          AND (@ClubId IS NULL OR i.ClubId = @ClubId)
+          AND i.Environment = @Environment
+          AND (@Since IS NULL OR i.LastSeen >= @Since)
+          AND (
+                @Search IS NULL
+                OR i.ExternalId LIKE @Search
+                OR i.ExceptionType LIKE @Search
+                OR i.Operation LIKE @Search
+                OR EXISTS (
+                    SELECT 1
+                    FROM incident.Occurrence AS found
+                    WHERE found.IncidentId = i.IncidentId
+                      AND (
+                            found.MemberId LIKE @Search
+                         OR found.Url LIKE @Search
+                         OR found.CorrelationId LIKE @Search
+                         OR found.SessionId LIKE @Search
+                      )
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM incident.JourneyLink AS link
+                    WHERE link.IncidentId = i.IncidentId
+                      AND link.JourneyKey LIKE @Search
+                )
+          )
+        GROUP BY i.Domain
+        """;
+
     private static readonly JsonSerializerOptions OccurrenceJson = new()
     {
         PropertyNameCaseInsensitive = true,
     };
 
-    public async Task<IReadOnlyList<IncidentRow>> ListAsync(IncidentReadQuery query, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<IncidentRow>> ListAsync(IncidentReadQuery query, CancellationToken cancellationToken) =>
+        ListForProfileAsync(KpiProfiles.Default, query, cancellationToken);
+
+    public Task<IReadOnlyDictionary<string, int>> CountByDomainAsync(IncidentCountQuery query, CancellationToken cancellationToken) =>
+        CountByDomainForProfileAsync(KpiProfiles.Default, query, cancellationToken);
+
+    public async Task<IReadOnlyList<IncidentRow>> ListForProfileAsync(
+        string profileKey, IncidentReadQuery query, CancellationToken cancellationToken)
     {
         var options = storeOptions.Value;
         if (!options.IsConfigured)
@@ -165,7 +213,7 @@ public sealed class SqlIncidentReader(IOptions<JourneyStoreOptions> storeOptions
                 $"{JourneyStoreOptions.SectionName}:ConnectionString is not configured. Callers must check IsConfigured first.");
         }
 
-        var parameters = new DynamicParameters();
+        var parameters = ProfileParameters(profileKey);
         parameters.Add("Domain", query.Domain);
         parameters.Add("ClubId", query.ClubId);
         parameters.Add("Environment", query.Environment);
@@ -189,6 +237,53 @@ public sealed class SqlIncidentReader(IOptions<JourneyStoreOptions> storeOptions
         }
     }
 
+    public async Task<IReadOnlyDictionary<string, int>> CountByDomainForProfileAsync(
+        string profileKey, IncidentCountQuery query, CancellationToken cancellationToken)
+    {
+        var options = storeOptions.Value;
+        if (!options.IsConfigured)
+        {
+            throw new InvalidOperationException(
+                $"{JourneyStoreOptions.SectionName}:ConnectionString is not configured. Callers must check IsConfigured first.");
+        }
+
+        var parameters = ProfileParameters(profileKey);
+        parameters.Add("Domain", query.Domain);
+        parameters.Add("ClubId", query.ClubId);
+        parameters.Add("Environment", query.Environment);
+        parameters.Add("Since", query.Since);
+        parameters.Add("Search", query.SearchPattern);
+
+        try
+        {
+            await using var connection = new SqlConnection(options.ConnectionString);
+            var rows = await connection.QueryAsync<IncidentCountRow>(new CommandDefinition(
+                CountSql,
+                parameters,
+                cancellationToken: cancellationToken));
+            return rows.ToDictionary(row => row.Domain, row => row.IncidentCount);
+        }
+        catch (SqlException ex) when (ex.Number == 208)
+        {
+            throw new IncidentStoreUnavailableException(
+                "Incident schema is not provisioned. Run CreateIncidentSchema.sql before reading exceptions.");
+        }
+    }
+
+    /// <summary>
+    /// Every read is scoped to one company. Only the incumbent is narrowed to its own domain list when no
+    /// domain is named; another company's domains are its service keys.
+    /// </summary>
+    private static DynamicParameters ProfileParameters(string profileKey)
+    {
+        if (string.IsNullOrWhiteSpace(profileKey)) throw new ArgumentException("A profile key is required.", nameof(profileKey));
+        var key = profileKey.Trim();
+        var parameters = new DynamicParameters();
+        parameters.Add("ProfileKey", key);
+        parameters.Add("AnyDomain", string.Equals(key, KpiProfiles.Default, StringComparison.OrdinalIgnoreCase) ? 0 : 1);
+        return parameters;
+    }
+
     private static IncidentRow ToRow(IncidentSqlRow row) => new(
         row.ExternalId,
         row.Domain,
@@ -209,7 +304,8 @@ public sealed class SqlIncidentReader(IOptions<JourneyStoreOptions> storeOptions
         row.LatestMemberId,
         row.LatestUrl,
         SplitKeys(row.JourneyKeys),
-        ParseOccurrences(row.RecentOccurrencesJson));
+        ParseOccurrences(row.RecentOccurrencesJson),
+        ExceptionSource.Normalize(row.Source));
 
     private static IReadOnlyList<string> SplitKeys(string? value) =>
         string.IsNullOrWhiteSpace(value)
@@ -221,7 +317,8 @@ public sealed class SqlIncidentReader(IOptions<JourneyStoreOptions> storeOptions
         if (string.IsNullOrWhiteSpace(json)) return [];
         var rows = JsonSerializer.Deserialize<List<OccurrenceJsonRow>>(json, OccurrenceJson) ?? [];
         return rows
-            .Select(row => new IncidentOccurrenceRow(row.OccurredAt, row.MemberId, row.Url, row.Message))
+            .Select(row => new IncidentOccurrenceRow(
+                row.OccurredAt, row.MemberId, row.Url, row.Message, ExceptionSource.Normalize(row.Source)))
             .ToList();
     }
 
@@ -243,10 +340,17 @@ public sealed class SqlIncidentReader(IOptions<JourneyStoreOptions> storeOptions
         public DateTimeOffset LastSeen { get; set; }
         public int OccurrenceCount { get; set; }
         public int UsersAffected { get; set; }
+        public string? Source { get; set; }
         public string? LatestMemberId { get; set; }
         public string? LatestUrl { get; set; }
         public string? JourneyKeys { get; set; }
         public string? RecentOccurrencesJson { get; set; }
+    }
+
+    private sealed class IncidentCountRow
+    {
+        public string Domain { get; set; } = "";
+        public int IncidentCount { get; set; }
     }
 
     private sealed class OccurrenceJsonRow
@@ -255,5 +359,6 @@ public sealed class SqlIncidentReader(IOptions<JourneyStoreOptions> storeOptions
         public string? MemberId { get; set; }
         public string? Url { get; set; }
         public string? Message { get; set; }
+        public string? Source { get; set; }
     }
 }

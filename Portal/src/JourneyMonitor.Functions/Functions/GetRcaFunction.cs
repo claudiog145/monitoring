@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json;
 using JourneyMonitor.Core.Abstractions;
+using JourneyMonitor.Core.Company;
+using JourneyMonitor.Core.Monitoring.Kpi;
 using JourneyMonitor.Core.Options;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -19,7 +21,9 @@ namespace JourneyMonitor.Functions.Functions;
 public sealed class GetRcaFunction(
     IRcaReportRepository rcaReports,
     IOptions<MonitoringOptions> monitoringOptions,
-    ILogger<GetRcaFunction> logger)
+    ILogger<GetRcaFunction> logger,
+    IForensicCaseRepository? cases = null,
+    KpiProfileResolver? profileResolver = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -42,6 +46,15 @@ public sealed class GetRcaFunction(
 
         try
         {
+            var (scope, error) = await ProfileReadScope.ResolveAsync(profileResolver, System.Web.HttpUtility.ParseQueryString(req.Url.Query)["profileKey"], ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error });
+
+            // Contract v6 §5: another company's investigation has no RCA for this one.
+            if (!scope.IsEverything && (cases is null || await cases.GetByIdAsync(caseId, ct) is not { } owner || !scope.Includes(owner.ProfileKey)))
+            {
+                return await WriteJsonAsync(req, HttpStatusCode.NotFound, new { error = "No RCA has been composed for this investigation yet." });
+            }
+
             var report = await rcaReports.GetByForensicCaseIdAsync(caseId, ct);
 
             // 404 means "no RCA has been written yet", which the UI shows as an offer to write one

@@ -2,8 +2,11 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using JourneyMonitor.Core.Abstractions;
+using JourneyMonitor.Core.Company;
 using JourneyMonitor.Core.Domain;
 using JourneyMonitor.Core.Monitoring;
+using JourneyMonitor.Core.Monitoring.Daemons;
+using JourneyMonitor.Core.Monitoring.Kpi;
 using JourneyMonitor.Core.Options;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -33,7 +36,12 @@ public sealed class GetMonkeysFunction(
     IOptions<InspectorOptions> inspectorOptions,
     IOptions<RcaOptions> rcaOptions,
     IMonkeyRunTracker runTracker,
-    ILogger<GetMonkeysFunction> logger)
+    ILogger<GetMonkeysFunction> logger,
+    IDaemonStatusReader? daemonStatusReader = null,
+    KpiProfileResolver? profileResolver = null,
+    ICompanyProfileStore? profileStore = null,
+    IDaemonActivityLog? daemonActivityLog = null,
+    IKpiDefinitionStore? kpiDefinitions = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -44,7 +52,15 @@ public sealed class GetMonkeysFunction(
     {
         try
         {
-            var findings = await findingsRepository.GetAllAsync(ct);
+            // Contract v6 §5: missing → the active company, "*" → every company. Without it these cards
+            // would add two clients' cycles, packages and token totals into one number and call it the agent's work.
+            var (scope, scopeError) = await ProfileReadScope.ResolveAsync(profileResolver, ReadQuery(req, "profileKey"), ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error = scopeError });
+            var profileKey = scope.ProfileKey;
+
+            // Findings and Doctor reports come from the incumbent's legacy journey pipeline (hotels/cruises/cars),
+            // so another company has none of its own.
+            var findings = scope.IncludesIncumbent ? await findingsRepository.GetAllAsync(ct) : [];
             var latencySpikeFindings = findings.Where(f => f.OriginMonkeyKey == MonkeyKey.LatencySpikeMonkey).ToList();
             var sloBurnRateFindings = findings.Where(f => f.OriginMonkeyKey == MonkeyKey.SloBurnRateMonkey).ToList();
 
@@ -52,7 +68,7 @@ public sealed class GetMonkeysFunction(
             // doctor's activity feed can just read them all in one call instead of looking up
             // each finding's report individually (that was an O(n) GetByFindingIdAsync call per
             // finding, i.e. an N+1 pattern against the in-memory repo's own O(n) linear scan).
-            var doctorReports = await doctorReportsRepository.GetAllAsync(ct);
+            var doctorReports = scope.IncludesIncumbent ? await doctorReportsRepository.GetAllAsync(ct) : [];
 
             // One lookup covering every finding, built once - same N+1-avoidance reasoning as
             // doctorReports above (GetBySourceAsync per finding would be one SQL round trip per
@@ -67,35 +83,34 @@ public sealed class GetMonkeysFunction(
             // runners refusing to work (see MonkeyRunners).
             var paused = await pauseResolver.GetAllAsync(ct);
             bool IsPaused(string monkeyKey) => paused.TryGetValue(monkeyKey, out var p) && p;
-
-            // Absent means every company - without it these cards would add two clients' cycles,
-            // packages and token totals into one number and call it the agent's work.
-            var profileKey = ReadQuery(req, "profileKey");
+            var profile = await LoadProfileAsync(scope, ct);
 
             var monkeys = new object[]
             {
                 BuildScoutMonkey(
                     ScoutBoard.Latency,
-                    await investigationPackages.GetRecentAsync(20, ScoutBoard.Latency, profileKey, ct),
-                    await scoutRuns.GetRecentAsync(24, ScoutBoard.Latency, profileKey, ct),
+                    Scoped(await investigationPackages.GetRecentAsync(20, ScoutBoard.Latency, profileKey, ct), p => p.ProfileKey, scope),
+                    Scoped(await scoutRuns.GetRecentAsync(24, ScoutBoard.Latency, profileKey, ct), r => r.ProfileKey, scope),
                     await scoutRuns.GetStatsAsync(ScoutBoard.Latency, profileKey, ct),
                     await runTracker.GetLastRunAsync(MonkeyKey.LatencyScoutMonkey, ct),
-                    IsPaused(MonkeyKey.LatencyScoutMonkey)),
+                    IsPaused(MonkeyKey.LatencyScoutMonkey),
+                    profile),
                 BuildScoutMonkey(
                     ScoutBoard.Exception,
-                    await investigationPackages.GetRecentAsync(20, ScoutBoard.Exception, profileKey, ct),
-                    await scoutRuns.GetRecentAsync(24, ScoutBoard.Exception, profileKey, ct),
+                    Scoped(await investigationPackages.GetRecentAsync(20, ScoutBoard.Exception, profileKey, ct), p => p.ProfileKey, scope),
+                    Scoped(await scoutRuns.GetRecentAsync(24, ScoutBoard.Exception, profileKey, ct), r => r.ProfileKey, scope),
                     await scoutRuns.GetStatsAsync(ScoutBoard.Exception, profileKey, ct),
                     await runTracker.GetLastRunAsync(MonkeyKey.ExceptionScoutMonkey, ct),
-                    IsPaused(MonkeyKey.ExceptionScoutMonkey)),
-                await BuildInspectorMonkeyAsync(IsPaused(MonkeyKey.InspectorMonkey), ReadQuery(req, "domain"), ReadQuery(req, "club"), profileKey, ct),
-                await BuildRcaMonkeyAsync(IsPaused(MonkeyKey.RcaMonkey), ct),
-                BuildLatencySpikeMonkey(latencySpikeFindings, await runTracker.GetLastRunAsync(MonkeyKey.LatencySpikeMonkey, ct), doctorReports, IsPaused(MonkeyKey.LatencySpikeMonkey)),
-                BuildSloBurnRateMonkey(sloBurnRateFindings, await runTracker.GetLastRunAsync(MonkeyKey.SloBurnRateMonkey, ct), doctorReports, IsPaused(MonkeyKey.SloBurnRateMonkey)),
+                    IsPaused(MonkeyKey.ExceptionScoutMonkey),
+                    profile),
+                await BuildInspectorMonkeyAsync(IsPaused(MonkeyKey.InspectorMonkey), ReadQuery(req, "domain"), ReadQuery(req, "club"), scope, ct),
+                await BuildRcaMonkeyAsync(IsPaused(MonkeyKey.RcaMonkey), scope, ct),
+                BuildLatencySpikeMonkey(latencySpikeFindings, await runTracker.GetLastRunAsync(MonkeyKey.LatencySpikeMonkey, ct), doctorReports, IsPaused(MonkeyKey.LatencySpikeMonkey), profile),
+                BuildSloBurnRateMonkey(sloBurnRateFindings, await runTracker.GetLastRunAsync(MonkeyKey.SloBurnRateMonkey, ct), doctorReports, IsPaused(MonkeyKey.SloBurnRateMonkey), profile),
                 BuildDoctorMonkey(doctorReports, await runTracker.GetLastRunAsync(MonkeyKey.DoctorMonkey, ct), findings, notificationLogsByFindingId, IsPaused(MonkeyKey.DoctorMonkey)),
             };
 
-            return await WriteJsonAsync(req, HttpStatusCode.OK, monkeys);
+            return await WriteJsonAsync(req, HttpStatusCode.OK, monkeys.Concat(await BuildDaemonCardsAsync(scope, ct)).ToArray());
         }
         catch (Exception ex)
         {
@@ -113,12 +128,12 @@ public sealed class GetMonkeysFunction(
     /// model cannot inflate it: the downgrade rules live in RcaAgentService, so a case that
     /// verified nothing produces a document of zero percent no matter how confident the prose is.
     /// </summary>
-    private async Task<object> BuildRcaMonkeyAsync(bool paused, CancellationToken ct)
+    private async Task<object> BuildRcaMonkeyAsync(bool paused, ProfileReadScope scope, CancellationToken ct)
     {
         IReadOnlyList<RcaReport> reports = [];
         try
         {
-            reports = await rcaReports.GetRecentAsync(25, ct);
+            reports = await ScopeRcaReportsAsync(await rcaReports.GetRecentAsync(25, ct), scope, ct);
         }
         catch (Exception ex)
         {
@@ -200,7 +215,7 @@ public sealed class GetMonkeysFunction(
     /// queue, and its own cost settings). A failure in any of them degrades this card to an empty
     /// one rather than taking /api/monkeys - and with it the other four agents - down with it.
     /// </summary>
-    private async Task<object> BuildInspectorMonkeyAsync(bool paused, string? domain, string? club, string? profileKey, CancellationToken ct)
+    private async Task<object> BuildInspectorMonkeyAsync(bool paused, string? domain, string? club, ProfileReadScope scope, CancellationToken ct)
     {
         IReadOnlyList<ForensicCase> cases = [];
         var stats = InspectorStats.Empty;
@@ -210,8 +225,8 @@ public sealed class GetMonkeysFunction(
         try
         {
             // 24 is the heartbeat width - one bar per investigation, same as the Scout's cycles.
-            cases = await forensicCases.GetRecentAsync(24, domain, club, profileKey, ct);
-            stats = await forensicCases.GetStatsAsync(profileKey, ct);
+            cases = Scoped(await forensicCases.GetRecentAsync(24, domain, club, scope.ProfileKey, ct), c => c.ProfileKey, scope);
+            stats = await forensicCases.GetStatsAsync(scope.ProfileKey, ct);
             queueStats = await agentWorkQueue.GetStatsAsync(AgentWorkPayloadType.InvestigationPackage, ct);
             trackedLastRun = await runTracker.GetLastRunAsync(MonkeyKey.InspectorMonkey, ct);
         }
@@ -236,7 +251,8 @@ public sealed class GetMonkeysFunction(
         IReadOnlyList<ScoutRun> runs,
         ScoutStats stats,
         DateTimeOffset? trackedLastRun,
-        bool paused)
+        bool paused,
+        CompanyProfile? profile = null)
     {
         var isLatency = board == ScoutBoard.Latency;
 
@@ -263,9 +279,7 @@ public sealed class GetMonkeysFunction(
         {
             id = ScoutBoard.MonkeyKeyFor(board),
             name = isLatency ? "Latency Scout Monkey" : "Exception Scout Monkey",
-            purpose = isLatency
-                ? "Watches the per-club latency priority board across Hotels, Cars, Cruise and shared traffic, and hands the L3 team a self-contained investigation package for anything worth a deeper look."
-                : "Watches the per-club exception priority board across Hotels, Cars, Cruise and shared traffic, and hands the L3 team a self-contained investigation package for anything worth a deeper look.",
+            purpose = CompanyAgentText.ScoutPurpose(profile, isLatency),
             board,
             mode = "Observe",
             status,
@@ -584,7 +598,7 @@ public sealed class GetMonkeysFunction(
         _ => status.ToUpperInvariant(),
     };
 
-    private static object BuildLatencySpikeMonkey(IReadOnlyList<Finding> findings, DateTimeOffset? trackedLastRun, IReadOnlyList<DoctorReport> doctorReports, bool paused)
+    private static object BuildLatencySpikeMonkey(IReadOnlyList<Finding> findings, DateTimeOffset? trackedLastRun, IReadOnlyList<DoctorReport> doctorReports, bool paused, CompanyProfile? profile = null)
     {
         // trackedLastRun reflects when the timer actually fired, whether or not it found anything
         // this cycle; falling back to the newest finding (or now, on a cold start with no runs
@@ -603,7 +617,7 @@ public sealed class GetMonkeysFunction(
         {
             id = MonkeyKey.LatencySpikeMonkey,
             name = "Latency Spike Monkey",
-            purpose = "Detects individual latency spikes that repeat within a stage beyond a configurable threshold (distinct from the aggregated P95 regression check) and raises a finding for the Doctor Monkey to diagnose.",
+            purpose = CompanyAgentText.LatencySpikePurpose(profile),
             mode = "Observe",
             status = paused ? "paused" : "active",
             paused,
@@ -651,7 +665,7 @@ public sealed class GetMonkeysFunction(
         };
     }
 
-    private static object BuildSloBurnRateMonkey(IReadOnlyList<Finding> findings, DateTimeOffset? trackedLastRun, IReadOnlyList<DoctorReport> doctorReports, bool paused)
+    private static object BuildSloBurnRateMonkey(IReadOnlyList<Finding> findings, DateTimeOffset? trackedLastRun, IReadOnlyList<DoctorReport> doctorReports, bool paused, CompanyProfile? profile = null)
     {
         // See BuildLatencySpikeMonkey's comment - same fallback reasoning for lastRun.
         var lastRun = trackedLastRun ?? findings.OrderByDescending(f => f.CreatedAt).FirstOrDefault()?.CreatedAt ?? DateTimeOffset.UtcNow;
@@ -663,7 +677,7 @@ public sealed class GetMonkeysFunction(
         {
             id = MonkeyKey.SloBurnRateMonkey,
             name = "SLO Burn-Rate Monkey",
-            purpose = "Applies Google SRE's multiwindow multi-burn-rate method against configured SLO definitions (latency + exception rate golden signals) across every domain/stage, raising page/ticket severity findings for the Doctor Monkey to diagnose and, for page severity, notifying every enabled alert channel (Teams/Email).",
+            purpose = CompanyAgentText.SloBurnRatePurpose(profile),
             mode = "Observe",
             status = paused ? "paused" : "active",
             paused,
@@ -788,6 +802,123 @@ public sealed class GetMonkeysFunction(
                 })
                 .ToArray(),
         };
+    }
+
+    /// <summary>
+    /// One card per Spec 1000 daemon (contracts-daemons §5), shaped like the other cards. The health and the last
+    /// run come from IDaemonStatusReader; a failure there degrades to no daemon cards rather than a broken roster.
+    /// </summary>
+    private async Task<IReadOnlyList<object>> BuildDaemonCardsAsync(ProfileReadScope scope, CancellationToken ct)
+    {
+        if (daemonStatusReader is null) return [];
+        try
+        {
+            var statuses = await daemonStatusReader.GetAsync(ct);
+            if (!scope.IsEverything && daemonActivityLog is not null)
+            {
+                var owners = await ProfileDaemonActivityReader.LoadKpiOwnersAsync(kpiDefinitions, ct);
+                statuses = await ProfileDaemonStatusScoper.ScopeAsync(statuses, daemonActivityLog, scope, owners, ct);
+            }
+            var cards = new List<object>(statuses.Count);
+            foreach (var s in statuses)
+            {
+                var lastRun = s.LastRunAt ?? await runTracker.GetLastRunAsync(s.DaemonKey, ct);
+                cards.Add(new
+                {
+                    id = s.DaemonKey,
+                    name = s.DisplayName,
+                    purpose = DaemonPurpose(s.DaemonKey),
+                    mode = s.Mode ?? "Observe",
+                    status = s.Health switch
+                    {
+                        DaemonHealthStates.Disabled => "paused",
+                        DaemonHealthStates.Error => "error",
+                        _ => "active",
+                    },
+                    paused = !s.Enabled,
+                    risk = "low",
+                    lastRun = lastRun?.ToString("O"),
+                    nextRun = (string?)null,
+                    daemon = true,
+                    health = s.Health,
+                    schedule = s.Schedule,
+                    enabled = s.Enabled,
+                    lastRunSummary = s.LastRunSummary,
+                    lastErrorAt = s.LastErrorAt?.ToString("O"),
+                    lastErrorMessage = s.LastErrorMessage,
+                    findings = 0,
+                    actionsProposed = 0,
+                    actionsExecuted = 0,
+                    successRate = 1.0,
+                    impactPrevented = "n/a (observe only)",
+                    guardrails = new
+                    {
+                        maxAffectedInstances = 0,
+                        allowedEnvironments = new[] { "production" },
+                        maintenanceWindowOnly = false,
+                        approvalThreshold = "n/a (observe only)",
+                        rollbackAvailable = false,
+                        auditLogging = true,
+                    },
+                    activity = Array.Empty<object>(),
+                });
+            }
+            return cards;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Daemon status could not be read; the daemon cards are left out of the roster.");
+            return [];
+        }
+    }
+
+    private static string DaemonPurpose(string daemonKey) => daemonKey switch
+    {
+        DaemonKeys.KpiIngestion => "Pulls the closed buckets of every enabled KPI from its telemetry source into the KPI store and advances each watermark.",
+        DaemonKeys.ApplicationHealthMonitor => "Evaluates the Application Health KPIs against their rules and opens a triage investigation when one triggers.",
+        DaemonKeys.BusinessHealthMonitor => "Evaluates the Business Health KPIs against their rules and opens a triage investigation when one triggers.",
+        DaemonKeys.InfrastructureHealthMonitor => "Evaluates the Infrastructure Health KPIs against their rules and opens a triage investigation when one triggers.",
+        DaemonKeys.TriageMonkey => "Collects evidence for each queued health signal and produces a single triage assessment (runs inside the Inspector Monkey).",
+        DaemonKeys.TokenRefresh => "Renews stored App Insights tokens set to azure-cli or service-principal before they expire, so queries never fall back to an expired token.",
+        _ => daemonKey,
+    };
+
+    /// <summary>The scope's company profile for the agent texts; null for "every company" or when it cannot be read.</summary>
+    private async Task<CompanyProfile?> LoadProfileAsync(ProfileReadScope scope, CancellationToken ct)
+    {
+        if (scope.ProfileKey is null || profileStore is null) return null;
+        try
+        {
+            return await profileStore.GetAsync(scope.ProfileKey, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "Company profile {ProfileKey} could not be read; the agent texts fall back to neutral wording.", scope.ProfileKey);
+            return null;
+        }
+    }
+
+    /// <summary>Keeps the rows of the scope's company; a row stored without a profile is the incumbent's.</summary>
+    private static IReadOnlyList<T> Scoped<T>(IReadOnlyList<T> rows, Func<T, string?> profileOf, ProfileReadScope scope) =>
+        scope.IsEverything ? rows : rows.Where(r => scope.Includes(profileOf(r))).ToList();
+
+    /// <summary>An RCA document is the company's whose forensic case it was written for.</summary>
+    private async Task<IReadOnlyList<RcaReport>> ScopeRcaReportsAsync(IReadOnlyList<RcaReport> reports, ProfileReadScope scope, CancellationToken ct)
+    {
+        if (scope.IsEverything) return reports;
+
+        var owners = new Dictionary<Guid, bool>();
+        var kept = new List<RcaReport>(reports.Count);
+        foreach (var report in reports)
+        {
+            if (!owners.TryGetValue(report.ForensicCaseId, out var included))
+            {
+                included = await forensicCases.GetByIdAsync(report.ForensicCaseId, ct) is { } owner && scope.Includes(owner.ProfileKey);
+                owners[report.ForensicCaseId] = included;
+            }
+            if (included) kept.Add(report);
+        }
+        return kept;
     }
 
     private static async Task<HttpResponseData> WriteJsonAsync(HttpRequestData req, HttpStatusCode statusCode, object payload)

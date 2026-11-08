@@ -1,0 +1,145 @@
+# Manual PRODUCTION deploy for both Container Apps. Same structure as deploy-qa.yml.
+#
+# Disabled by default. It only runs when ALL of these hold (every job checks the first two):
+#   1. Repository variable SPEC1000_PROD_ENABLED is exactly 'true'
+#      (Settings -> Secrets and variables -> Actions -> Variables).
+#   2. It was started from main (refs/heads/main).
+#   3. A reviewer approves the 'production' environment (Settings -> Environments -> production
+#      -> Required reviewers) in the `approve` job, the only job here that declares it, so this
+#      file asks for ONE approval per run. The shared workflow may ask again for its own deploy
+#      step depending on how it maps `environments:` (see Portal/PUBLISHING.md).
+#
+# Actions tab -> Deploy Production -> Run workflow (branch: main). Nothing runs on merge.
+
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+# Never two production deploys at once, and never cancel one half-way.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  FUNC_CONTAINER_APP: platform-reliability-ca-func-prd # TODO confirmar
+  WEB_CONTAINER_APP: platform-reliability-ca-wa-prd # TODO confirmar
+  RESOURCE_GROUP: platform-reliability-rg-prd # TODO confirmar
+  SHARED_WORKFLOW_ENVIRONMENT: production # TODO confirmar (environment name the shared workflow deploys to)
+
+jobs:
+  # Approval gate. Every other job needs it to SUCCEED (checked explicitly in the jobs that use
+  # !failure() && !cancelled()), so nothing deploys without approval. Reusable-workflow jobs
+  # cannot declare `environment:` and cannot read the `env` context in `with:`, so the names
+  # above are republished as outputs here.
+  approve:
+    name: Approve production
+    if: ${{ vars.SPEC1000_PROD_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      func-app: ${{ steps.names.outputs.func-app }}
+      web-app: ${{ steps.names.outputs.web-app }}
+      environment: ${{ steps.names.outputs.environment }}
+    steps:
+      - name: Publish app names
+        id: names
+        shell: bash
+        run: |
+          {
+            echo "func-app=$FUNC_CONTAINER_APP"
+            echo "web-app=$WEB_CONTAINER_APP"
+            echo "environment=$SHARED_WORKFLOW_ENVIRONMENT"
+          } >> "$GITHUB_OUTPUT"
+
+  # Spec 1000. Runs BEFORE the image swap: the new Functions image binds its timers to
+  # %spec1000_ingestion_cron% / %spec1000_monitor_cron% / %spec1000_token_refresh_cron%, and the host fails indexing (every
+  # function down) if a revision starts without them. Settings are added only when missing, with
+  # safe defaults (HealthMonitoring__Enabled=false, Triage__Mode=Shadow), and --min-replicas 1
+  # keeps the timers firing. The shared workflow's `az containerapp update --image` keeps both.
+  # Optional: runs only when the repository variable SPEC1000_AZURE_CLIENT_ID is set. Skipped ->
+  # `functions` still deploys (apply the settings once by hand first, see PUBLISHING.md);
+  # failed -> `functions` does not run. No `environment:` here, so no second approval; it reads
+  # repository variables only.
+  functions-settings:
+    name: Functions settings + always-on
+    needs: approve
+    if: ${{ vars.SPEC1000_PROD_ENABLED == 'true' && github.ref == 'refs/heads/main' && vars.SPEC1000_AZURE_CLIENT_ID != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      # TODO confirmar: SPEC1000_AZURE_CLIENT_ID / SPEC1000_AZURE_SUBSCRIPTION_ID must point at an
+      # identity with Contributor on the PRODUCTION Functions Container App, with a federated
+      # credential for this repo's main branch. ARRIVIA_AZURE_TENANT_ID is the org variable the
+      # shared workflow already uses.
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.SPEC1000_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.ARRIVIA_AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.SPEC1000_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Add missing Spec 1000 settings and pin min replicas
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing="$(az containerapp show --name "$FUNC_CONTAINER_APP" --resource-group "$RESOURCE_GROUP" \
+            --query "properties.template.containers[0].env[].name" --output tsv)"
+          max="$(az containerapp show --name "$FUNC_CONTAINER_APP" --resource-group "$RESOURCE_GROUP" \
+            --query "properties.template.scale.maxReplicas" --output tsv)"
+          if ! [[ "$max" =~ ^[0-9]+$ ]] || [ "$max" -lt 1 ]; then max=1; fi
+
+          missing=()
+          add_if_missing() {
+            if ! grep -qxF "$1" <<< "$existing"; then missing+=("$1=$2"); fi
+          }
+          add_if_missing spec1000_ingestion_cron "0 */1 * * * *"
+          add_if_missing spec1000_monitor_cron "30 */1 * * * *"
+          add_if_missing spec1000_token_refresh_cron "0 */5 * * * *"
+          add_if_missing HealthMonitoring__Enabled "false"
+          add_if_missing Triage__Mode "Shadow"
+
+          env_args=()
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Adding Spec 1000 settings: ${missing[*]}"
+            env_args=(--set-env-vars "${missing[@]}")
+          fi
+
+          az containerapp update --name "$FUNC_CONTAINER_APP" --resource-group "$RESOURCE_GROUP" \
+            --min-replicas 1 --max-replicas "$max" "${env_args[@]}" \
+            --query "{revision:properties.latestRevisionName, scale:properties.template.scale}" --output json
+
+  web:
+    name: Web
+    needs: approve
+    if: ${{ vars.SPEC1000_PROD_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    uses: arriviainc-softeng/shared-workflows/.github/workflows/dotnet-docker-build-test-release.yml@main
+    secrets: inherit
+    with:
+      dotnet-version: "10.0.x"
+      project-path: Portal/src/JourneyMonitor.Web/JourneyMonitor.Web.csproj
+      dockerfile: Portal/src/JourneyMonitor.Web/Dockerfile
+      docker-context: Portal
+      image-name: journeymonitor-web
+      container-app-name: ${{ needs.approve.outputs.web-app }}
+      environments: |
+        - ${{ needs.approve.outputs.environment }}
+
+  functions:
+    name: Functions
+    needs: [approve, functions-settings]
+    if: ${{ !failure() && !cancelled() && needs.approve.result == 'success' && vars.SPEC1000_PROD_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    uses: arriviainc-softeng/shared-workflows/.github/workflows/dotnet-docker-build-test-release.yml@main
+    secrets: inherit
+    with:
+      dotnet-version: "10.0.x"
+      project-path: Portal/src/JourneyMonitor.Functions/JourneyMonitor.Functions.csproj
+      dockerfile: Portal/src/JourneyMonitor.Functions/Dockerfile
+      docker-context: Portal
+      image-name: journeymonitor-functions
+      container-app-name: ${{ needs.approve.outputs.func-app }}
+      environments: |
+        - ${{ needs.approve.outputs.environment }}

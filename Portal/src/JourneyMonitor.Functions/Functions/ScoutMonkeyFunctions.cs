@@ -1,7 +1,9 @@
 using JourneyMonitor.Core.Domain;
 using JourneyMonitor.Core.UseCases;
 using Microsoft.Azure.Functions.Worker;
+using JourneyMonitor.Core.Options;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace JourneyMonitor.Functions.Functions;
 
@@ -16,11 +18,13 @@ namespace JourneyMonitor.Functions.Functions;
 /// a redeploy; the cycle is still recorded, so a disabled scout is visible rather than looking
 /// like a dead one.
 /// </summary>
-public sealed class LatencyScoutMonkeyFunction(ScoutMonkeyRunner runner, ILogger<LatencyScoutMonkeyFunction> logger)
+public sealed class LatencyScoutMonkeyFunction(ScoutMonkeyRunner runner, IOptionsMonitor<ScoutOptions> options, ILogger<LatencyScoutMonkeyFunction> logger)
 {
     [Function("LatencyScoutMonkey")]
-    public async Task RunAsync([TimerTrigger("0 */5 * * * *")] TimerInfo timer, CancellationToken ct)
+    public async Task RunAsync([TimerTrigger("0 */1 * * * *")] TimerInfo timer, CancellationToken ct)
     {
+        // Ticks every minute; ScoutLatency:IntervalMinutes (default 5) decides which minutes run a cycle.
+        if (!options.Get(ScoutBoard.Latency).IsDueAt(DateTimeOffset.UtcNow)) return;
         var summary = await runner.RunAsync(ScoutBoard.Latency, ct);
         logger.LogInformation("[LatencyScoutMonkey] {Packages} investigation package(s) handed off.", summary.NewFindings);
     }
@@ -34,11 +38,12 @@ public sealed class LatencyScoutMonkeyFunction(ScoutMonkeyRunner runner, ILogger
 /// queries and running them together is what the split bought. The per-board overlap guard in
 /// <see cref="ScoutMonkeyRunner"/> is what keeps each one from stacking on itself.
 /// </summary>
-public sealed class ExceptionScoutMonkeyFunction(ScoutMonkeyRunner runner, ILogger<ExceptionScoutMonkeyFunction> logger)
+public sealed class ExceptionScoutMonkeyFunction(ScoutMonkeyRunner runner, IOptionsMonitor<ScoutOptions> options, ILogger<ExceptionScoutMonkeyFunction> logger)
 {
     [Function("ExceptionScoutMonkey")]
-    public async Task RunAsync([TimerTrigger("0 */5 * * * *")] TimerInfo timer, CancellationToken ct)
+    public async Task RunAsync([TimerTrigger("0 */1 * * * *")] TimerInfo timer, CancellationToken ct)
     {
+        if (!options.Get(ScoutBoard.Exception).IsDueAt(DateTimeOffset.UtcNow)) return;
         var summary = await runner.RunAsync(ScoutBoard.Exception, ct);
         logger.LogInformation("[ExceptionScoutMonkey] {Packages} investigation package(s) handed off.", summary.NewFindings);
     }

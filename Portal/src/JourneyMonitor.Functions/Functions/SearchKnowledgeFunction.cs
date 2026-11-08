@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json;
 using JourneyMonitor.Core.Abstractions;
+using JourneyMonitor.Core.Company;
+using JourneyMonitor.Core.Monitoring.Kpi;
 using JourneyMonitor.Core.Options;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -24,7 +26,8 @@ namespace JourneyMonitor.Functions.Functions;
 public sealed class SearchKnowledgeFunction(
     IKnowledgeRetriever knowledgeRetriever,
     IOptions<MonitoringOptions> monitoringOptions,
-    ILogger<SearchKnowledgeFunction> logger)
+    ILogger<SearchKnowledgeFunction> logger,
+    KpiProfileResolver? profileResolver = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -53,18 +56,19 @@ public sealed class SearchKnowledgeFunction(
         var top = DefaultTop;
         if (int.TryParse(req.Query["top"], out var requested) && requested > 0) top = Math.Min(requested, MaxTop);
 
-        // Absent means the whole corpus, which is what an operator debugging retrieval wants.
-        // Pass the company to see exactly what that company's agents would get back.
-        var profileKey = req.Query["profileKey"];
-        if (string.IsNullOrWhiteSpace(profileKey)) profileKey = null;
-
         try
         {
-            var hits = await knowledgeRetriever.RetrieveAsync(query, top, ct, profileKey);
+            // Contract v6 §5: what the company's agents would get back - its own chunks plus the shared
+            // corpus. Missing → the active company; "*" → the whole corpus, for an operator debugging retrieval.
+            var (scope, error) = await ProfileReadScope.ResolveAsync(profileResolver, req.Query["profileKey"], ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error });
+
+            var hits = await knowledgeRetriever.RetrieveAsync(query, top, ct, scope.ProfileKey);
 
             return await WriteJsonAsync(req, HttpStatusCode.OK, new
             {
                 query,
+                profileKey = scope.Label,
                 count = hits.Count,
                 results = hits.Select(h => new
                 {

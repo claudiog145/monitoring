@@ -80,6 +80,9 @@ services:
       MSSQL_HOST: sql
       MSSQL_DATABASE: platformDB
       MSSQL_DATABASE_QA: platformDBQA
+      # Same schema again for the DEMO stack (profile "demo", below). Created even without that
+      # profile: an empty database costs nothing and keeps sql-init identical for both stacks.
+      MSSQL_DATABASE_DEMO: platformDemo
       SQL_SCRIPTS_DIR: /scripts
     user: root
     restart: "no"
@@ -130,7 +133,35 @@ services:
       DOTNET_RUNNING_IN_CONTAINER: "true"
       # Both vertical timers read this schedule. A missing value fails indexing for every function.
       platform_reliability_cron_setting: "0 */5 * * * *"
-      JourneySync__Domains: "hotels,cruises"
+      spec1000_ingestion_cron: "0 */1 * * * *"
+      spec1000_monitor_cron: "30 */1 * * * *"
+      # token-refresh daemon (renews stored App Insights tokens set to azure-cli / service-principal).
+      # Missing = indexing fails for every function. TokenRefresh__Enabled=false makes each run a no-op.
+      spec1000_token_refresh_cron: "0 */5 * * * *"
+      TokenRefresh__Enabled: "${TokenRefresh__Enabled:-true}"
+      # Spec 1000 switches, both with safe defaults. HealthMonitoring__Enabled=false keeps the
+      # KpiIngestion and *HealthMonitor timers firing but doing no work; true turns on ingestion
+      # and detection. Triage__Mode accepts Off | Shadow | Live; Shadow is the safe default.
+      # To change them locally, set HealthMonitoring__Enabled=true (and/or Triage__Mode) in
+      # Portal/.env (see .env.example) and run `docker compose up -d functions`.
+      HealthMonitoring__Enabled: "${HealthMonitoring__Enabled:-false}"
+      # Pillars whose monitor runs (Application by default). Add Business/Infrastructure in Portal/.env.
+      HealthMonitoring__Pillars__0: "${HealthMonitoring__Pillars__0:-Application}"
+      HealthMonitoring__Pillars__1: "${HealthMonitoring__Pillars__1:-}"
+      HealthMonitoring__Pillars__2: "${HealthMonitoring__Pillars__2:-}"
+      Triage__Mode: "${Triage__Mode:-Shadow}"
+      # Fabric warehouse service principal for dbo.vw_Alert_HotelBookingKPIs. These are the
+      # App Configuration keys platform-reliability-fabric-* with hyphens written as underscores.
+      # Set all four in Portal/.env (see .env.example). A blank value is the Overview
+      # "Fabric configuration warning". Do not put the secret in this file.
+      platform_reliability_fabric_connectionString: "${platform_reliability_fabric_connectionString:-}"
+      platform_reliability_fabric_clientId: "${platform_reliability_fabric_clientId:-}"
+      platform_reliability_fabric_clientSecret: "${platform_reliability_fabric_clientSecret:-}"
+      platform_reliability_fabric_tenantId: "${platform_reliability_fabric_tenantId:-}"
+      # Worker ILogger output, including the hotel booking KPI query, is sent here.
+      # Set APPLICATIONINSIGHTS_CONNECTION_STRING in Portal/.env. Blank keeps logs on the console only.
+      APPLICATIONINSIGHTS_CONNECTION_STRING: "${APPLICATIONINSIGHTS_CONNECTION_STRING:-}"
+      JourneySync__Domains: "hotels,cruises,cars"
       JourneySync__InitialRowCap: "50"
       JourneySync__FilteredRowCap: "200"
       # Which company the agents classify for when nobody has picked one. Blank is a hard failure
@@ -139,14 +170,20 @@ services:
       # - that pointer lives in monitoring.ActiveCompanyProfile and wins over this value.
       Company__DefaultProfileKey: "${Company__DefaultProfileKey:-arrivia}"
       AZURE_CONFIG_DIR: /home/.azure
+      # Where App Insights queries go. Default = the real service. Set Insights__QueryEndpoint=
+      # http://fake-appinsights:8080 and Insights__QueryApiKeys=*:jm-demo-key in Portal/.env to make
+      # this app read the local fake Azure (demo/FakeAppInsights over Kustainer, compose profile
+      # "demo") instead, and override the three production appIds below with the demo-tourism ones.
+      Insights__QueryEndpoint: "${Insights__QueryEndpoint:-https://api.applicationinsights.io}"
+      Insights__QueryApiKeys: "${Insights__QueryApiKeys:-}"
       Insights__Hotels__TenantId: "60396ff5-e90f-4bc5-aced-a4f462f2636e"
-      Insights__Hotels__AppInsightsAppId: "8644ddf0-29b2-4283-87c0-7a9a514aefb5"
+      Insights__Hotels__AppInsightsAppId: "${Insights__Hotels__AppInsightsAppId:-8644ddf0-29b2-4283-87c0-7a9a514aefb5}"
       Insights__Hotels__Staging__AppInsightsAppId: "f08f6072-4d42-4bcf-a8e9-aeb4a331757e"
       Insights__Air__TenantId: "b0298d22-1db0-4550-8fa6-a116a5ab4208"
-      Insights__Air__AppInsightsAppId: "5adb0994-d6cf-4dc5-9e5f-ff0fc002d5ba"
+      Insights__Air__AppInsightsAppId: "${Insights__Air__AppInsightsAppId:-5adb0994-d6cf-4dc5-9e5f-ff0fc002d5ba}"
       Insights__Air__Staging__AppInsightsAppId: "6a6471e4-0b3d-4a23-b08f-264eb49f4ab7"
       Insights__Cruises__TenantId: "60396ff5-e90f-4bc5-aced-a4f462f2636e"
-      Insights__Cruises__AppInsightsAppId: "f5f675bd-4148-4a12-bc76-1e9ed1aa1156"
+      Insights__Cruises__AppInsightsAppId: "${Insights__Cruises__AppInsightsAppId:-f5f675bd-4148-4a12-bc76-1e9ed1aa1156}"
       Insights__Cruises__Staging__AppInsightsAppId: "8fcb7243-12cf-4517-82de-c647a0777cc7"
       # Fails closed when unset (see UpsertLatencySpikeSettingFunction) - this local-only default
       # keeps `docker compose up` working without extra setup; override in Portal/.env for a real
@@ -243,6 +280,9 @@ services:
       JourneySync__Environment: staging
       AzureFunctionsWebHost__hostid: jmfunctionsqa
       AzureWebJobs.LatencySpikeMonkey.Disabled: "true"
+      # Staging keeps reading the real App Insights even when Portal/.env points production at the fake.
+      Insights__QueryEndpoint: "https://api.applicationinsights.io"
+      Insights__QueryApiKeys: ""
     volumes:
       - azure-cli:/home/.azure
       - dataprotection-keys-qa:/home/dataprotection-keys
@@ -282,19 +322,193 @@ services:
       JourneyMonitorApi__SettingsWriteSecret: "${JourneyMonitorApi__SettingsWriteSecret:-Jm_LocalDev_SettingsSecret_1!}"
       JourneyMonitorApi__InternalApiSecret: "${JourneyMonitorApi__InternalApiSecret:-Jm_LocalDev_InternalApiSecret_1!}"
       # Must match functions' DataProtection__KeysDirectory and share the same volume below.
-      # An App Insights token saved through this container's /api/appinsights/tokens endpoint is
-      # encrypted with these keys and later decrypted by functions when a scout queries App
-      # Insights; without the shared key ring functions fails with "Error accessing token for
-      # tenant ..." and silently falls back to DefaultAzureCredential.
+      # App Insights tokens saved through this container's /api/appinsights/tokens endpoint are
+      # forwarded to functions, which encrypts and stores them (and refreshes them with the
+      # token-refresh daemon); the shared ring keeps tokens written by older web builds readable.
       DataProtection__KeysDirectory: /home/dataprotection-keys
+      # DEMO banner. Set Demo__Enabled=true in Portal/.env while this app reads the fake Azure.
+      Demo__Enabled: "${Demo__Enabled:-false}"
     volumes:
       - dataprotection-keys:/home/dataprotection-keys
+
+  # ------------------------------------------------------------------------------------------------
+  # DEMO stack (contract v5, .github/spec1000/contracts-demo-telemetry.md). Every service below has
+  # profiles: ["demo"], so `docker compose up` without `--profile demo` starts exactly what it did
+  # before. Start it with demo/scripts/demo-up.ps1 or `docker compose --profile demo up -d --build`.
+  # Everything is synthetic: a local Kusto engine (Kustainer) stands in for Application Insights,
+  # the generator writes made-up telemetry for four "(demo)" companies, and functions-demo/web-demo
+  # are the real platform images pointed at it and at their own database, platformDemo.
+  # Host ports are bound to 127.0.0.1 only.
+  kustainer:
+    image: mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest
+    container_name: jm-kustainer
+    profiles: ["demo"]
+    environment:
+      ACCEPT_EULA: "Y"
+    # The engine keeps its databases in memory; 6g fits the "laptop" scale. Lower it in Portal/.env
+    # (KUSTAINER_MEM=4g) on a small machine together with Demo__Scale=tiny.
+    mem_limit: "${KUSTAINER_MEM:-6g}"
+    ports:
+      - "127.0.0.1:8085:8080"
+    volumes:
+      - kusto-demo-data:/kustodata
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -X POST http://localhost:8080/v1/rest/mgmt -H 'Content-Type: application/json' -d '{\"db\":\"NetDefaultDB\",\"csl\":\".show version\"}' > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  # Application Insights REST API look-alike (POST /v1/apps/{appId}/query) over Kustainer.
+  fake-appinsights:
+    image: journeymonitor-fake-appinsights:local
+    build:
+      context: .
+      dockerfile: demo/FakeAppInsights/Dockerfile
+    container_name: jm-fake-appinsights
+    profiles: ["demo"]
+    mem_limit: "${FAKE_APPINSIGHTS_MEM:-2g}"
+    ports:
+      - "127.0.0.1:8086:8080"
+    depends_on:
+      kustainer:
+        condition: service_healthy
+    environment:
+      FakeAppInsights__KustoUrl: "http://kustainer:8080"
+      FakeAppInsights__ApiKey: "${DEMO_API_KEY:-jm-demo-key}"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '\"status\":\"ok\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # Synthetic telemetry: backfill, live feeder and scenario switchboard for the company packs.
+  demo-generator:
+    image: journeymonitor-demo-generator:local
+    build:
+      context: .
+      dockerfile: demo/DemoGenerator/Dockerfile
+    container_name: jm-demo-generator
+    profiles: ["demo"]
+    mem_limit: 2g
+    ports:
+      - "127.0.0.1:8087:8080"
+    depends_on:
+      kustainer:
+        condition: service_healthy
+    environment:
+      Demo__KustoUrl: "http://kustainer:8080"
+      Demo__PacksPath: /packs
+      Demo__Scale: "${DEMO_SCALE:-laptop}"
+      # 20 s / 4 parallel writes keep each minute in Kusto ~30 s after it closes, which the 1-minute
+      # "demo 1m" KPIs (ingestion lag 1 min) need; higher parallelism saturates Kustainer.
+      Demo__FeederIntervalSeconds: "${DEMO_FEEDER_INTERVAL_SECONDS:-20}"
+      Demo__IngestParallelism: "${DEMO_INGEST_PARALLELISM:-4}"
+    volumes:
+      - ./demo/packs:/packs:ro
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '\"status\":\"ok\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # The real Functions image in demo mode: platformDemo, App Insights queries go to fake-appinsights,
+  # triage in Shadow, no Azure credentials (no env_file, no azure-cli volume). Fresh platformDemo has
+  # no alert channel configured, so nothing is ever e-mailed. Own host id: it shares Azurite with
+  # functions/functions-qa and must not take their timer leases.
+  functions-demo:
+    image: journeymonitor-functions:local
+    build:
+      context: .
+      dockerfile: src/JourneyMonitor.Functions/Dockerfile
+      target: with-azure-cli
+      secrets:
+        - corporate_ca
+    container_name: jm-functions-demo
+    profiles: ["demo"]
+    ports:
+      - "127.0.0.1:8083:80"
+    depends_on:
+      azurite:
+        condition: service_healthy
+      sql-init:
+        condition: service_completed_successfully
+      fake-appinsights:
+        condition: service_healthy
+    environment:
+      <<: *functions-env
+      platform_reliability_database_connectionString: "Server=sql,1433;Database=platformDemo;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Jm_LocalDev_1!};TrustServerCertificate=True;Encrypt=True;"
+      JourneyStore__ConnectionString: "Server=sql,1433;Database=platformDemo;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Jm_LocalDev_1!};TrustServerCertificate=True;Encrypt=True;"
+      ConnectionStrings__DefaultConnection: "Server=sql,1433;Database=platformDemo;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Jm_LocalDev_1!};TrustServerCertificate=True;Encrypt=True;"
+      AzureFunctionsWebHost__hostid: jmfunctionsdemo
+      HealthMonitoring__Enabled: "true"
+      Triage__Mode: Shadow
+      Insights__QueryEndpoint: "http://fake-appinsights:8080"
+      Insights__QueryApiKeys: "*:${DEMO_API_KEY:-jm-demo-key}"
+      KnowledgeImport__CorpusPath: /packs
+      # Nothing from Portal/.env that reaches Azure or a real warehouse.
+      platform_reliability_fabric_connectionString: ""
+      platform_reliability_fabric_clientId: ""
+      platform_reliability_fabric_clientSecret: ""
+      platform_reliability_fabric_tenantId: ""
+      APPLICATIONINSIGHTS_CONNECTION_STRING: ""
+      AzureDevOpsSearch__Enabled: "false"
+      AzureDevOpsSearch__AccessToken: ""
+      TokenRefresh__Enabled: "false"
+    volumes:
+      - dataprotection-keys-demo:/home/dataprotection-keys
+      - ./demo/packs:/packs:ro
+    healthcheck:
+      # Any HTTP answer means the host is up; /api/clubs is what the E2E waits on too.
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:80/api/clubs || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  # The real Web image in demo mode: talks to functions-demo only and shows the DEMO banner.
+  web-demo:
+    image: journeymonitor-web:latest
+    build:
+      context: .
+      dockerfile: src/JourneyMonitor.Web/Dockerfile
+    container_name: jm-web-demo
+    profiles: ["demo"]
+    # Same reason as web: shares a DataProtection key ring written by a root functions container.
+    user: root
+    ports:
+      - "127.0.0.1:5090:8080"
+    depends_on:
+      sql:
+        condition: service_healthy
+      functions-demo:
+        condition: service_started
+    environment:
+      ConnectionStrings__DefaultConnection: "Server=sql,1433;Database=platformDemo;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Jm_LocalDev_1!};TrustServerCertificate=True;Encrypt=True;"
+      JourneyMonitorApi__BaseUrl: "http://functions-demo:80"
+      JourneyMonitorApi__StagingBaseUrl: "http://functions-demo:80"
+      JourneyMonitorApi__SettingsWriteSecret: "${JourneyMonitorApi__SettingsWriteSecret:-Jm_LocalDev_SettingsSecret_1!}"
+      JourneyMonitorApi__InternalApiSecret: "${JourneyMonitorApi__InternalApiSecret:-Jm_LocalDev_InternalApiSecret_1!}"
+      DataProtection__KeysDirectory: /home/dataprotection-keys
+      Demo__Enabled: "true"
+    volumes:
+      - dataprotection-keys-demo:/home/dataprotection-keys
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
 volumes:
   azure-cli:
   sql-data:
   dataprotection-keys:
   dataprotection-keys-qa:
+  dataprotection-keys-demo:
+  kusto-demo-data:
 
 # Build secret for the functions "with-azure-cli" target - see the Dockerfile comment. The file
 # is a public corporate root CA, safe to keep committed; it's mounted transiently during the

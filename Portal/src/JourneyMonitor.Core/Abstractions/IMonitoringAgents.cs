@@ -112,6 +112,19 @@ public interface IKnowledgeRetriever
     /// as sections for that reason.
     /// </summary>
     Task<IReadOnlyList<KnowledgeDocumentSection>> GetDocumentSectionsAsync(string documentTitle, string? sourceType, CancellationToken ct = default);
+
+    /// <summary>
+    /// Contract v6 §5: <see cref="GetIndexedDocumentsAsync(CancellationToken)"/> for one company - its own
+    /// documents plus the shared corpus (stored ProfileKey ""), the same boundary <see cref="RetrieveAsync"/>
+    /// applies. Null means the whole corpus. A retriever that cannot tell owners apart returns nothing for a
+    /// named company rather than another company's documents.
+    /// </summary>
+    Task<IReadOnlyList<KnowledgeDocumentSummary>> GetIndexedDocumentsForProfileAsync(string? profileKey, CancellationToken ct = default) =>
+        profileKey is null ? GetIndexedDocumentsAsync(ct) : Task.FromResult<IReadOnlyList<KnowledgeDocumentSummary>>([]);
+
+    /// <summary>Contract v6 §5: <see cref="GetDocumentSectionsAsync"/> limited to one company's documents plus the shared corpus.</summary>
+    Task<IReadOnlyList<KnowledgeDocumentSection>> GetDocumentSectionsForProfileAsync(string documentTitle, string? sourceType, string? profileKey, CancellationToken ct = default) =>
+        profileKey is null ? GetDocumentSectionsAsync(documentTitle, sourceType, ct) : Task.FromResult<IReadOnlyList<KnowledgeDocumentSection>>([]);
 }
 
 /// <summary>One indexed passage. Carries no vector: a reader cannot use one, and it is large.</summary>

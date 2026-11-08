@@ -22,9 +22,11 @@ public sealed record IncidentSyncPass(
 /// Runs the exception KQL for each configured domain and stores the grouped incidents.
 /// Same timer scope as journey sync (window and environment). Club is taken from each
 /// exception row, not from the single default club, because one error in two clubs is two incidents.
-/// Only clubs in <c>brand.Information</c> are fetched. Hotels match ClubId. Cruises match
-/// IcePartnerId on the exception partner id. Air and cars are not queried. Car-journey rows
-/// that share the hotel app are dropped with <see cref="IncidentIngestionPlanner.IsCarException"/>.
+/// Only clubs in <c>brand.Information</c> are fetched. Hotels and cars match ClubId. Cruises match
+/// IcePartnerId on the exception partner id. Air is not queried. Hotels and cars share the hotel
+/// app: the hotel pass drops car-journey rows and the car pass keeps them, both using
+/// <see cref="IncidentIngestionPlanner.IsCarException"/>. A car row with no club id is kept only
+/// when its URL host matches <c>brand.Information</c>. Anything still without a club is dropped.
 /// </summary>
 public sealed class SyncIncidentsService(
     ITelemetrySource telemetrySource,
@@ -36,7 +38,8 @@ public sealed class SyncIncidentsService(
 {
     private static readonly IReadOnlySet<string> NoClubs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-    private static readonly string DropCarExceptions = BuildDropCarExceptions();
+    private static readonly string DropCarExceptions = BuildCarExceptionFilter(keep: false);
+    private static readonly string KeepCarExceptions = BuildCarExceptionFilter(keep: true);
 
     private IReadOnlyList<BrandClub>? _brandRows;
     private string? _brandSkipReason;
@@ -66,7 +69,7 @@ public sealed class SyncIncidentsService(
     }
 
     private static bool SkipsExceptions(string domain) =>
-        domain.Trim().ToLowerInvariant() is "air" or "cars";
+        domain.Trim().ToLowerInvariant() is "air";
 
     private async Task<IncidentSyncPass> SyncDomainAsync(string domain, CancellationToken cancellationToken)
     {
@@ -82,7 +85,9 @@ public sealed class SyncIncidentsService(
             return Skip(domain, queried.SkipReason);
         }
 
-        var signals = queried.Signals.Where(signal => BelongsToBrand(domain, signal, allowed.Ids)).ToList();
+        var signals = queried.Signals.ToList();
+        if (domain == "cars") signals = AssignCarClubFromHost(signals);
+        signals = signals.Where(signal => BelongsToBrand(domain, signal, allowed.Ids)).ToList();
         return await IngestAsync(domain, signals, cancellationToken);
     }
 
@@ -141,7 +146,9 @@ public sealed class SyncIncidentsService(
         InsightsSource source;
         try
         {
-            source = InsightsSourceResolver.Resolve(insightsOptions.Value, insightsDomain, options.Environment);
+            source = insightsDomain == "cars"
+                ? InsightsSourceResolver.ResolveForDomain(insightsOptions.Value, insightsDomain, options.Environment)
+                : InsightsSourceResolver.Resolve(insightsOptions.Value, insightsDomain, options.Environment);
         }
         catch (InsightsConfigurationException ex)
         {
@@ -155,8 +162,12 @@ public sealed class SyncIncidentsService(
                 @"let win = \w+;",
                 $"let win = {options.Window};");
             if (insightsDomain == "hotels") kql += "\n" + DropCarExceptions;
-            kql += "\n| where " + (UsesIcePartnerId(insightsDomain) ? "PartnerId" : "ClubId")
-                + " in (" + QuoteIds(clubIds) + ")";
+            if (insightsDomain == "cars") kql += "\n" + KeepCarExceptions;
+            var clubColumn = UsesIcePartnerId(insightsDomain) ? "PartnerId" : "ClubId";
+            var clubFilter = "| where " + clubColumn + " in (" + QuoteIds(clubIds) + ")";
+            // Car server exceptions carry the host on the request and no club id on the exception.
+            if (insightsDomain == "cars") clubFilter += " or isempty(ClubId)";
+            kql += "\n" + clubFilter;
             var rows = await telemetrySource.QueryAsync(
                 new TelemetryQueryRequest(kql, source.AppInsightsAppId, source.TenantId),
                 cancellationToken);
@@ -179,13 +190,45 @@ public sealed class SyncIncidentsService(
             .OrderBy(id => id, StringComparer.Ordinal)
             .Select(id => $"\"{id}\""));
 
+    /// <summary>
+    /// Car server exceptions carry the site on the URL and no VacationClubId. The brand table
+    /// host is that site, so <c>stays.tmobiletravel.com</c> becomes club 15639. The request URL
+    /// is used when the exception URL itself is not a brand host. Two clubs that share a host
+    /// keep the lower club id. A row that still has no club is dropped.
+    /// </summary>
+    private List<ExceptionSignal> AssignCarClubFromHost(List<ExceptionSignal> signals)
+    {
+        var hosts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var club in BrandClubOptions.ForDomain(_brandRows ?? [], "cars")
+                     .OrderBy(club => club.ClubId, StringComparer.Ordinal))
+        {
+            if (!string.IsNullOrEmpty(club.Host)) hosts.TryAdd(club.Host, club.Value);
+        }
+
+        if (hosts.Count == 0) return signals;
+        return signals.Select(signal => WithBrandClub(signal, hosts)).ToList();
+    }
+
+    private static ExceptionSignal WithBrandClub(ExceptionSignal signal, IReadOnlyDictionary<string, string> hosts)
+    {
+        if (!string.IsNullOrWhiteSpace(signal.ClubId)) return signal;
+        var clubId = ClubForHost(signal.Url, hosts) ?? ClubForHost(signal.RequestUrl, hosts);
+        return clubId is null ? signal : signal with { ClubId = clubId };
+    }
+
+    private static string? ClubForHost(string? url, IReadOnlyDictionary<string, string> hosts)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return null;
+        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)) return null;
+        return hosts.TryGetValue(uri.Host, out var clubId) ? clubId : null;
+    }
+
     private static bool BelongsToBrand(string domain, ExceptionSignal signal, IReadOnlySet<string> allowed)
     {
-        if (domain == "hotels" && IncidentIngestionPlanner.IsCarException(
-            $"{signal.Url} {signal.RequestUrl}", signal.OperationName))
-        {
-            return false;
-        }
+        var carException = IncidentIngestionPlanner.IsCarException(
+            $"{signal.Url} {signal.RequestUrl}", signal.OperationName);
+        if (domain == "hotels" && carException) return false;
+        if (domain == "cars" && !carException) return false;
 
         return allowed.Contains(signal.ClubId.Trim());
     }
@@ -228,21 +271,24 @@ public sealed class SyncIncidentsService(
         NullIfBlank(row.GetString("SessionId")),
         NullIfBlank(row.GetString("CorrelationId")),
         NullIfBlank(row.GetString("Url")),
-        NullIfBlank(row.GetString("RequestUrl")));
+        NullIfBlank(row.GetString("RequestUrl")),
+        ExceptionSource.Normalize(row.GetString("Source")));
 
     private static string? NullIfBlank(string value) => string.IsNullOrWhiteSpace(value) ? null : value;
 
     /// <summary>
-    /// Drops a hotel-app row when the exception URL, the joined request URL, or the operation
-    /// name is a car journey. customDimensions.url can hide RequestUrl, which is the column
-    /// that prefers CarSearch, CarBooking, and /cars/.
+    /// Hotel pass drops a row, and the car pass keeps a row, when the exception URL, the joined
+    /// request URL, or the operation name is a car journey. customDimensions.url can hide
+    /// RequestUrl, which is the column that prefers CarSearch, CarBooking, and /cars/.
     /// </summary>
-    private static string BuildDropCarExceptions()
+    private static string BuildCarExceptionFilter(bool keep)
     {
         string[] columns = ["Url", "RequestUrl", "Operation"];
         string[] markers = ["CarSearch", "CarBooking", "CarLocationSearch", "searchlocations", "/cars/"];
-        var clauses = columns.SelectMany(column => markers.Select(marker => $"{column} !has \"{marker}\""));
-        return "| where " + string.Join(" and ", clauses);
+        var comparison = keep ? "has" : "!has";
+        var joiner = keep ? " or " : " and ";
+        var clauses = columns.SelectMany(column => markers.Select(marker => $"{column} {comparison} \"{marker}\""));
+        return "| where " + string.Join(joiner, clauses);
     }
 
     private static IncidentSyncPass Skip(string domain, string reason) =>

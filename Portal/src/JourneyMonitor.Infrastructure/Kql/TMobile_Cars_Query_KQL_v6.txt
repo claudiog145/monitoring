@@ -3,13 +3,16 @@
 // has no requests). Do not copy the Hotel funnel URLs: Cars uses /api/CarSearch, /api/CarBooking,
 // BackgroundCarSearch, /cars/*. CompletePurchase Verticals is ["Car"] (not "Cars" or "Hotels").
 // Single query. Keep this file as one contiguous block: Azure Logs treats blank lines as separators.
-// Journey: correlationId -> stages -> calls -> errors. UserId is reported, not used to group.
+// Journey: one row per inactivity session. A correlation id splits when consecutive steps
+// are more than 30 minutes apart. CorrelationId on the row is rawId-seq (ABC123-1).
+// RawCorrelationId stays beside it so club attribution can still join the GUID.
+// UserId is reported, not used to group. BookOk counts only purchases in that session.
 // Stage timing/status uses ONLY our host API requests.
 // Stage failureRatePct ignores kind=result so a business FAIL does not inflate technical fail %.
 // Purchase: each CompletePurchase attempt is its own call (CompletePurchase #N OK|FAIL ...).
 // API/vendor: one call per name; distinct failures go in calls[].errors as {n, t, message}.
 // IsBookSuccessful is true when BookOk > 0. PassedSearch is true when SearchAt is set
-// (stage 02 Car Search). Exceptions is FailedCalls for that CorrelationId
+// (stage 02 Car Search). Exceptions is FailedCalls for that session
 // (the per-journey sum of first-party stage failures). Keep Exceptions as FailedCalls so the
 // type stays long; do not toint() it.
 let win = 15m;
@@ -151,22 +154,7 @@ let purchaseResultCalls =
                                iff(Ok =~ "True", "OK", strcat("FAIL ", FailingStep))),
               Ms = real(null), Failed = (Ok !~ "True"),
               Detail = iff(Ok =~ "True", Supplier, FailureDetail),
-              Ts = timestamp, operation_Id, Seq = AttemptNo;
-let cpFails =
-    cpNumbered
-    | where Ok !~ "True" and isnotempty(FailureDetail)
-    | summarize arg_max(timestamp, FailureDetail) by CorrelationId
-    | project CorrelationId, FailReason = FailureDetail;
-let cpSummary =
-    cpCar
-    | summarize BookOk = countif(Ok =~ "True"),
-                BookFail = countif(Ok !~ "True"),
-                DistinctOkRes = dcountif(Res, Ok =~ "True"),
-                BookedReservations = make_set_if(Res, Ok =~ "True", 8),
-                UserId = take_anyif(UserId, isnotempty(UserId) and UserId != "0")
-      by CorrelationId
-    | join kind=leftouter cpFails on CorrelationId
-    | project-away CorrelationId1;
+              Ts = timestamp, operation_Id, Seq = AttemptNo, Res;
 let cpSessions = cpCar | where isnotempty(Sess) | summarize PCorr = take_any(CorrelationId), PUser = take_any(UserId) by Sess;
 let phaseCalls =
     traces
@@ -197,16 +185,42 @@ let carCorrs =
       (cpCar | distinct CorrelationId)
     | distinct CorrelationId;
 let scopedCalls = allCalls | where CorrelationId in (carCorrs);
+// Session key is rawId-seq. Numbering restarts on each correlation id, and again when the
+// gap since the previous step of that id exceeds 30 minutes. BookOk is counted from the
+// purchase rows that landed in the session, so a later booking does not convert an earlier one.
+let sessionCalls =
+    scopedCalls
+    | extend RawCorrelationId = CorrelationId
+    | sort by RawCorrelationId asc, Ts asc
+    | extend SessionStartTs = row_window_session(Ts, 365d, 30m, prev(RawCorrelationId) != RawCorrelationId)
+    | extend SessionSeq = row_rank_dense(SessionStartTs, prev(RawCorrelationId) != RawCorrelationId)
+    | extend CorrelationId = strcat(RawCorrelationId, "-", tostring(SessionSeq));
+let cpFails =
+    sessionCalls
+    | where Kind == "result" and Failed and isnotempty(Detail)
+    | summarize arg_max(Ts, Detail) by CorrelationId
+    | project CorrelationId, FailReason = Detail;
+let cpSummary =
+    sessionCalls
+    | where Kind == "result"
+    | summarize BookOk = countif(Failed == false),
+                BookFail = countif(Failed == true),
+                DistinctOkRes = dcountif(Res, Failed == false and isnotempty(Res)),
+                BookedReservations = make_set_if(Res, Failed == false and isnotempty(Res), 8),
+                UserId = take_anyif(UserId, isnotempty(UserId) and UserId != "0")
+      by CorrelationId
+    | join kind=leftouter cpFails on CorrelationId
+    | project-away CorrelationId1;
 // Seq: purchase uses AttemptNo already on result rows. API/vendor/phase are numbered
-// per correlationId + stage + kind + call name so errors[].n is the execution that failed.
+// per session + stage + kind + call name so errors[].n is the execution that failed.
 let sequenced =
     union
-      (scopedCalls
+      (sessionCalls
        | where Kind != "result"
        | sort by CorrelationId asc, StageNo asc, Kind asc, Service asc, Ts asc
        | extend Seq = row_number(1, prev(CorrelationId) != CorrelationId or prev(StageNo) != StageNo
                                     or prev(Kind) != Kind or prev(Service) != Service)),
-      (scopedCalls | where Kind == "result");
+      (sessionCalls | where Kind == "result");
 let callMetrics =
     sequenced
     | sort by CorrelationId asc, StageNo asc, Kind asc, Service asc, Seq asc
@@ -222,7 +236,9 @@ let callMetrics =
                 Errors = make_list_if(bag_pack("n", Seq, "t", Ts, "message", Detail),
                                       Failed and isnotempty(Detail), 8),
                 Ts = min(Ts),
-                UserId = take_anyif(UserId, isnotempty(UserId) and UserId != "0")
+                LastTs = max(Ts),
+                UserId = take_anyif(UserId, isnotempty(UserId) and UserId != "0"),
+                RawCorrelationId = take_any(RawCorrelationId)
       by CorrelationId, StageNo, Stage, Kind, Service
     | extend FailureRatePct = round(todouble(Fails) / N * 100.0, 2),
              Status = case(
@@ -231,7 +247,7 @@ let callMetrics =
                 P95Ms < 5000, "YELLOW",
                 "RED");
 let stageApiMetrics =
-    scopedCalls
+    sessionCalls
     | where Kind == "api" and isnotnull(Ms)
     | summarize StageTotalMs = round(sum(Ms)),
                 StepP50 = round(percentile(Ms, 50)),
@@ -250,10 +266,12 @@ let stageRows =
             "failureRatePct", FailureRatePct, "status", Status,
             "detail", Detail, "errors", Errors), 80),
         StepStart = min(Ts),
+        StepEnd = max(LastTs),
         CallCount = sum(N),
         StepFails = sumif(Fails, Kind != "result"),
         StepTotal = sumif(N, Kind != "result"),
-        UserId = take_anyif(UserId, isnotempty(UserId) and UserId != "0")
+        UserId = take_anyif(UserId, isnotempty(UserId) and UserId != "0"),
+        RawCorrelationId = take_any(RawCorrelationId)
       by CorrelationId, StageNo, Stage
     | join kind=leftouter stageApiMetrics on CorrelationId, StageNo, Stage
     | extend StepFailPct = iff(StepTotal > 0, round(todouble(StepFails) / StepTotal * 100.0, 2), real(null)),
@@ -281,8 +299,9 @@ stageRows
     ConfirmAt = minif(StepStart, StageNo == 8),
     CancelAt = minif(StepStart, StageNo == 9),
     FirstSeen = min(StepStart),
-    LastSeen = max(StepStart),
-    UserId = take_anyif(UserId, isnotempty(UserId) and UserId != "0")
+    LastSeen = max(StepEnd),
+    UserId = take_anyif(UserId, isnotempty(UserId) and UserId != "0"),
+    RawCorrelationId = take_any(RawCorrelationId)
   by CorrelationId
 | join kind=leftouter cpSummary on CorrelationId
 | project-away CorrelationId1

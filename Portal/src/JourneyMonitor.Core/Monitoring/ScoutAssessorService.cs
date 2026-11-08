@@ -3,6 +3,7 @@ using System.Text.Json;
 using JourneyMonitor.Core.Abstractions;
 using JourneyMonitor.Core.Company;
 using JourneyMonitor.Core.Domain;
+using JourneyMonitor.Core.Monitoring.Privacy;
 using Microsoft.Extensions.Logging;
 
 namespace JourneyMonitor.Core.Monitoring;
@@ -26,9 +27,14 @@ public sealed class ScoutAssessorService(
     ILogger<ScoutAssessorService> logger,
     // Trailing and optional so the composition root and the existing tests keep constructing this
     // the way they already do. Null means the neutral vocabulary, never a failed assessment.
-    ICompanyAdapterProvider? companyAdapters = null) : IScoutAssessor
+    ICompanyAdapterProvider? companyAdapters = null,
+    // Contract v4 §5 (AG6B): same rule as Triage and the Inspector. Null redactor still redacts.
+    ICompanyProfileStore? profiles = null,
+    IEvidenceRedactor? redactor = null) : IScoutAssessor
 {
     private const int MaxTokens = 600;
+
+    private readonly IEvidenceRedactor _redactor = redactor ?? new EvidenceRedactor();
 
     public async Task<ScoutAssessmentResult> AssessAsync(ScoutBoardRow row, ClubIdentity club, CancellationToken ct = default)
     {
@@ -43,6 +49,20 @@ public sealed class ScoutAssessorService(
         {
             logger.LogWarning(ex, "[ScoutMonkey] Could not build an assessment prompt for {CaseId}.", row.CaseId);
             return Failed("", "", "none", 0, 0, 0, "prompt could not be built from the board row");
+        }
+
+        // Without a provider there is no company concept, so the configured default (the incumbent)
+        // governs; with one, its key does - and a provider that failed ("(none)") stays closed.
+        var profile = await PromptPrivacy.ResolveProfileAsync(
+            profiles, companyAdapters is null ? null : vocabulary.ProfileKey, logger, "ScoutMonkey", ct);
+        var redactions = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        // ScoutLlmCall stores this redacted prompt: the log shows what was actually sent.
+        prompt = PromptPrivacy.Redact(_redactor, prompt, profile, redactions);
+        if (redactions.Count > 0)
+        {
+            logger.LogInformation(
+                "[ScoutMonkey] {CaseId} [{ProfileKey}]: prompt redacted before the LLM call ({Redactions}).",
+                row.CaseId, profile.ProfileKey, PromptPrivacy.Describe(redactions));
         }
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();

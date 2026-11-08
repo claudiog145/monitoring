@@ -1,0 +1,238 @@
+{
+  "companyKey": "aml",
+  "profileKey": "kinectify",
+  "displayName": "Kinectify (demo)",
+  "apps": [
+    { "appId": "demo-aml-screening-api", "database": "aml-screening-api", "roleName": "screening-api", "host": "screening.kinectify.demo" },
+    { "appId": "demo-aml-onboarding-kyc", "database": "aml-onboarding-kyc", "roleName": "onboarding-kyc", "host": "onboarding.kinectify.demo" },
+    { "appId": "demo-aml-case-mgmt", "database": "aml-case-mgmt", "roleName": "case-mgmt", "host": "cases.kinectify.demo" },
+    { "appId": "demo-aml-alerts-worker", "database": "aml-alerts-worker", "roleName": "alerts-worker", "host": "alerts-worker.kinectify.internal" }
+  ],
+  "entities": { "kind": "customer", "dimension": "CustomerTenantId", "count": 60, "zipf": 1.15, "idFormat": "T-{0:000}", "hostTemplate": null },
+  "traffic": {
+    "requestsPerDay": 100000,
+    "hourlyCurve": [6, 5, 4, 4, 4, 5, 6, 7, 8, 9, 10, 10, 10, 11, 12, 12, 12, 11, 11, 11, 10, 9, 8, 7],
+    "weekendFactor": 0.85
+  },
+  "steps": [
+    {
+      "app": "demo-aml-screening-api", "name": "POST /api/v1/transactions", "url": "/api/v1/transactions", "weight": 0.40,
+      "p50Ms": 85, "p95Ms": 420, "errorRate": 0.002,
+      "exceptions": [
+        { "type": "System.Text.Json.JsonException", "message": "Transaction payload is missing 'counterparty.name' (account 000012345678, submitted by jane.doe@example.test)", "method": "TransactionIngestController.Post", "weight": 3 },
+        { "type": "Kinectify.Screening.DuplicateTransactionException", "message": "Transaction TX-0000000042 was already ingested for this customer", "method": "TransactionIngestService.Accept", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "screening-db", "target": "sql-screening.kinectify.internal", "type": "SQL", "name": "INSERT screening.Transactions", "p50Ms": 4, "p95Ms": 30, "failureRate": 0.0005 }
+      ],
+      "businessEvent": { "name": "TransactionReceived", "onSuccessOnly": true, "measurements": { "Amount": { "min": 10, "max": 250000 } } }
+    },
+    {
+      "app": "demo-aml-screening-api", "name": "POST /api/v1/risk-score", "url": "/api/v1/risk-score", "weight": 0.30,
+      "p50Ms": 160, "p95Ms": 780, "errorRate": 0.003,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Sanctions list provider did not answer within 5000 ms (account 000098765432)", "method": "RiskScoringPipeline.ScreenParties", "weight": 3 },
+        { "type": "Kinectify.Scoring.ModelInferenceException", "message": "Risk model returned NaN for feature 'velocity_24h'", "method": "RiskModelClient.Score", "weight": 2 },
+        { "type": "System.Net.Http.HttpRequestException", "message": "Blockchain analytics returned 503 for wallet 0x00000000000000000000000000000000000000a1", "method": "ChainRiskClient.GetAddressRisk", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "sanctions-provider", "target": "api.sanctionlists.demo", "type": "HTTP", "name": "POST /v2/screen", "p50Ms": 70, "p95Ms": 380, "failureRate": 0.002 },
+        { "partner": "chain-analytics", "target": "api.chainlens.demo", "type": "HTTP", "name": "GET /v1/address-risk", "p50Ms": 110, "p95Ms": 520, "failureRate": 0.003 },
+        { "partner": "scoring-model", "target": "risk-model.kinectify.internal", "type": "HTTP", "name": "POST /score", "p50Ms": 25, "p95Ms": 120, "failureRate": 0.0005 }
+      ],
+      "businessEvent": { "name": "TransactionScreened", "onSuccessOnly": true, "measurements": { "Amount": { "min": 10, "max": 250000 }, "RiskScore": { "min": 0, "max": 100 } } }
+    },
+    {
+      "app": "demo-aml-screening-api", "name": "GET /api/v1/screening-status", "url": "/api/v1/screening-status?txId=TX-0000000042", "weight": 0.04,
+      "p50Ms": 25, "p95Ms": 140, "errorRate": 0.001,
+      "exceptions": [
+        { "type": "Kinectify.Screening.TransactionNotFoundException", "message": "Transaction TX-0000000042 is unknown for this customer", "method": "ScreeningStatusController.Get", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "screening-db", "target": "sql-screening.kinectify.internal", "type": "SQL", "name": "SELECT screening.Transactions", "p50Ms": 2, "p95Ms": 15, "failureRate": 0.0005 }
+      ]
+    },
+    {
+      "app": "demo-aml-alerts-worker", "name": "PROCESS alert-generation", "url": "/jobs/alert-generation", "weight": 0.06,
+      "p50Ms": 220, "p95Ms": 1500, "errorRate": 0.004,
+      "exceptions": [
+        { "type": "Azure.Messaging.ServiceBus.ServiceBusException", "message": "The lock supplied is invalid: the message lock on 'alerts-queue' expired before processing completed", "method": "AlertGenerationWorker.ProcessMessage", "weight": 3 },
+        { "type": "Kinectify.Alerts.AlertRuleEvaluationException", "message": "Rule 'structuring-under-threshold' failed for account 000055501234", "method": "AlertRuleEngine.Evaluate", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "alert-queue", "target": "sb-kinectify.servicebus.demo", "type": "Azure Service Bus", "name": "Receive alerts-queue", "p50Ms": 15, "p95Ms": 120, "failureRate": 0.001 },
+        { "partner": "screening-db", "target": "sql-screening.kinectify.internal", "type": "SQL", "name": "INSERT alerts.Alerts", "p50Ms": 5, "p95Ms": 40, "failureRate": 0.0005 }
+      ],
+      "businessEvent": { "name": "AlertRaised", "onSuccessOnly": true, "measurements": { "RiskScore": { "min": 60, "max": 100 } } }
+    },
+    {
+      "app": "demo-aml-alerts-worker", "name": "PROCESS case-escalation", "url": "/jobs/case-escalation", "weight": 0.02,
+      "p50Ms": 180, "p95Ms": 1100, "errorRate": 0.003,
+      "exceptions": [
+        { "type": "Azure.Messaging.ServiceBus.ServiceBusException", "message": "The lock supplied is invalid: the message lock on 'escalations-queue' expired before processing completed", "method": "CaseEscalationWorker.ProcessMessage", "weight": 2 },
+        { "type": "Kinectify.Alerts.EscalationPolicyException", "message": "No escalation policy configured for alert severity 'critical'", "method": "EscalationPolicy.Resolve", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "alert-queue", "target": "sb-kinectify.servicebus.demo", "type": "Azure Service Bus", "name": "Receive escalations-queue", "p50Ms": 15, "p95Ms": 120, "failureRate": 0.001 },
+        { "partner": "case-db", "target": "sql-cases.kinectify.internal", "type": "SQL", "name": "INSERT cases.Cases", "p50Ms": 6, "p95Ms": 45, "failureRate": 0.0005 }
+      ]
+    },
+    {
+      "app": "demo-aml-case-mgmt", "name": "POST /api/cases/open", "url": "/api/cases/open", "weight": 0.025,
+      "p50Ms": 150, "p95Ms": 700, "errorRate": 0.002,
+      "exceptions": [
+        { "type": "Kinectify.Cases.CaseConflictException", "message": "An open case already exists for account 000077712345", "method": "CaseService.Open", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "case-db", "target": "sql-cases.kinectify.internal", "type": "SQL", "name": "INSERT cases.Cases", "p50Ms": 6, "p95Ms": 45, "failureRate": 0.0005 }
+      ],
+      "businessEvent": { "name": "CaseOpened", "onSuccessOnly": true }
+    },
+    {
+      "app": "demo-aml-case-mgmt", "name": "GET /api/cases/review", "url": "/api/cases/review?caseId=CASE-000123", "weight": 0.04,
+      "p50Ms": 120, "p95Ms": 600, "errorRate": 0.002,
+      "exceptions": [
+        { "type": "System.UnauthorizedAccessException", "message": "Analyst is not assigned to case CASE-000123", "method": "CaseReviewController.Get", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "case-db", "target": "sql-cases.kinectify.internal", "type": "SQL", "name": "SELECT cases.CaseTimeline", "p50Ms": 8, "p95Ms": 60, "failureRate": 0.0005 },
+        { "partner": "doc-ocr", "target": "api.docuscan.demo", "type": "HTTP", "name": "GET /v1/documents", "p50Ms": 90, "p95Ms": 450, "failureRate": 0.002 }
+      ]
+    },
+    {
+      "app": "demo-aml-case-mgmt", "name": "POST /api/cases/close", "url": "/api/cases/close", "weight": 0.02,
+      "p50Ms": 180, "p95Ms": 850, "errorRate": 0.002,
+      "exceptions": [
+        { "type": "Kinectify.Cases.CaseValidationException", "message": "A disposition note is required before closing case CASE-000123", "method": "CaseService.Close", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "case-db", "target": "sql-cases.kinectify.internal", "type": "SQL", "name": "UPDATE cases.Cases", "p50Ms": 6, "p95Ms": 45, "failureRate": 0.0005 }
+      ],
+      "businessEvent": { "name": "CaseClosed", "onSuccessOnly": true, "measurements": { "HoursOpen": { "min": 1, "max": 720 } } }
+    },
+    {
+      "app": "demo-aml-onboarding-kyc", "name": "POST /api/onboarding/applications", "url": "/api/onboarding/applications", "weight": 0.03,
+      "p50Ms": 450, "p95Ms": 2200, "errorRate": 0.004,
+      "exceptions": [
+        { "type": "Kinectify.Onboarding.DocumentRejectedException", "message": "Identity document uploaded by jane.doe@example.test could not be read (blurred MRZ)", "method": "ApplicationService.Submit", "weight": 2 },
+        { "type": "System.TimeoutException", "message": "Document OCR did not answer within 8000 ms", "method": "DocumentOcrClient.Extract", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "doc-ocr", "target": "api.docuscan.demo", "type": "HTTP", "name": "POST /v1/extract", "p50Ms": 300, "p95Ms": 1600, "failureRate": 0.003 },
+        { "partner": "onboarding-db", "target": "sql-onboarding.kinectify.internal", "type": "SQL", "name": "INSERT kyc.Applications", "p50Ms": 5, "p95Ms": 35, "failureRate": 0.0005 }
+      ],
+      "businessEvent": { "name": "ApplicationSubmitted", "onSuccessOnly": true }
+    },
+    {
+      "app": "demo-aml-onboarding-kyc", "name": "POST /api/onboarding/verify-identity", "url": "/api/onboarding/verify-identity", "weight": 0.025,
+      "p50Ms": 900, "p95Ms": 3800, "errorRate": 0.005,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Identity verification provider did not answer within 10000 ms", "method": "IdentityVerificationClient.Verify", "weight": 2 },
+        { "type": "Kinectify.Onboarding.LivenessCheckFailedException", "message": "Liveness check inconclusive for applicant jane.doe@example.test", "method": "IdentityVerificationService.Evaluate", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "idv-provider", "target": "api.verifyid.demo", "type": "HTTP", "name": "POST /v3/verifications", "p50Ms": 700, "p95Ms": 3000, "failureRate": 0.004 },
+        { "partner": "onboarding-db", "target": "sql-onboarding.kinectify.internal", "type": "SQL", "name": "UPDATE kyc.Applications", "p50Ms": 5, "p95Ms": 35, "failureRate": 0.0005 }
+      ],
+      "businessEvent": { "name": "IdentityVerified", "onSuccessOnly": true }
+    },
+    {
+      "app": "demo-aml-onboarding-kyc", "name": "POST /api/onboarding/sanctions-check", "url": "/api/onboarding/sanctions-check", "weight": 0.025,
+      "p50Ms": 260, "p95Ms": 1300, "errorRate": 0.003,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Sanctions list provider did not answer within 5000 ms (applicant jane.doe@example.test)", "method": "PersonScreeningClient.Screen", "weight": 2 },
+        { "type": "Kinectify.Onboarding.PotentialMatchException", "message": "Potential PEP match requires manual review", "method": "PersonScreeningService.Decide", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "sanctions-provider", "target": "api.sanctionlists.demo", "type": "HTTP", "name": "POST /v2/screen-person", "p50Ms": 120, "p95Ms": 600, "failureRate": 0.002 },
+        { "partner": "onboarding-db", "target": "sql-onboarding.kinectify.internal", "type": "SQL", "name": "UPDATE kyc.Applications", "p50Ms": 5, "p95Ms": 35, "failureRate": 0.0005 }
+      ]
+    },
+    {
+      "app": "demo-aml-onboarding-kyc", "name": "POST /api/onboarding/approve", "url": "/api/onboarding/approve", "weight": 0.03,
+      "p50Ms": 140, "p95Ms": 650, "errorRate": 0.002,
+      "exceptions": [
+        { "type": "Kinectify.Onboarding.ApprovalBlockedException", "message": "Application cannot be approved while a sanctions hit is open", "method": "ApprovalService.Approve", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "onboarding-db", "target": "sql-onboarding.kinectify.internal", "type": "SQL", "name": "UPDATE kyc.Applications", "p50Ms": 5, "p95Ms": 35, "failureRate": 0.0005 }
+      ],
+      "businessEvent": { "name": "ClientApproved", "onSuccessOnly": true }
+    }
+  ],
+  "scenarios": [
+    {
+      "key": "sanctions-provider-outage", "title": "Sanctions list provider outage",
+      "description": "The sanctions/PEP list provider answers slowly and then refuses most calls. Transaction risk scoring and onboarding sanctions checks fail with 502s and timeouts; screened transactions drop.",
+      "defaultDurationMinutes": 30,
+      "effects": [
+        { "kind": "dependency-failure", "partner": "sanctions-provider", "rate": 0.7 },
+        { "kind": "latency-multiplier", "partner": "sanctions-provider", "factor": 5 }
+      ]
+    },
+    {
+      "key": "scoring-model-deploy", "title": "Risk scoring latency after model deploy",
+      "description": "A new risk model version is rolled out with an unoptimised feature pipeline. Calls to the internal scoring model are 6x slower, so POST /api/v1/risk-score latency jumps for every customer.",
+      "defaultDurationMinutes": 30,
+      "effects": [
+        { "kind": "latency-multiplier", "partner": "scoring-model", "factor": 6 },
+        { "kind": "error-rate", "step": "POST /api/v1/risk-score", "rate": 0.03, "exceptionType": "Kinectify.Scoring.ModelInferenceException" }
+      ]
+    },
+    {
+      "key": "alert-queue-backlog", "title": "Alert queue backlog (exception storm)",
+      "description": "The alerts worker cannot keep up with alerts-queue: message locks expire and the worker throws ServiceBusException on three messages out of four. Alerts are raised late or not at all.",
+      "defaultDurationMinutes": 30,
+      "effects": [
+        { "kind": "error-rate", "step": "PROCESS alert-generation", "rate": 0.75, "exceptionType": "Azure.Messaging.ServiceBus.ServiceBusException" },
+        { "kind": "latency-multiplier", "partner": "alert-queue", "factor": 8 }
+      ]
+    },
+    {
+      "key": "tenant-degraded", "title": "One customer tenant degraded",
+      "description": "Customer tenant T-003 pushes a bulk load of transactions against a misconfigured rule set; only that tenant sees slow screening (ingestion, risk scoring and status lookups) and failing risk scoring.",
+      "defaultDurationMinutes": 30,
+      "effects": [
+        { "kind": "entity-only", "entities": ["T-003"] },
+        { "kind": "latency-multiplier", "step": "POST /api/v1/transactions", "factor": 7 },
+        { "kind": "latency-multiplier", "step": "POST /api/v1/risk-score", "factor": 7 },
+        { "kind": "latency-multiplier", "step": "GET /api/v1/screening-status", "factor": 7 },
+        { "kind": "error-rate", "step": "POST /api/v1/risk-score", "rate": 0.25, "exceptionType": "System.TimeoutException" }
+      ]
+    },
+    {
+      "key": "idv-provider-degraded", "title": "Identity verification provider degraded",
+      "description": "The identity verification provider answers slowly and rejects most calls; onboarding verify-identity fails, applicants stay stuck before approval and client approvals stall.",
+      "defaultDurationMinutes": 30,
+      "effects": [
+        { "kind": "dependency-failure", "partner": "idv-provider", "rate": 0.6 },
+        { "kind": "latency-multiplier", "partner": "idv-provider", "factor": 5 },
+        { "kind": "traffic-multiplier", "step": "POST /api/onboarding/approve", "factor": 0.15 }
+      ]
+    },
+    {
+      "key": "screening-volume-drop", "title": "Screened transactions drop (business)",
+      "description": "A customer-side connector silently stops sending most transactions after a credential rotation. Nothing errors, but TransactionReceived and TransactionScreened fall to about a third of normal.",
+      "defaultDurationMinutes": 45,
+      "effects": [
+        { "kind": "traffic-multiplier", "step": "POST /api/v1/transactions", "factor": 0.3 },
+        { "kind": "traffic-multiplier", "step": "POST /api/v1/risk-score", "factor": 0.3 }
+      ]
+    },
+    {
+      "key": "month-end-regulatory-peak", "title": "Month-end regulatory re-screening (legitimate peak)",
+      "description": "Customers run their month-end regulatory batch re-screening: traffic more than doubles across the platform while latency and error rates stay normal. This peak is expected and must not alert.",
+      "defaultDurationMinutes": 60,
+      "effects": [
+        { "kind": "traffic-multiplier", "factor": 2.2 }
+      ]
+    }
+  ],
+  "historicalIncidents": [
+    { "scenario": "scoring-model-deploy", "hoursAgo": 68, "durationMinutes": 40 },
+    { "scenario": "sanctions-provider-outage", "hoursAgo": 50, "durationMinutes": 45 },
+    { "scenario": "month-end-regulatory-peak", "hoursAgo": 36, "durationMinutes": 90 },
+    { "scenario": "tenant-degraded", "hoursAgo": 22, "durationMinutes": 60 },
+    { "scenario": "alert-queue-backlog", "hoursAgo": 8, "durationMinutes": 40 }
+  ]
+}

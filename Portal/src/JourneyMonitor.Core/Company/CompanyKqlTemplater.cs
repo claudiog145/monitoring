@@ -78,8 +78,120 @@ public static class CompanyKqlTemplater
         text = Fill(text, KqlPlaceholders.SourceUnion, () => RenderRequestSourceUnion(profile, newLine));
         text = Fill(text, KqlPlaceholders.ExceptionSourceUnion, () => RenderExceptionSourceUnion(profile, newLine));
         text = Fill(text, KqlPlaceholders.ServiceAndStepClassifier, () => RenderServiceAndStepClassifier(profile, newLine));
+        text = Fill(text, DependencySourceUnion, () => RenderDependencySourceUnion(profile, newLine));
+        text = Fill(text, PartnerClassifier, () => RenderPartnerClassifier(profile, newLine));
 
         return text;
+    }
+
+    /// <summary>
+    /// <see cref="Render(string, CompanyProfile)"/> for ONE service (contract v4 §2, KPI templates):
+    /// the source unions read only that service's telemetry aliases and the host filter only
+    /// accepts that service's hosts (every host when it declares none).
+    ///
+    /// The entity identity and the classifier stay profile-wide on purpose. The classifier is a
+    /// first-match-wins cascade across every service; cutting it to one service would let a row
+    /// another service's step claims first fall through to this one, and the KPI would then
+    /// disagree with the board and the adapter about the same request.
+    /// </summary>
+    public static string RenderForService(string template, CompanyProfile profile, string serviceKey)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        var service = profile.FindService(serviceKey)
+            ?? throw new InvalidOperationException(
+                $"\"{serviceKey}\" is not a service of company profile \"{profile.ProfileKey}\".");
+
+        var scoped = profile with { Services = [service] };
+        var text = template ?? "";
+        var newLine = DetectNewLine(text);
+
+        text = Fill(text, KqlPlaceholders.EntityIdentity, () => RenderEntityIdentity(profile));
+        text = Fill(text, KqlPlaceholders.HostFilter, () => RenderHostFilter(scoped));
+        text = Fill(text, KqlPlaceholders.SourceUnion, () => RenderRequestSourceUnion(scoped, newLine));
+        text = Fill(text, KqlPlaceholders.ExceptionSourceUnion, () => RenderExceptionSourceUnion(scoped, newLine));
+        text = Fill(text, KqlPlaceholders.ServiceAndStepClassifier, () => RenderServiceAndStepClassifier(profile, newLine));
+        text = Fill(text, DependencySourceUnion, () => RenderDependencySourceUnion(scoped, newLine));
+        text = Fill(text, PartnerClassifier, () => RenderPartnerClassifier(profile, newLine));
+
+        return text;
+    }
+
+    // ------------------------------------------------------------------ partners (contract v4 §5)
+
+    /// <summary>
+    /// The <c>union</c> over the service's telemetry source aliases on the <c>dependencies</c> table.
+    /// Filled only by <see cref="RenderForService"/>, so it always reads one service's sources.
+    /// </summary>
+    public const string DependencySourceUnion = "{{DEPENDENCY_SOURCE_UNION}}";
+
+    /// <summary>
+    /// <c>| extend Partner=case(...)</c>: the partner key of a dependency row, first declared partner
+    /// that matches wins, empty when none does.
+    /// </summary>
+    public const string PartnerClassifier = "{{PARTNER_CLASSIFIER}}";
+
+    /// <summary>One <c>app("{{SOURCE:alias}}").dependencies</c> branch per alias, projected to the columns partner matchers test.</summary>
+    public static string RenderDependencySourceUnion(CompanyProfile profile, string newLine = "\r\n") =>
+        string.Join("," + newLine, SourceAliases(profile).Select(alias =>
+            $"(app(\"{{{{SOURCE:{alias}}}}}\").dependencies | where timestamp>=historyStart and timestamp<tEnd" +
+            " | project timestamp,target,name,type,success,duration,itemCount,operation_Id" +
+            $" | extend Source={Literal(alias)})"));
+
+    /// <summary>
+    /// The partner cascade. Throws when the profile declares no usable partner: an always-empty
+    /// classifier would be a dependency KPI that never has a series, which reads like healthy partners.
+    /// </summary>
+    public static string RenderPartnerClassifier(CompanyProfile profile, string newLine = "\r\n")
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+
+        var arms = new List<string>();
+        foreach (var partner in profile.Partners ?? [])
+        {
+            if (partner is null || string.IsNullOrWhiteSpace(partner.Key)) continue;
+            var matchers = (partner.Matchers ?? [])
+                .Where(m => m is not null && !string.IsNullOrWhiteSpace(m.Value))
+                .ToList();
+            if (matchers.Count == 0) continue;
+
+            arms.Add($"    {AnyOf(matchers.Select(RenderPartnerMatcher))},{Literal(partner.Key.Trim())},");
+        }
+
+        if (arms.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"Company profile \"{profile.ProfileKey}\" declares no partner with a matcher, so a dependency KPI has nothing to classify.");
+        }
+
+        var sb = new StringBuilder("| extend Partner=case(").Append(newLine);
+        foreach (var arm in arms) sb.Append(arm).Append(newLine);
+        sb.Append("    \"\")");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// One partner matcher as a KQL predicate over a <c>dependencies</c> row. Contains and equals are
+    /// case-insensitive; a regex is tested against the target and the name, case-insensitively.
+    /// </summary>
+    public static string RenderPartnerMatcher(PartnerMatcher matcher)
+    {
+        ArgumentNullException.ThrowIfNull(matcher);
+
+        return matcher.Kind?.Trim().ToLowerInvariant() switch
+        {
+            PartnerMatcherKind.DependencyTargetContains => $"target contains {Literal(matcher.Value)}",
+            PartnerMatcherKind.DependencyNameContains => $"name contains {Literal(matcher.Value)}",
+            PartnerMatcherKind.DependencyTypeEquals => $"type =~ {Literal(matcher.Value.Trim())}",
+            PartnerMatcherKind.Regex => RenderPartnerRegex(matcher.Value),
+            _ => throw new InvalidOperationException(
+                $"Unknown partner matcher kind \"{matcher.Kind}\". Use one of: {string.Join(", ", PartnerMatcherKind.All)}."),
+        };
+    }
+
+    private static string RenderPartnerRegex(string value)
+    {
+        var pattern = Literal("(?i)" + value);
+        return $"(target matches regex {pattern} or name matches regex {pattern})";
     }
 
     /// <summary>
@@ -423,7 +535,8 @@ public static class CompanyKqlTemplater
         string.Join("," + newLine, SourceAliases(profile).Select(alias =>
             $"(app(\"{{{{SOURCE:{alias}}}}}\").requests | where timestamp>=historyStart and timestamp<tEnd" +
             " | project timestamp,operation_Id,id,name,url,resultCode,success,duration,customDimensions," +
-            "cloud_RoleName,cloud_RoleInstance,user_Id," +
+            // itemCount keeps sampled telemetry countable: KPI buckets report sum(itemCount).
+            "cloud_RoleName,cloud_RoleInstance,user_Id,itemCount," +
             "AuthenticatedId=tostring(column_ifexists(\"user_AuthenticatedId\",\"\"))," +
             "SessionId=tostring(column_ifexists(\"session_Id\",\"\"))," +
             // Requests carry no page name of their own. column_ifexists keeps a page-name matcher

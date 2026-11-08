@@ -1,5 +1,5 @@
 -- Cruise journey store for KQL rows from TMobile_CRUISE_Query_KQL_v2.txt.
--- Grain: one cruise.Journey row per frontend session (CorrelationId = SessionId), carrying that
+-- Grain: one cruise.Journey row per inactivity session (CorrelationId = rawSessionId-seq), carrying that
 -- session's current state.
 -- Nested Journey[] / calls[] are shredded into cruise.JourneyStep and cruise.JourneyCall.
 -- JourneyJson keeps the original Kusto bag so the portal can still round-trip raw rows.
@@ -10,8 +10,8 @@
 -- "still seen". cruise.Journey.QueryRunId therefore means "the last run that saw this session",
 -- which is what makes the read below return exactly the sessions present in the newest run.
 --
--- Do not load Hotel v6d or Air KQL rows into these tables. Cruise Outcome names the failed
--- stage; Air uses Status / FunnelStep; Hotel v6d groups by UserId.
+-- Do not load Hotel or Air KQL rows into these tables. Cruise Outcome names the failed
+-- stage; Air uses Status / FunnelStep. Each vertical upserts on its CorrelationId session key.
 --
 -- Auth when calling from Azure: Managed Identity + Azure SQL (not SQL passwords in source).
 -- Connection strings belong in Key Vault / Function app settings.
@@ -154,6 +154,10 @@ BEGIN
         SearchToConfirmSeconds int             NULL,
         FirstSeen            datetimeoffset(7) NULL,
         LastSeen             datetimeoffset(7) NULL,
+        -- Page-view window from the KQL webSessions summary. FirstSeen and LastSeen also
+        -- include SSO and Core, so stitching and clipped updates use these two instead.
+        FrontendStart        datetimeoffset(7) NULL,
+        FrontendEnd          datetimeoffset(7) NULL,
         StepsJson            nvarchar(max)     NULL,
         JourneyJson          nvarchar(max)     NULL,
         CONSTRAINT UQ_cruise_Journey_Run_Correlation UNIQUE (QueryRunId, CorrelationId),
@@ -192,12 +196,30 @@ BEGIN
 END
 GO
 
--- The grain is the frontend session, so CorrelationId is the identity ingestion upserts on.
+-- The grain is the inactivity session, so CorrelationId is the identity ingestion upserts on.
 IF OBJECT_ID(N'cruise.Journey', N'U') IS NOT NULL
    AND NOT EXISTS (SELECT 1 FROM sys.indexes
                    WHERE name = N'UQ_cruise_Journey_CorrelationId'
                      AND object_id = OBJECT_ID(N'cruise.Journey'))
     CREATE UNIQUE INDEX UQ_cruise_Journey_CorrelationId ON cruise.Journey (CorrelationId);
+GO
+
+-- Session keys (rawSessionId-seq) replace unsuffixed frontend session ids. Clear the old rows
+-- once so a 7-day read does not count both. The extended property is the guard against a later wipe.
+IF OBJECT_ID(N'cruise.Journey', N'U') IS NOT NULL
+   AND NOT EXISTS (
+        SELECT 1 FROM sys.extended_properties
+        WHERE name = N'SessionGrain'
+          AND major_id = OBJECT_ID(N'cruise.Journey')
+          AND minor_id = 0)
+BEGIN
+    DELETE FROM cruise.Journey;
+    EXEC sys.sp_addextendedproperty
+        @name = N'SessionGrain',
+        @value = N'1',
+        @level0type = N'SCHEMA', @level0name = N'cruise',
+        @level1type = N'TABLE', @level1name = N'Journey';
+END
 GO
 
 -- Databases created before ClubId existed on the journey row. For cruises that value is the
@@ -247,6 +269,17 @@ BEGIN
     ALTER TABLE cruise.Journey ADD CONSTRAINT FK_cruise_Journey_QueryRun
         FOREIGN KEY (QueryRunId) REFERENCES cruise.QueryRun (QueryRunId);
 END
+GO
+
+-- Page-view bounds. Added after the table existed, so an existing database gets the columns here.
+IF OBJECT_ID(N'cruise.Journey', N'U') IS NOT NULL
+   AND COL_LENGTH(N'cruise.Journey', N'FrontendStart') IS NULL
+    ALTER TABLE cruise.Journey ADD FrontendStart datetimeoffset(7) NULL;
+GO
+
+IF OBJECT_ID(N'cruise.Journey', N'U') IS NOT NULL
+   AND COL_LENGTH(N'cruise.Journey', N'FrontendEnd') IS NULL
+    ALTER TABLE cruise.Journey ADD FrontendEnd datetimeoffset(7) NULL;
 GO
 
 IF OBJECT_ID(N'cruise.JourneyStep', N'U') IS NULL
@@ -430,6 +463,8 @@ BEGIN
             r.SearchToConfirmSeconds,
             r.FirstSeen,
             r.LastSeen,
+            r.FrontendStart,
+            r.FrontendEnd,
             r.StepsJson,
             r.JourneyJson,
             ROW_NUMBER() OVER (PARTITION BY COALESCE(NULLIF(r.CorrelationId, N''), NULLIF(r.SessionId, N''))
@@ -458,6 +493,8 @@ BEGIN
             SearchToConfirmSeconds   int               N'$.SearchToConfirm_s',
             FirstSeen                datetimeoffset(7) N'$.FirstSeen',
             LastSeen                 datetimeoffset(7) N'$.LastSeen',
+            FrontendStart            datetimeoffset(7) N'$.FrontendStart',
+            FrontendEnd              datetimeoffset(7) N'$.FrontendEnd',
             StepsJson                nvarchar(max)     N'$.Steps' AS JSON,
             JourneyJson              nvarchar(max)     N'$.Journey' AS JSON
         ) AS r
@@ -465,6 +502,122 @@ BEGIN
           AND r.Outcome IS NOT NULL
     ) AS d
     WHERE d.rn = 1;
+
+    -- KQL session suffixes are window-relative. Reconcile every incoming row against
+    -- persisted frontend activity boundaries so a clipped continuation keeps its
+    -- stored key. The same raw id after an inactivity gap gets a new suffix below.
+    -- FrontendStart and FrontendEnd exclude SSO and trailing Core-only stages. Rows
+    -- written before those columns existed fall back to their stage times.
+    SELECT
+        s.CorrelationId AS IncomingId,
+        prior.CorrelationId AS StoredId,
+        ROW_NUMBER() OVER (PARTITION BY prior.CorrelationId ORDER BY s.LastSeen DESC, s.CorrelationId) AS rn
+    INTO #SessionStitch
+    FROM #Src AS s
+    CROSS APPLY (
+        SELECT TOP (1) j.CorrelationId
+        FROM cruise.Journey AS j
+        CROSS APPLY (
+            SELECT
+                COALESCE(
+                    s.FrontendStart,
+                    (SELECT MIN(TRY_CONVERT(datetimeoffset(7), JSON_VALUE(step.[value], N'$.t')))
+                     FROM OPENJSON(s.JourneyJson) AS step
+                     WHERE TRY_CONVERT(int, JSON_VALUE(step.[value], N'$.stageNo')) > 1),
+                    s.FirstSeen) AS IncomingStart,
+                COALESCE(
+                    s.FrontendEnd,
+                    (SELECT MAX(TRY_CONVERT(datetimeoffset(7), JSON_VALUE(step.[value], N'$.t')))
+                     FROM OPENJSON(s.JourneyJson) AS step
+                     WHERE TRY_CONVERT(int, JSON_VALUE(step.[value], N'$.stageNo')) > 1),
+                    s.LastSeen) AS IncomingEnd,
+                COALESCE(
+                    j.FrontendStart,
+                    (SELECT MIN(TRY_CONVERT(datetimeoffset(7), JSON_VALUE(step.[value], N'$.t')))
+                     FROM OPENJSON(j.JourneyJson) AS step
+                     WHERE TRY_CONVERT(int, JSON_VALUE(step.[value], N'$.stageNo')) > 1),
+                    j.FirstSeen) AS StoredStart,
+                COALESCE(
+                    j.FrontendEnd,
+                    (SELECT MAX(TRY_CONVERT(datetimeoffset(7), JSON_VALUE(step.[value], N'$.t')))
+                     FROM OPENJSON(j.JourneyJson) AS step
+                     WHERE TRY_CONVERT(int, JSON_VALUE(step.[value], N'$.stageNo')) > 1),
+                    j.LastSeen) AS StoredEnd
+        ) AS edge
+        WHERE j.UserId = s.UserId
+          AND (@ClubId IS NULL OR j.ClubId = @ClubId OR j.ClubId IS NULL)
+          AND s.FirstSeen IS NOT NULL
+          AND s.CorrelationId LIKE N'%-[0-9]%'
+          AND j.CorrelationId LIKE N'%-[0-9]%'
+          AND RIGHT(s.CorrelationId, CHARINDEX(N'-', REVERSE(s.CorrelationId)) - 1) NOT LIKE N'%[^0-9]%'
+          AND RIGHT(j.CorrelationId, CHARINDEX(N'-', REVERSE(j.CorrelationId)) - 1) NOT LIKE N'%[^0-9]%'
+          AND LEN(RIGHT(s.CorrelationId, CHARINDEX(N'-', REVERSE(s.CorrelationId)) - 1)) BETWEEN 1 AND 6
+          AND LEN(RIGHT(j.CorrelationId, CHARINDEX(N'-', REVERSE(j.CorrelationId)) - 1)) BETWEEN 1 AND 6
+          AND LEFT(j.CorrelationId, LEN(j.CorrelationId) - CHARINDEX(N'-', REVERSE(j.CorrelationId)))
+              = LEFT(s.CorrelationId, LEN(s.CorrelationId) - CHARINDEX(N'-', REVERSE(s.CorrelationId)))
+          AND edge.StoredEnd IS NOT NULL
+          AND edge.IncomingStart <= DATEADD(minute, 30, edge.StoredEnd)
+          AND edge.IncomingEnd >= DATEADD(minute, -30, edge.StoredStart)
+        ORDER BY ABS(DATEDIFF(second, edge.IncomingStart, edge.StoredEnd)), edge.StoredStart
+    ) AS prior
+    WHERE NOT EXISTS (
+        SELECT 1 FROM #Src AS other WHERE other.CorrelationId = prior.CorrelationId
+    );
+
+    UPDATE s
+    SET CorrelationId = stitch.StoredId
+    FROM #Src AS s
+    INNER JOIN #SessionStitch AS stitch
+        ON stitch.IncomingId = s.CorrelationId
+       AND stitch.rn = 1;
+
+    -- A window-relative suffix can collide with an older, separate visit (for example,
+    -- two 15-minute runs both report rawId-1). Allocate the next persisted suffix
+    -- when that matching key is outside the frontend inactivity boundary.
+    ;WITH collisions AS
+    (
+        SELECT
+            s.CorrelationId AS IncomingId,
+            CONCAT(
+                LEFT(s.CorrelationId, LEN(s.CorrelationId) - CHARINDEX(N'-', REVERSE(s.CorrelationId))),
+                N'-',
+                (
+                    SELECT ISNULL(MAX(sequence.No), 0)
+                    FROM
+                    (
+                        SELECT TRY_CONVERT(int, RIGHT(j.CorrelationId, CHARINDEX(N'-', REVERSE(j.CorrelationId)) - 1)) AS No
+                        FROM cruise.Journey AS j
+                        WHERE LEFT(j.CorrelationId, LEN(j.CorrelationId) - CHARINDEX(N'-', REVERSE(j.CorrelationId)))
+                            = LEFT(s.CorrelationId, LEN(s.CorrelationId) - CHARINDEX(N'-', REVERSE(s.CorrelationId)))
+                        UNION ALL
+                        SELECT TRY_CONVERT(int, RIGHT(other.CorrelationId, CHARINDEX(N'-', REVERSE(other.CorrelationId)) - 1))
+                        FROM #Src AS other
+                        WHERE LEFT(other.CorrelationId, LEN(other.CorrelationId) - CHARINDEX(N'-', REVERSE(other.CorrelationId)))
+                            = LEFT(s.CorrelationId, LEN(s.CorrelationId) - CHARINDEX(N'-', REVERSE(s.CorrelationId)))
+                    ) AS sequence
+                ) + ROW_NUMBER() OVER (
+                    PARTITION BY LEFT(s.CorrelationId, LEN(s.CorrelationId) - CHARINDEX(N'-', REVERSE(s.CorrelationId)))
+                    ORDER BY s.FirstSeen, s.CorrelationId)
+            ) AS StoredId
+        FROM #Src AS s
+        WHERE EXISTS
+        (
+            SELECT 1
+            FROM cruise.Journey AS j
+            WHERE j.CorrelationId = s.CorrelationId
+              AND NOT
+              (
+                  COALESCE(s.FrontendStart, s.FirstSeen) <= DATEADD(minute, 30, COALESCE(j.FrontendEnd, j.LastSeen))
+                  AND COALESCE(s.FrontendEnd, s.LastSeen) >= DATEADD(minute, -30, COALESCE(j.FrontendStart, j.FirstSeen))
+              )
+        )
+    )
+    UPDATE s
+    SET CorrelationId = collisions.StoredId
+    FROM #Src AS s
+    INNER JOIN collisions ON collisions.IncomingId = s.CorrelationId;
+
+    DROP TABLE #SessionStitch;
 
     MERGE cruise.Journey WITH (HOLDLOCK) AS target
     USING #Src AS src
@@ -480,15 +633,126 @@ BEGIN
             SessionId              = src.SessionId,
             UserId                 = src.UserId,
             SessionCount           = src.SessionCount,
-            Outcome                = src.Outcome,
-            LastStep               = src.LastStep,
-            FailReason             = src.FailReason,
-            BookOk                 = src.BookOk,
+            Outcome                = CASE
+                                         WHEN ((
+                                             src.FrontendStart IS NOT NULL
+                                             AND target.FrontendStart IS NOT NULL
+                                             AND src.FrontendStart > target.FrontendStart
+                                         ) OR (
+                                             (src.FrontendStart IS NULL OR target.FrontendStart IS NULL)
+                                             AND target.FirstSeen IS NOT NULL
+                                             AND src.FirstSeen > target.FirstSeen
+                                         ))
+                                          AND target.IsBookSuccessful = 1
+                                          AND src.IsBookSuccessful = 0
+                                             THEN target.Outcome
+                                         ELSE src.Outcome
+                                     END,
+            LastStep               = CASE
+                                         WHEN ((
+                                             src.FrontendStart IS NOT NULL
+                                             AND target.FrontendStart IS NOT NULL
+                                             AND src.FrontendStart > target.FrontendStart
+                                         ) OR (
+                                             (src.FrontendStart IS NULL OR target.FrontendStart IS NULL)
+                                             AND target.FirstSeen IS NOT NULL
+                                             AND src.FirstSeen > target.FirstSeen
+                                         ))
+                                          AND target.LastStep > src.LastStep
+                                             THEN target.LastStep
+                                         ELSE src.LastStep
+                                     END,
+            FailReason             = CASE
+                                         WHEN ((
+                                             src.FrontendStart IS NOT NULL
+                                             AND target.FrontendStart IS NOT NULL
+                                             AND src.FrontendStart > target.FrontendStart
+                                         ) OR (
+                                             (src.FrontendStart IS NULL OR target.FrontendStart IS NULL)
+                                             AND target.FirstSeen IS NOT NULL
+                                             AND src.FirstSeen > target.FirstSeen
+                                         ))
+                                          AND target.IsBookSuccessful = 1
+                                          AND src.IsBookSuccessful = 0
+                                             THEN target.FailReason
+                                         ELSE src.FailReason
+                                     END,
+            BookOk                 = CASE
+                                         WHEN ((
+                                             src.FrontendStart IS NOT NULL
+                                             AND target.FrontendStart IS NOT NULL
+                                             AND src.FrontendStart > target.FrontendStart
+                                         ) OR (
+                                             (src.FrontendStart IS NULL OR target.FrontendStart IS NULL)
+                                             AND target.FirstSeen IS NOT NULL
+                                             AND src.FirstSeen > target.FirstSeen
+                                         ))
+                                          AND target.BookOk > src.BookOk
+                                             THEN target.BookOk
+                                         ELSE src.BookOk
+                                     END,
             BookFail               = src.BookFail,
-            IsBookSuccessful       = src.IsBookSuccessful,
-            PassedSearch           = src.PassedSearch,
-            DistinctOkRes          = src.DistinctOkRes,
-            BookedReservations     = src.BookedReservations,
+            IsBookSuccessful       = CASE
+                                         WHEN ((
+                                             src.FrontendStart IS NOT NULL
+                                             AND target.FrontendStart IS NOT NULL
+                                             AND src.FrontendStart > target.FrontendStart
+                                         ) OR (
+                                             (src.FrontendStart IS NULL OR target.FrontendStart IS NULL)
+                                             AND target.FirstSeen IS NOT NULL
+                                             AND src.FirstSeen > target.FirstSeen
+                                         ))
+                                          AND target.IsBookSuccessful = 1
+                                             THEN CONVERT(bit, 1)
+                                         ELSE src.IsBookSuccessful
+                                     END,
+            PassedSearch           = CASE
+                                         WHEN ((
+                                             src.FrontendStart IS NOT NULL
+                                             AND target.FrontendStart IS NOT NULL
+                                             AND src.FrontendStart > target.FrontendStart
+                                         ) OR (
+                                             (src.FrontendStart IS NULL OR target.FrontendStart IS NULL)
+                                             AND target.FirstSeen IS NOT NULL
+                                             AND src.FirstSeen > target.FirstSeen
+                                         ))
+                                          AND target.PassedSearch = 1
+                                             THEN CONVERT(bit, 1)
+                                         ELSE src.PassedSearch
+                                     END,
+            DistinctOkRes          = CASE
+                                         WHEN ((
+                                             src.FrontendStart IS NOT NULL
+                                             AND target.FrontendStart IS NOT NULL
+                                             AND src.FrontendStart > target.FrontendStart
+                                         ) OR (
+                                             (src.FrontendStart IS NULL OR target.FrontendStart IS NULL)
+                                             AND target.FirstSeen IS NOT NULL
+                                             AND src.FirstSeen > target.FirstSeen
+                                         ))
+                                          AND target.DistinctOkRes > src.DistinctOkRes
+                                             THEN target.DistinctOkRes
+                                         ELSE src.DistinctOkRes
+                                     END,
+            BookedReservations     = CASE
+                                         WHEN ((
+                                             src.FrontendStart IS NOT NULL
+                                             AND target.FrontendStart IS NOT NULL
+                                             AND src.FrontendStart > target.FrontendStart
+                                         ) OR (
+                                             (src.FrontendStart IS NULL OR target.FrontendStart IS NULL)
+                                             AND target.FirstSeen IS NOT NULL
+                                             AND src.FirstSeen > target.FirstSeen
+                                         ))
+                                          AND (
+                                              src.BookedReservations IS NULL
+                                              OR src.BookedReservations IN (N'', N'[]', N'null')
+                                          )
+                                          AND NULLIF(target.BookedReservations, N'') IS NOT NULL
+                                          AND target.BookedReservations <> N'[]'
+                                             THEN target.BookedReservations
+                                         ELSE src.BookedReservations
+                                     END,
             FailedCalls            = src.FailedCalls,
             Exceptions             = src.Exceptions,
             JourneyTotalMs         = src.JourneyTotalMs,
@@ -504,15 +768,93 @@ BEGIN
                                          ELSE target.FirstSeen
                                      END,
             LastSeen               = src.LastSeen,
-            StepsJson              = src.StepsJson,
-            JourneyJson            = src.JourneyJson
+            FrontendStart          = CASE
+                                         WHEN target.FrontendStart IS NULL THEN src.FrontendStart
+                                         WHEN src.FrontendStart IS NULL THEN target.FrontendStart
+                                         WHEN src.FrontendStart < target.FrontendStart THEN src.FrontendStart
+                                         ELSE target.FrontendStart
+                                     END,
+            FrontendEnd            = CASE
+                                         WHEN target.FrontendEnd IS NULL THEN src.FrontendEnd
+                                         WHEN src.FrontendEnd IS NULL THEN target.FrontendEnd
+                                         WHEN src.FrontendEnd > target.FrontendEnd THEN src.FrontendEnd
+                                         ELSE target.FrontendEnd
+                                     END,
+            StepsJson              = CASE
+                                         WHEN ((
+                                             src.FrontendStart IS NOT NULL
+                                             AND target.FrontendStart IS NOT NULL
+                                             AND src.FrontendStart > target.FrontendStart
+                                         ) OR (
+                                             (src.FrontendStart IS NULL OR target.FrontendStart IS NULL)
+                                             AND target.FirstSeen IS NOT NULL
+                                             AND src.FirstSeen > target.FirstSeen
+                                         ))
+                                          AND ISJSON(target.StepsJson) = 1
+                                          AND ISJSON(src.StepsJson) = 1
+                                             THEN COALESCE(
+                                                 (
+                                                     SELECT N'[' + STRING_AGG(N'"' + STRING_ESCAPE(names.stepName, 'json') + N'"', N',') + N']'
+                                                     FROM (
+                                                         SELECT DISTINCT steps.[value] AS stepName
+                                                         FROM (
+                                                             SELECT head.[value]
+                                                             FROM OPENJSON(target.StepsJson) AS head
+                                                             WHERE ISJSON(head.[value]) = 0
+                                                             UNION
+                                                             SELECT tail.[value]
+                                                             FROM OPENJSON(src.StepsJson) AS tail
+                                                             WHERE ISJSON(tail.[value]) = 0
+                                                         ) AS steps
+                                                     ) AS names
+                                                 ),
+                                                 src.StepsJson)
+                                         ELSE src.StepsJson
+                                     END,
+            JourneyJson            = CASE
+                                         WHEN ((
+                                             src.FrontendStart IS NOT NULL
+                                             AND target.FrontendStart IS NOT NULL
+                                             AND src.FrontendStart > target.FrontendStart
+                                         ) OR (
+                                             (src.FrontendStart IS NULL OR target.FrontendStart IS NULL)
+                                             AND target.FirstSeen IS NOT NULL
+                                             AND src.FirstSeen > target.FirstSeen
+                                         ))
+                                          AND ISJSON(target.JourneyJson) = 1
+                                          AND ISJSON(src.JourneyJson) = 1
+                                             THEN COALESCE(
+                                                 (
+                                                     SELECT N'[' + STRING_AGG(CAST(piece.[value] AS nvarchar(max)), N',')
+                                                            WITHIN GROUP (ORDER BY TRY_CONVERT(int, JSON_VALUE(piece.[value], '$.stageNo'))) + N']'
+                                                     FROM (
+                                                         SELECT head.[value]
+                                                         FROM OPENJSON(target.JourneyJson) AS head
+                                                         WHERE (
+                                                             TRY_CONVERT(datetimeoffset(7), JSON_VALUE(head.[value], '$.t')) IS NULL
+                                                             OR TRY_CONVERT(datetimeoffset(7), JSON_VALUE(head.[value], '$.t')) < COALESCE(src.FrontendStart, src.FirstSeen)
+                                                         )
+                                                         AND NOT EXISTS (
+                                                             SELECT 1
+                                                             FROM OPENJSON(src.JourneyJson) AS incoming
+                                                             WHERE JSON_VALUE(incoming.[value], '$.stageNo') = JSON_VALUE(head.[value], '$.stageNo')
+                                                               AND JSON_VALUE(incoming.[value], '$.stageNo') IS NOT NULL
+                                                         )
+                                                         UNION ALL
+                                                         SELECT tail.[value]
+                                                         FROM OPENJSON(src.JourneyJson) AS tail
+                                                     ) AS piece
+                                                 ),
+                                                 src.JourneyJson)
+                                         ELSE src.JourneyJson
+                                     END
     WHEN NOT MATCHED BY TARGET THEN
         INSERT
         (
             QueryRunId, ClubId, CorrelationId, SessionId, UserId, SessionCount, Outcome, LastStep, FailReason,
             BookOk, BookFail, IsBookSuccessful, PassedSearch, DistinctOkRes, BookedReservations,
             FailedCalls, Exceptions, JourneyTotalMs, SlowestCallMs, OverallP95,
-            SearchToConfirmSeconds, FirstSeen, LastSeen, StepsJson, JourneyJson
+            SearchToConfirmSeconds, FirstSeen, LastSeen, FrontendStart, FrontendEnd, StepsJson, JourneyJson
         )
         VALUES
         (
@@ -520,7 +862,8 @@ BEGIN
             src.LastStep, src.FailReason, src.BookOk, src.BookFail, src.IsBookSuccessful,
             src.PassedSearch, src.DistinctOkRes, src.BookedReservations, src.FailedCalls,
             src.Exceptions, src.JourneyTotalMs, src.SlowestCallMs, src.OverallP95,
-            src.SearchToConfirmSeconds, src.FirstSeen, src.LastSeen, src.StepsJson, src.JourneyJson
+            src.SearchToConfirmSeconds, src.FirstSeen, src.LastSeen, src.FrontendStart, src.FrontendEnd,
+            src.StepsJson, src.JourneyJson
         )
     -- Every row this MERGE emits was either new or rewritten, so all of them need their steps
     -- and calls rebuilt.

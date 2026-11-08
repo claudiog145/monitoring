@@ -1,0 +1,295 @@
+{
+  "companyKey": "bank",
+  "profileKey": "banco",
+  "displayName": "Banco Andino (demo)",
+  "apps": [
+    { "appId": "demo-bank-web-banking", "database": "bank-web-banking", "roleName": "web-banking", "host": "www.bancoandino.demo" },
+    { "appId": "demo-bank-mobile-api", "database": "bank-mobile-api", "roleName": "mobile-api", "host": "api.bancoandino.demo" },
+    { "appId": "demo-bank-payments-svc", "database": "bank-payments-svc", "roleName": "payments-svc", "host": "pagos.bancoandino.internal" },
+    { "appId": "demo-bank-core-gateway", "database": "bank-core-gateway", "roleName": "core-gateway", "host": "core-gw.bancoandino.internal" }
+  ],
+  "entities": { "kind": "branch", "dimension": "BranchId", "count": 120, "zipf": 1.1, "idFormat": "B-{0:000}", "hostTemplate": null },
+  "traffic": {
+    "requestsPerDay": 160000,
+    "hourlyCurve": [16, 13, 9, 6, 3, 2, 1, 1, 1, 1, 2, 4, 7, 10, 11, 11, 12, 15, 16, 12, 11, 11, 12, 15],
+    "weekendFactor": 0.75
+  },
+  "steps": [
+    {
+      "app": "demo-bank-web-banking", "name": "POST /auth/login", "url": "/auth/login", "weight": 0.06,
+      "p50Ms": 260, "p95Ms": 780, "errorRate": 0.004,
+      "exceptions": [
+        { "type": "System.Security.Authentication.AuthenticationException", "message": "Session token could not be issued for the customer", "method": "Auth.IssueToken", "weight": 2 },
+        { "type": "System.TimeoutException", "message": "OTP challenge expired before validation", "method": "Auth.VerifyOtp", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "antifraud", "target": "score.vigiafraude.demo", "type": "HTTP", "name": "POST /v2/score/login", "p50Ms": 45, "p95Ms": 180, "failureRate": 0.0008 },
+        { "partner": "otp-sms", "target": "otp.mensajeriaandes.demo", "type": "HTTP", "name": "POST /v1/otp/send", "p50Ms": 320, "p95Ms": 1400, "failureRate": 0.002 }
+      ],
+      "businessEvent": { "name": "LoginSucceeded", "onSuccessOnly": true }
+    },
+    {
+      "app": "demo-bank-web-banking", "name": "GET /banca/cuentas/saldos", "url": "/banca/cuentas/saldos", "weight": 0.12,
+      "p50Ms": 170, "p95Ms": 520, "errorRate": 0.004,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Core gateway timeout reading balances", "method": "Accounts.GetBalances", "weight": 3 },
+        { "type": "System.NullReferenceException", "message": "Account summary cache entry was empty", "method": "Accounts.BuildSummary", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "core-banking", "target": "core-gw.bancoandino.internal", "type": "HTTP", "name": "GET /core/v1/accounts/balances", "p50Ms": 95, "p95Ms": 380, "failureRate": 0.001 }
+      ]
+    },
+    {
+      "app": "demo-bank-web-banking", "name": "GET /banca/cuentas/movimientos", "url": "/banca/cuentas/movimientos?dias=30", "weight": 0.06,
+      "p50Ms": 310, "p95Ms": 980, "errorRate": 0.004,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Core gateway timeout reading account movements", "method": "Accounts.GetMovements", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "core-banking", "target": "core-gw.bancoandino.internal", "type": "HTTP", "name": "GET /core/v1/accounts/movements", "p50Ms": 210, "p95Ms": 750, "failureRate": 0.001 }
+      ]
+    },
+    {
+      "app": "demo-bank-web-banking", "name": "POST /banca/transferencias", "url": "/banca/transferencias", "weight": 0.035,
+      "p50Ms": 450, "p95Ms": 1400, "errorRate": 0.005,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Core gateway timeout posting transfer", "method": "Transfers.Execute", "weight": 3 },
+        { "type": "Andino.Banking.LimitExceededException", "message": "Transfer rejected: daily limit exceeded", "method": "Transfers.Validate", "weight": 2 },
+        { "type": "System.InvalidOperationException", "message": "Beneficiary list was not loaded", "method": "Transfers.LoadBeneficiaries", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "antifraud", "target": "score.vigiafraude.demo", "type": "HTTP", "name": "POST /v2/score/transfer", "p50Ms": 60, "p95Ms": 240, "failureRate": 0.0008 },
+        { "partner": "core-banking", "target": "core-gw.bancoandino.internal", "type": "HTTP", "name": "POST /core/v1/transfers", "p50Ms": 230, "p95Ms": 820, "failureRate": 0.0015 }
+      ],
+      "businessEvent": { "name": "TransferCompleted", "onSuccessOnly": true, "measurements": { "Amount": { "min": 20, "max": 8000 } } }
+    },
+    {
+      "app": "demo-bank-web-banking", "name": "POST /banca/pagos/servicios", "url": "/banca/pagos/servicios", "weight": 0.03,
+      "p50Ms": 520, "p95Ms": 1700, "errorRate": 0.005,
+      "exceptions": [
+        { "type": "System.Net.Http.HttpRequestException", "message": "Biller hub returned 503 Service Unavailable", "method": "BillPayments.Submit", "weight": 2 },
+        { "type": "Andino.Banking.BillNotFoundException", "message": "Bill reference not found at the biller", "method": "BillPayments.Lookup", "weight": 2 }
+      ],
+      "dependencies": [
+        { "partner": "biller-hub", "target": "api.recaudanet.demo", "type": "HTTP", "name": "POST /api/v2/recaudos/pagar", "p50Ms": 340, "p95Ms": 1300, "failureRate": 0.003 },
+        { "partner": "core-banking", "target": "core-gw.bancoandino.internal", "type": "HTTP", "name": "POST /core/v1/debits", "p50Ms": 200, "p95Ms": 700, "failureRate": 0.0015 }
+      ],
+      "businessEvent": { "name": "BillPaid", "onSuccessOnly": true, "measurements": { "Amount": { "min": 5, "max": 1500 } } }
+    },
+    {
+      "app": "demo-bank-web-banking", "name": "GET /banca/comprobantes", "url": "/banca/comprobantes?tipo=transferencia", "weight": 0.025,
+      "p50Ms": 130, "p95Ms": 420, "errorRate": 0.003,
+      "exceptions": [
+        { "type": "System.InvalidOperationException", "message": "Receipt not found for the operation", "method": "Receipts.Get", "weight": 1 }
+      ]
+    },
+    {
+      "app": "demo-bank-mobile-api", "name": "POST /api/mobile/v2/auth/login", "url": "/api/mobile/v2/auth/login", "weight": 0.09,
+      "p50Ms": 230, "p95Ms": 700, "errorRate": 0.004,
+      "exceptions": [
+        { "type": "System.Security.Authentication.AuthenticationException", "message": "Device binding could not be verified", "method": "MobileAuth.VerifyDevice", "weight": 2 },
+        { "type": "System.TimeoutException", "message": "OTP challenge expired before validation", "method": "MobileAuth.VerifyOtp", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "antifraud", "target": "score.vigiafraude.demo", "type": "HTTP", "name": "POST /v2/score/login", "p50Ms": 45, "p95Ms": 180, "failureRate": 0.0008 },
+        { "partner": "otp-sms", "target": "otp.mensajeriaandes.demo", "type": "HTTP", "name": "POST /v1/otp/send", "p50Ms": 320, "p95Ms": 1400, "failureRate": 0.002 }
+      ],
+      "businessEvent": { "name": "LoginSucceeded", "onSuccessOnly": true }
+    },
+    {
+      "app": "demo-bank-mobile-api", "name": "GET /api/mobile/v2/accounts/balance", "url": "/api/mobile/v2/accounts/balance", "weight": 0.16,
+      "p50Ms": 140, "p95Ms": 460, "errorRate": 0.004,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Core gateway timeout reading balances", "method": "MobileAccounts.GetBalance", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "core-banking", "target": "core-gw.bancoandino.internal", "type": "HTTP", "name": "GET /core/v1/accounts/balances", "p50Ms": 95, "p95Ms": 380, "failureRate": 0.001 }
+      ]
+    },
+    {
+      "app": "demo-bank-mobile-api", "name": "POST /api/mobile/v2/transfers", "url": "/api/mobile/v2/transfers", "weight": 0.05,
+      "p50Ms": 410, "p95Ms": 1300, "errorRate": 0.005,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Core gateway timeout posting transfer", "method": "MobileTransfers.Execute", "weight": 3 },
+        { "type": "Andino.Banking.LimitExceededException", "message": "Transfer rejected: daily limit exceeded", "method": "MobileTransfers.Validate", "weight": 2 },
+        { "type": "System.NullReferenceException", "message": "Object reference not set to an instance of an object (BeneficiaryMapper.MapFavourites)", "method": "BeneficiaryMapper.MapFavourites", "weight": 0.3 }
+      ],
+      "dependencies": [
+        { "partner": "antifraud", "target": "score.vigiafraude.demo", "type": "HTTP", "name": "POST /v2/score/transfer", "p50Ms": 60, "p95Ms": 240, "failureRate": 0.0008 },
+        { "partner": "core-banking", "target": "core-gw.bancoandino.internal", "type": "HTTP", "name": "POST /core/v1/transfers", "p50Ms": 230, "p95Ms": 820, "failureRate": 0.0015 }
+      ],
+      "businessEvent": { "name": "TransferCompleted", "onSuccessOnly": true, "measurements": { "Amount": { "min": 10, "max": 5000 } } }
+    },
+    {
+      "app": "demo-bank-mobile-api", "name": "POST /api/mobile/v2/cards/lock", "url": "/api/mobile/v2/cards/lock", "weight": 0.012,
+      "p50Ms": 280, "p95Ms": 900, "errorRate": 0.004,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Card network did not confirm the block request", "method": "Cards.Lock", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "card-network", "target": "issuer-api.redcondor.demo", "type": "HTTP", "name": "POST /issuer/v1/cards/block", "p50Ms": 160, "p95Ms": 650, "failureRate": 0.002 }
+      ],
+      "businessEvent": { "name": "CardBlocked", "onSuccessOnly": true }
+    },
+    {
+      "app": "demo-bank-mobile-api", "name": "GET /api/mobile/v2/cards", "url": "/api/mobile/v2/cards", "weight": 0.03,
+      "p50Ms": 190, "p95Ms": 600, "errorRate": 0.003,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Card status lookup timed out", "method": "Cards.List", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "card-network", "target": "issuer-api.redcondor.demo", "type": "HTTP", "name": "GET /issuer/v1/cards/status", "p50Ms": 110, "p95Ms": 420, "failureRate": 0.0015 }
+      ]
+    },
+    {
+      "app": "demo-bank-payments-svc", "name": "POST /payments/v1/ach/transfers", "url": "/payments/v1/ach/transfers", "weight": 0.025,
+      "p50Ms": 680, "p95Ms": 2300, "errorRate": 0.006,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "ACH acknowledgement not received within 30 s", "method": "Ach.SubmitCreditTransfer", "weight": 2 },
+        { "type": "Andino.Payments.AchRejectedException", "message": "ACH clearing house rejected the credit transfer (R03 account not found)", "method": "Ach.HandleReturn", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "antifraud", "target": "score.vigiafraude.demo", "type": "HTTP", "name": "POST /v2/score/interbank", "p50Ms": 70, "p95Ms": 260, "failureRate": 0.0008 },
+        { "partner": "ach-clearing", "target": "ach.compensandes.demo", "type": "HTTP", "name": "POST /ach/v3/credit-transfers", "p50Ms": 420, "p95Ms": 1600, "failureRate": 0.003 }
+      ],
+      "businessEvent": { "name": "InterbankTransferSubmitted", "onSuccessOnly": false, "measurements": { "Amount": { "min": 50, "max": 20000 } } }
+    },
+    {
+      "app": "demo-bank-payments-svc", "name": "POST /payments/v1/bill-payments", "url": "/payments/v1/bill-payments", "weight": 0.03,
+      "p50Ms": 480, "p95Ms": 1500, "errorRate": 0.006,
+      "exceptions": [
+        { "type": "System.Net.Http.HttpRequestException", "message": "Biller hub returned 503 Service Unavailable", "method": "BillProcessor.Pay", "weight": 2 },
+        { "type": "Andino.Banking.BillNotFoundException", "message": "Bill reference not found at the biller", "method": "BillProcessor.Lookup", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "biller-hub", "target": "api.recaudanet.demo", "type": "HTTP", "name": "POST /api/v2/recaudos/pagar", "p50Ms": 330, "p95Ms": 1250, "failureRate": 0.003 },
+        { "partner": "core-banking", "target": "core-gw.bancoandino.internal", "type": "HTTP", "name": "POST /core/v1/debits", "p50Ms": 200, "p95Ms": 700, "failureRate": 0.0015 }
+      ],
+      "businessEvent": { "name": "BillPaid", "onSuccessOnly": true, "measurements": { "Amount": { "min": 5, "max": 1500 } } }
+    },
+    {
+      "app": "demo-bank-payments-svc", "name": "POST /payments/v1/card-authorizations", "url": "/payments/v1/card-authorizations", "weight": 0.09,
+      "p50Ms": 150, "p95Ms": 480, "errorRate": 0.005,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Authorization hold not confirmed by core within 2 s", "method": "CardAuth.PlaceHold", "weight": 2 },
+        { "type": "System.InvalidOperationException", "message": "Card account is in an unexpected state", "method": "CardAuth.Validate", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "antifraud", "target": "score.vigiafraude.demo", "type": "HTTP", "name": "POST /v2/score/card", "p50Ms": 35, "p95Ms": 140, "failureRate": 0.0008 },
+        { "partner": "core-banking", "target": "core-gw.bancoandino.internal", "type": "HTTP", "name": "POST /core/v1/holds", "p50Ms": 70, "p95Ms": 260, "failureRate": 0.001 }
+      ],
+      "businessEvent": { "name": "CardAuthorized", "onSuccessOnly": true, "measurements": { "Amount": { "min": 2, "max": 2500 } } }
+    },
+    {
+      "app": "demo-bank-core-gateway", "name": "POST /core/v1/transfers", "url": "/core/v1/transfers", "weight": 0.04,
+      "p50Ms": 210, "p95Ms": 760, "errorRate": 0.006,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "CICS transaction TRF1 timed out after 5000 ms", "method": "CoreGateway.PostTransfer", "weight": 3 },
+        { "type": "Andino.Core.MainframeException", "message": "MQ reply queue depth exceeded on TRF1.REPLY", "method": "CoreGateway.AwaitReply", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "core-banking", "target": "mq.mainframe.bancoandino.internal", "type": "MQ", "name": "PUT TRF1.REQUEST", "p50Ms": 140, "p95Ms": 600, "failureRate": 0.002 }
+      ]
+    },
+    {
+      "app": "demo-bank-core-gateway", "name": "GET /core/v1/accounts/balances", "url": "/core/v1/accounts/balances", "weight": 0.13,
+      "p50Ms": 85, "p95Ms": 330, "errorRate": 0.005,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "CICS transaction BAL1 timed out after 3000 ms", "method": "CoreGateway.ReadBalances", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "core-banking", "target": "cics.mainframe.bancoandino.internal", "type": "CICS", "name": "CICS BAL1", "p50Ms": 55, "p95Ms": 260, "failureRate": 0.001 }
+      ]
+    },
+    {
+      "app": "demo-bank-core-gateway", "name": "POST /core/v1/debits", "url": "/core/v1/debits", "weight": 0.025,
+      "p50Ms": 190, "p95Ms": 700, "errorRate": 0.006,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "CICS transaction DEB1 timed out after 5000 ms", "method": "CoreGateway.PostDebit", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "core-banking", "target": "cics.mainframe.bancoandino.internal", "type": "CICS", "name": "CICS DEB1", "p50Ms": 120, "p95Ms": 520, "failureRate": 0.0015 }
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "key": "core-gw-slow-deploy", "title": "Core-gateway lento tras el despliegue 4.18",
+      "description": "Release 4.18 of core-gateway shrinks the CICS/MQ connection pool: every call to the core banking mainframe gets ~5x slower, the balance and transfer screens of web and mobile slow down, and core transfers start timing out.",
+      "defaultDurationMinutes": 40,
+      "effects": [
+        { "kind": "latency-multiplier", "partner": "core-banking", "factor": 5 },
+        { "kind": "error-rate", "step": "POST /core/v1/transfers", "rate": 0.25, "exceptionType": "System.TimeoutException" }
+      ]
+    },
+    {
+      "key": "mobile-transfer-exceptions", "title": "Tormenta de excepciones en transferencias móviles (release 7.4)",
+      "description": "Mobile API release 7.4 maps the favourite beneficiaries payload without a null check: 60 % of the mobile transfers (customers with no favourites) throw NullReferenceException. Web transfers are fine.",
+      "defaultDurationMinutes": 20,
+      "effects": [
+        { "kind": "error-rate", "step": "POST /api/mobile/v2/transfers", "rate": 0.6, "exceptionType": "System.NullReferenceException" }
+      ]
+    },
+    {
+      "key": "ach-outage", "title": "Caída de la cámara de compensación ACH",
+      "description": "The ACH clearing house (CompensAndes) refuses most credit transfers and answers slowly: interbank transfers are rejected while internal transfers keep working.",
+      "defaultDurationMinutes": 30,
+      "effects": [
+        { "kind": "dependency-failure", "partner": "ach-clearing", "rate": 0.85 },
+        { "kind": "latency-multiplier", "partner": "ach-clearing", "factor": 3 }
+      ]
+    },
+    {
+      "key": "branch-degraded", "title": "Sucursal B-003 degradada",
+      "description": "The regional link of branch B-003 (Arequipa - Yanahuara) saturates: only the customers and operations booked to that branch see slow and failing operations on every channel.",
+      "defaultDurationMinutes": 45,
+      "effects": [
+        { "kind": "entity-only", "entities": ["B-003"] },
+        { "kind": "latency-multiplier", "factor": 6 },
+        { "kind": "error-rate", "rate": 0.25, "exceptionType": "System.TimeoutException" }
+      ]
+    },
+    {
+      "key": "card-network-degraded", "title": "Red de tarjetas degradada",
+      "description": "The card network issuer API (Red Cóndor) fails half of the block and status calls: customers cannot lock a lost card from the app.",
+      "defaultDurationMinutes": 30,
+      "effects": [
+        { "kind": "dependency-failure", "partner": "card-network", "rate": 0.5 },
+        { "kind": "latency-multiplier", "partner": "card-network", "factor": 4 }
+      ]
+    },
+    {
+      "key": "otp-delays", "title": "Demora del proveedor SMS/OTP",
+      "description": "The SMS/OTP provider (Mensajería Andes) queues messages: login latency jumps on web and mobile and 70 % of the OTP sends fail, so successful logins drop.",
+      "defaultDurationMinutes": 25,
+      "effects": [
+        { "kind": "latency-multiplier", "partner": "otp-sms", "factor": 8 },
+        { "kind": "dependency-failure", "partner": "otp-sms", "rate": 0.7 }
+      ]
+    },
+    {
+      "key": "transfers-drop", "title": "Caída silenciosa de transferencias (negocio)",
+      "description": "A feature flag hides the 'Transferir' button after a front-end release: transfers fall by ~75 % on mobile and web, with no exception and no latency change. Only the business KPI sees it.",
+      "defaultDurationMinutes": 45,
+      "effects": [
+        { "kind": "traffic-multiplier", "step": "POST /api/mobile/v2/transfers", "factor": 0.2 },
+        { "kind": "traffic-multiplier", "step": "POST /banca/transferencias", "factor": 0.3 }
+      ]
+    },
+    {
+      "key": "payday-peak", "title": "Pico de quincena / fin de mes (legítimo)",
+      "description": "Payday: salaries are credited and customers check balances, pay bills and transfer at once. Traffic grows 50 % on every channel with normal latency and error rate. Nothing is broken: no KPI should alert.",
+      "defaultDurationMinutes": 180,
+      "effects": [
+        { "kind": "traffic-multiplier", "factor": 1.5 }
+      ]
+    }
+  ],
+  "historicalIncidents": [
+    { "scenario": "payday-peak", "hoursAgo": 72, "durationMinutes": 240 },
+    { "scenario": "core-gw-slow-deploy", "hoursAgo": 49, "durationMinutes": 45 },
+    { "scenario": "branch-degraded", "hoursAgo": 47, "durationMinutes": 50 },
+    { "scenario": "ach-outage", "hoursAgo": 25, "durationMinutes": 40 },
+    { "scenario": "otp-delays", "hoursAgo": 23, "durationMinutes": 25 }
+  ]
+}

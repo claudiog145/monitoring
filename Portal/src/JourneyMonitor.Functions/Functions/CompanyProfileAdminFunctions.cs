@@ -4,6 +4,7 @@ using JourneyMonitor.Core.Abstractions;
 using JourneyMonitor.Core.Company;
 using JourneyMonitor.Core.Onboarding;
 using JourneyMonitor.Core.Options;
+using JourneyMonitor.Core.UseCases;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
@@ -26,7 +27,8 @@ public sealed class CompanyProfileAdminFunctions(
     ILogger<CompanyProfileAdminFunctions> logger,
     IProfileWriteValidator? validator = null,
     ICompanyAdapterProvider? adapters = null,
-    IActiveCompanyProfileStore? activeStore = null)
+    IActiveCompanyProfileStore? activeStore = null,
+    TelemetrySourceOwnershipGuard? aliasOwnership = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -225,6 +227,17 @@ public sealed class CompanyProfileAdminFunctions(
                         + (validation.Problems.Count > 1 ? $" (and {validation.Problems.Count - 1} more problem(s) - see problems.)" : ""),
                     problems = validation.Problems,
                 });
+            }
+
+            // Every save path (the editor and the onboarding draft) lands here, so this is where a
+            // profile is stopped from claiming another company's telemetry source (AG8).
+            if (aliasOwnership is not null)
+            {
+                var foreign = await aliasOwnership.FindForeignAliasesAsync(candidate, ct);
+                if (foreign.Count > 0)
+                {
+                    return (HttpStatusCode.BadRequest, (object)new { error = foreign[0], problems = foreign });
+                }
             }
 
             var changedBy = string.IsNullOrWhiteSpace(body.UpdatedBy) ? "portal" : body.UpdatedBy!.Trim();

@@ -94,4 +94,19 @@ public static class KqlQueryKeys
     public const string ScoutDrillDown = "scout:drilldown";
 
     public const string IncidentExceptions = "incident:exceptions";
+
+    /// <summary>
+    /// Prefix of the custom catalog queries a company creates for its <c>kql:{queryKey}</c> KPIs
+    /// (contract v4 §5). Unlike every key above, these have no built-in text: the row is the query.
+    /// </summary>
+    public const string CustomKpiPrefix = "kpi:";
+
+    public const int MaxCustomKeyLength = 128;
+
+    private static readonly System.Text.RegularExpressions.Regex CustomKpiPattern = new(
+        @"\Akpi:[a-z0-9:._-]+\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>True for <c>kpi:</c> followed by at least one of <c>[a-z0-9:._-]</c>, lowercase only, at most 128 characters.</summary>
+    public static bool IsCustomKpi(string? queryKey) =>
+        queryKey is not null && queryKey.Length <= MaxCustomKeyLength && CustomKpiPattern.IsMatch(queryKey);
 }

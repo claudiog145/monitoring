@@ -1,14 +1,17 @@
-﻿-- Club and Fusion application map. One row per SaveOn VacationClub.ID (PK = ClubId).
+﻿-- Application Map inventory. One row per inventory key (PK = ClubId).
 -- brand.Information stays the short Club dropdown. This table is the full inventory.
--- ClientId comes from SaveOn VacationClub.VacationClubClientID.
--- FusionPlatform is Fusion, Hybrid, or Unknown (Vera brand list + SaveOn match rules).
--- Domain is a legacy CSV used only to seed brand.ClubProductMaturityStatus; the Club Map UI
+-- ClientId: SaveOn VacationClubClientID, or Members PartnerId for NG.
+-- FusionPlatform (historical column name): platform family Fusion | Hybrid | SOR | NG.
+-- NG rows use ClubId = 1000000 + MemberClassId so they do not collide with SaveOn IDs;
+-- the Application Map UI subtracts that offset when showing Club ID.
+-- Domain is a legacy CSV used only to seed brand.ClubProductMaturityStatus; the UI
 -- reads Products + Status from CreateClubInventoryMaturity.sql tables.
 -- Servers, Owner, and ValidationDate are omitted. Validation is the platform-owner review of the map.
--- Docker init creates the table and loads data via SeedClubInventory.sql
--- (all clubs), SeedClubInventoryFusionHybrid.sql (Fusion/Hybrid upsert), then
--- SeedClubProductMaturityStatus.sql. Full seed is included for local Docker
--- (init only runs locally); remove from init-sql.sh if startup becomes too slow.
+-- Docker init: CreateClubInventory.sql → SeedClubInventory.sql →
+-- SeedClubProductMaturityStatus.sql. Full seed is for local Docker; trim from
+-- init-sql.sh if startup becomes too slow.
+-- Observed (1) is NOT applied by init. Run PatchClubProductMaturity_Observed.sql
+-- manually (see workbooks/application-map/README.md § Observed maturity).
 
 IF SCHEMA_ID(N'brand') IS NULL
     EXEC(N'CREATE SCHEMA brand');

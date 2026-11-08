@@ -335,6 +335,7 @@ GO
 -- above), so defaulting to it would silently turn "all companies" into "only the unattributed
 -- rows" and every KPI would read zero. NULL is the only value that cannot collide with a real one.
 -- Without it these counters sum two customers into one number, which is worse than no number.
+-- Rows stored with N'' are the incumbent's (contract v6 §3): a read for N'arrivia' includes them.
 CREATE OR ALTER PROCEDURE monitoring.usp_GetScoutStats
     @Board nvarchar(16) = NULL,
     @ProfileKey nvarchar(128) = NULL
@@ -342,32 +343,32 @@ AS
 BEGIN
     SET NOCOUNT ON;
     SELECT
-        Cycles             = (SELECT COUNT(*) FROM monitoring.ScoutRun WHERE CompletedAt IS NOT NULL AND (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey)),
-        ClearCycles        = (SELECT COUNT(*) FROM monitoring.ScoutRun WHERE Status = N'clear' AND (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey)),
-        DetectedCycles     = (SELECT COUNT(*) FROM monitoring.ScoutRun WHERE Status = N'detected' AND (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey)),
-        FailedCycles       = (SELECT COUNT(*) FROM monitoring.ScoutRun WHERE Status = N'failed' AND (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey)),
-        BoardRowsEvaluated = ISNULL((SELECT SUM(CAST(BoardRowsEvaluated AS bigint)) FROM monitoring.ScoutRun WHERE (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey)), 0),
-        CandidatesFound    = ISNULL((SELECT SUM(CandidatesFound) FROM monitoring.ScoutRun WHERE (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey)), 0),
-        PackagesCreated    = ISNULL((SELECT SUM(PackagesCreated) FROM monitoring.ScoutRun WHERE (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey)), 0),
-        DuplicatesAvoided  = ISNULL((SELECT SUM(PackagesSkippedDuplicate) FROM monitoring.ScoutRun WHERE (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey)), 0),
-        MaxClubsWatched    = ISNULL((SELECT MAX(ClubsWatched) FROM monitoring.ScoutRun WHERE (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey)), 0),
+        Cycles             = (SELECT COUNT(*) FROM monitoring.ScoutRun WHERE CompletedAt IS NOT NULL AND (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia'))),
+        ClearCycles        = (SELECT COUNT(*) FROM monitoring.ScoutRun WHERE Status = N'clear' AND (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia'))),
+        DetectedCycles     = (SELECT COUNT(*) FROM monitoring.ScoutRun WHERE Status = N'detected' AND (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia'))),
+        FailedCycles       = (SELECT COUNT(*) FROM monitoring.ScoutRun WHERE Status = N'failed' AND (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia'))),
+        BoardRowsEvaluated = ISNULL((SELECT SUM(CAST(BoardRowsEvaluated AS bigint)) FROM monitoring.ScoutRun WHERE (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia'))), 0),
+        CandidatesFound    = ISNULL((SELECT SUM(CandidatesFound) FROM monitoring.ScoutRun WHERE (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia'))), 0),
+        PackagesCreated    = ISNULL((SELECT SUM(PackagesCreated) FROM monitoring.ScoutRun WHERE (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia'))), 0),
+        DuplicatesAvoided  = ISNULL((SELECT SUM(PackagesSkippedDuplicate) FROM monitoring.ScoutRun WHERE (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia'))), 0),
+        MaxClubsWatched    = ISNULL((SELECT MAX(ClubsWatched) FROM monitoring.ScoutRun WHERE (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia'))), 0),
         -- Joined through the package so the token totals follow the same board AND profile filter
         -- as the rest: the call log has no ProfileKey of its own, the package it documents does.
         -- Both predicates live inside the EXISTS so an unfiltered call still counts every row.
         LlmCalls           = (SELECT COUNT(*) FROM monitoring.ScoutLlmCallLog l
                               WHERE (@Board IS NULL AND @ProfileKey IS NULL)
                                  OR EXISTS (SELECT 1 FROM monitoring.InvestigationPackage p WHERE p.Id = l.InvestigationPackageId
-                                            AND (@Board IS NULL OR p.Board = @Board) AND (@ProfileKey IS NULL OR p.ProfileKey = @ProfileKey))),
+                                            AND (@Board IS NULL OR p.Board = @Board) AND (@ProfileKey IS NULL OR p.ProfileKey = @ProfileKey OR (p.ProfileKey = N'' AND @ProfileKey = N'arrivia')))),
         TokensIn           = ISNULL((SELECT SUM(CAST(l.TokensIn AS bigint)) FROM monitoring.ScoutLlmCallLog l
                               WHERE (@Board IS NULL AND @ProfileKey IS NULL)
                                  OR EXISTS (SELECT 1 FROM monitoring.InvestigationPackage p WHERE p.Id = l.InvestigationPackageId
-                                            AND (@Board IS NULL OR p.Board = @Board) AND (@ProfileKey IS NULL OR p.ProfileKey = @ProfileKey))), 0),
+                                            AND (@Board IS NULL OR p.Board = @Board) AND (@ProfileKey IS NULL OR p.ProfileKey = @ProfileKey OR (p.ProfileKey = N'' AND @ProfileKey = N'arrivia')))), 0),
         TokensOut          = ISNULL((SELECT SUM(CAST(l.TokensOut AS bigint)) FROM monitoring.ScoutLlmCallLog l
                               WHERE (@Board IS NULL AND @ProfileKey IS NULL)
                                  OR EXISTS (SELECT 1 FROM monitoring.InvestigationPackage p WHERE p.Id = l.InvestigationPackageId
-                                            AND (@Board IS NULL OR p.Board = @Board) AND (@ProfileKey IS NULL OR p.ProfileKey = @ProfileKey))), 0),
-        FirstCycleAt       = (SELECT MIN(StartedAt) FROM monitoring.ScoutRun WHERE (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey)),
-        LastCycleAt        = (SELECT MAX(StartedAt) FROM monitoring.ScoutRun WHERE (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey));
+                                            AND (@Board IS NULL OR p.Board = @Board) AND (@ProfileKey IS NULL OR p.ProfileKey = @ProfileKey OR (p.ProfileKey = N'' AND @ProfileKey = N'arrivia')))), 0),
+        FirstCycleAt       = (SELECT MIN(StartedAt) FROM monitoring.ScoutRun WHERE (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia'))),
+        LastCycleAt        = (SELECT MAX(StartedAt) FROM monitoring.ScoutRun WHERE (@Board IS NULL OR Board = @Board) AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia')));
 END
 GO
 
@@ -386,7 +387,7 @@ BEGIN
            PackagesSkippedCap, PackagesVetoedByScout, DurationMs, BoardQueriesJson, SkippedCaseIdsJson, ErrorMessage
     FROM monitoring.ScoutRun
     WHERE (@Board IS NULL OR Board = @Board)
-      AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey)
+      AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia'))
     ORDER BY StartedAt DESC;
 END
 GO
@@ -476,7 +477,7 @@ BEGIN
            AffectedUserCount, Status, ScoutRunId, CreatedAt
     FROM monitoring.InvestigationPackage
     WHERE (@Board IS NULL OR Board = @Board)
-      AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey)
+      AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR (ProfileKey = N'' AND @ProfileKey = N'arrivia'))
     ORDER BY CreatedAt DESC;
 END
 GO

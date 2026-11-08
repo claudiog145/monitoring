@@ -67,6 +67,32 @@ public class CompanyProfileValidatorTests
         Assert.Empty(CompanyProfileValidator.Validate(Profile()));
     }
 
+    /// <summary>
+    /// Regression: a profile whose GET returns a <c>path-contains</c> matcher was refused on save. Every kind
+    /// the model declares must validate, so the list is read from <see cref="StepMatcherKind"/> itself.
+    /// </summary>
+    [Fact]
+    public void Validator_AcceptsEveryStepMatcherKindTheModelDefines()
+    {
+        var declared = typeof(StepMatcherKind)
+            .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+            .Select(f => (string)f.GetRawConstantValue()!)
+            .ToList();
+        Assert.Contains(StepMatcherKind.PathContains, declared);
+        Assert.Equal(declared.Order(StringComparer.Ordinal), CompanyProfileValidator.StepMatcherKinds);
+
+        foreach (var kind in declared)
+        {
+            var profile = Profile([Service("alpha", null, Step("step-a", 1, new StepMatcher(kind, "/a")))]);
+            Assert.Empty(CompanyProfileValidator.Validate(profile));
+        }
+
+        var json = """{"kind":"path-contains","value":"/check"}""";
+        var matcher = System.Text.Json.JsonSerializer.Deserialize<StepMatcher>(json, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
+        Assert.Empty(CompanyProfileValidator.Validate(Profile([Service("alpha", null, Step("step-a", 1, matcher))])));
+    }
+
     /// <summary>A document that failed to parse must not be reported as a valid empty one.</summary>
     [Fact]
     public void A_null_profile_is_an_error_rather_than_an_exception()

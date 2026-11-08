@@ -9,12 +9,24 @@ internal sealed class FakeIncidentReader : IIncidentReader
     public IReadOnlyList<IncidentRow> Rows { get; init; } = [];
     public Exception? Error { get; init; }
     public IncidentReadQuery? LastQuery { get; private set; }
+    public IReadOnlyDictionary<string, int> Counts { get; init; } = new Dictionary<string, int>();
+    public IncidentCountQuery? LastCount { get; private set; }
+    public List<IncidentCountQuery> CountQueries { get; } = [];
+    public Func<IncidentCountQuery, IReadOnlyDictionary<string, int>>? CountsFor { get; init; }
 
     public Task<IReadOnlyList<IncidentRow>> ListAsync(IncidentReadQuery query, CancellationToken cancellationToken)
     {
         LastQuery = query;
         if (Error is not null) throw Error;
         return Task.FromResult(Rows);
+    }
+
+    public Task<IReadOnlyDictionary<string, int>> CountByDomainAsync(IncidentCountQuery query, CancellationToken cancellationToken)
+    {
+        LastCount = query;
+        CountQueries.Add(query);
+        if (Error is not null) throw Error;
+        return Task.FromResult(CountsFor?.Invoke(query) ?? Counts);
     }
 }
 
@@ -85,9 +97,10 @@ public class GetIncidentsServiceTests
                     "https://stays.example/vacationclub/logincheck.aspx",
                     ["corr-1"],
                     [
-                        new IncidentOccurrenceRow(seen, "14001001", "https://stays.example/hotels/book", "Supplier timed out"),
-                        new IncidentOccurrenceRow(seen.AddMinutes(-10), "14001002", "https://stays.example/hotels/search", "earlier"),
-                    ]),
+                        new IncidentOccurrenceRow(seen, "14001001", "https://stays.example/hotels/book", "Supplier timed out", ExceptionSource.Server),
+                        new IncidentOccurrenceRow(seen.AddMinutes(-10), "14001002", "https://stays.example/hotels/search", "earlier", ExceptionSource.Browser),
+                    ],
+                    ExceptionSource.Browser),
             ],
         };
 
@@ -112,6 +125,8 @@ public class GetIncidentsServiceTests
         Assert.Equal("https://stays.example/vacationclub/logincheck.aspx", exception.Url);
         Assert.Equal("01 Login", exception.Component);
         Assert.Equal("System.TimeoutException", exception.Type);
+        Assert.Equal(ExceptionSource.Browser, exception.Source);
+        Assert.Equal(ExceptionSource.Browser, exception.Occurrences[1].Source);
         Assert.Equal("at Booking.Book()", exception.StackTrace);
         Assert.Equal(["corr-1"], exception.JourneysAffected);
         Assert.Equal(2, exception.Occurrences.Count);
@@ -180,6 +195,76 @@ public class GetIncidentsServiceTests
         Assert.Equal("15639", exceptions["EXC-club"].ClubId);
         Assert.Equal("T-Mobile", exceptions["EXC-partner"].ClubName);
         Assert.Equal("SOR", exceptions["EXC-code"].ClubName);
+    }
+
+    [Fact]
+    public async Task BaselineCountIsTheLastSevenDaysForTheSameClub()
+    {
+        var reader = new FakeIncidentReader
+        {
+            Counts = new Dictionary<string, int> { ["hotels"] = 26 },
+        };
+        var before = DateTimeOffset.UtcNow;
+
+        var outcome = await Service(reader).GetAsync(
+            new IncidentListRequest("hotels", "15639", "production", "24h", null),
+            CancellationToken.None);
+
+        var after = DateTimeOffset.UtcNow;
+        Assert.Equal(200, outcome.StatusCode);
+        Assert.Equal(26, outcome.Result.BaselineCounts!["hotels"]);
+        Assert.Equal(26, outcome.Result.WindowCounts!["hotels"]);
+        Assert.Equal("hotels", reader.LastCount!.Domain);
+        Assert.Equal("15639", reader.LastCount.ClubId);
+        Assert.Equal(reader.LastQuery!.Environment, reader.LastCount.Environment);
+        Assert.Null(reader.LastCount.SearchPattern);
+        Assert.InRange(reader.LastCount.Since!.Value, before.AddDays(-7).AddSeconds(-1), after.AddDays(-7).AddSeconds(1));
+    }
+
+    [Fact]
+    public async Task WindowCountUsesTheSelectedWindowAndIsNotCapped()
+    {
+        var reader = new FakeIncidentReader
+        {
+            CountsFor = query => new Dictionary<string, int>
+            {
+                ["hotels"] = query.Since!.Value > DateTimeOffset.UtcNow.AddDays(-2) ? 500 : 900,
+            },
+        };
+
+        var outcome = await Service(reader).GetAsync(
+            new IncidentListRequest("hotels", null, "production", "24h", null),
+            CancellationToken.None);
+
+        Assert.Equal(2, reader.CountQueries.Count);
+        Assert.Equal(reader.LastQuery!.Since, reader.CountQueries[0].Since);
+        Assert.Equal(500, outcome.Result.WindowCounts!["hotels"]);
+        Assert.Equal(900, outcome.Result.BaselineCounts!["hotels"]);
+        Assert.True(outcome.Result.WindowCounts["hotels"] > GetIncidentsService.ListCap);
+    }
+
+    [Fact]
+    public async Task CarClubFilterStaysOnThatClub()
+    {
+        var reader = new FakeIncidentReader();
+        await Service(reader).GetAsync(
+            new IncidentListRequest("cars", "15639", "production", "15m", null),
+            CancellationToken.None);
+
+        Assert.Equal("cars", reader.LastQuery!.Domain);
+        Assert.Equal("15639", reader.LastQuery.ClubId);
+    }
+
+    [Fact]
+    public async Task BlankCarClubReadsEveryStoredClub()
+    {
+        var reader = new FakeIncidentReader();
+        await Service(reader).GetAsync(
+            new IncidentListRequest("cars", "", "production", "15m", null),
+            CancellationToken.None);
+
+        Assert.Equal("cars", reader.LastQuery!.Domain);
+        Assert.Null(reader.LastQuery.ClubId);
     }
 
     private static IncidentRow Incident(string id, string clubId, DateTimeOffset seen) =>

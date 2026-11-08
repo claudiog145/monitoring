@@ -286,7 +286,7 @@ public static class ClubFilter
     }
 
     /// <summary>
-    /// One journey query for every club in a vertical. Hotels are attributed by the Club
+    /// One journey query for every club in a vertical. Hotels and cars are attributed by the Club
     /// dimension and cruises by PartnerId, then capped at <paramref name="rowCap"/> rows per id.
     /// Staging hotels match the hosts seeded on <c>brand.Information</c> and do not require the catalog club id.
     /// </summary>
@@ -296,11 +296,11 @@ public static class ClubFilter
         string? environment = null)
     {
         var d = domain.ToLowerInvariant();
-        if (d is not ("hotels" or "cruises")) throw new ClubFilterException("vertical journey query supports hotels or cruises");
+        if (d is not ("hotels" or "cruises" or "cars")) throw new ClubFilterException("vertical journey query supports hotels, cruises, or cars");
         if (!IsValidWin(win) && !IsValidCruiseWin(win)) throw new ClubFilterException("win must look like 2h, 15m or 7d");
         if (clubIds.Count == 0 || clubIds.Any(id => !IsValidClubId(id))) throw new ClubFilterException("club must be a numeric id");
         if (hosts.Any(host => !IsValidHost(host))) throw new ClubFilterException("host must be a plain hostname");
-        if (d == "hotels" && hosts.Count == 0) throw new ClubFilterException("host must be a plain hostname");
+        if ((d is "hotels" or "cars") && hosts.Count == 0) throw new ClubFilterException("host must be a plain hostname");
         if (partnerIds.Any(id => !IsValidClubId(id))) throw new ClubFilterException("partner must be a numeric id");
 
         var n = rowCap > 0 ? rowCap : FilterRowCap;
@@ -337,7 +337,7 @@ public static class ClubFilter
                 @"SlowestCallMs, OverallP95, SearchToConfirm_s,\r?\n\s*FirstSeen, LastSeen, Journey\r?\n\| top \d+ by LastSeen desc",
                 "SlowestCallMs, OverallP95, SearchToConfirm_s,\n          FirstSeen, LastSeen, Journey, ClubId\n" + PerClubCap(n));
         }
-        else
+        else if (d == "cruises")
         {
             text = text.Replace("PartnerId == tmoPartner", "PartnerId in (tmoPartners)");
             text = text.Replace("url has tmoHost", "url has_any (tmoHosts)");
@@ -350,8 +350,21 @@ public static class ClubFilter
                 "| join kind=inner partnerBySession on UserId, SessionId\n| extend ClubId = PartnerId\n| project UserId, CorrelationId,");
             text = Regex.Replace(
                 text,
-                @"SearchToConfirm_s, FirstSeen, LastSeen, Journey\r?\n\| top \d+ by LastSeen desc",
-                "SearchToConfirm_s, FirstSeen, LastSeen, Journey, ClubId\n" + PerClubCap(n));
+                @"SearchToConfirm_s, FirstSeen, LastSeen, FrontendStart, FrontendEnd, Journey\r?\n\| top \d+ by LastSeen desc",
+                "SearchToConfirm_s, FirstSeen, LastSeen, FrontendStart, FrontendEnd, Journey, ClubId\n" + PerClubCap(n));
+        }
+        else
+        {
+            text = text.Replace("| where url has tmoHost", "| where url has_any (tmoHosts)");
+            text = text.Replace("| where Club == tmoClub", "| where Club in (tmoClubs)");
+            text = Regex.Replace(text, @"(?m)^stageRows\r?$", CarClubByCorrLet + "stageRows");
+            text = text.Replace(
+                "| project CorrelationId, UserId, Outcome,",
+                "| join kind=inner clubByCorr on $left.RawCorrelationId == $right.CorrelationId\n| project-away CorrelationId1\n| project CorrelationId, UserId, Outcome,");
+            text = Regex.Replace(
+                text,
+                @"FirstSeen, LastSeen, Journey\r?\n\| top \d+ by LastSeen desc",
+                "FirstSeen, LastSeen, Journey, ClubId\n" + PerClubCap(n));
         }
 
         if (!text.Contains("_Rank <= " + n, StringComparison.Ordinal))
@@ -472,6 +485,13 @@ public static class ClubFilter
 
     private const string CruisePartnerBySessionLet =
         "let partnerBySession =\n    webBase\n    | summarize PartnerId = take_any(PartnerId) by UserId, SessionId;\n";
+
+    /// <summary>
+    /// Cars group by session key, but club lives on the raw correlation id. Join that id,
+    /// then keep the session key as the projected CorrelationId.
+    /// </summary>
+    private const string CarClubByCorrLet =
+        "let clubByCorr =\n    union (ev | project CorrelationId, Club), (tr | project CorrelationId, Club)\n    | where isnotempty(CorrelationId) and CorrelationId != \"00000000-0000-0000-0000-000000000000\" and isnotempty(Club)\n    | where Club in (tmoClubs)\n    | summarize ClubId = take_any(Club) by CorrelationId;\n";
 
     private static string PerClubCap(int rowCap) =>
         "| sort by ClubId asc, LastSeen desc\n| serialize\n| extend _Rank = row_number(1, prev(ClubId) != ClubId)\n| where _Rank <= " + rowCap + "\n| project-away _Rank";

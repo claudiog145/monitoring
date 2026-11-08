@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json;
 using JourneyMonitor.Core.Abstractions;
+using JourneyMonitor.Core.Company;
+using JourneyMonitor.Core.Monitoring.Kpi;
 using JourneyMonitor.Core.Options;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -28,9 +30,18 @@ public sealed class GetFindingsFunction(
     IDoctorReportsRepository doctorReportsRepository,
     ILlmCallLogRepository llmCallLogRepository,
     IOptions<MonitoringOptions> monitoringOptions,
-    ILogger<GetFindingsFunction> logger)
+    ILogger<GetFindingsFunction> logger,
+    KpiProfileResolver? profileResolver = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    /// <summary>
+    /// Contract v6 §5: findings (and their Doctor reports) come from the incumbent's legacy journey pipeline
+    /// (hotels/cruises/cars), so another company gets an empty, <c>applicable:false</c> answer instead of
+    /// the incumbent's findings. Missing <c>?profileKey=</c> → the active company, "*" → every company.
+    /// </summary>
+    private Task<(ProfileReadScope? Scope, string? Error)> ReadScopeAsync(HttpRequestData req, CancellationToken ct) =>
+        ProfileReadScope.ResolveAsync(profileResolver, System.Web.HttpUtility.ParseQueryString(req.Url.Query)["profileKey"], ct);
 
     [Function("GetFindings")]
     public async Task<HttpResponseData> GetFindingsAsync(
@@ -39,8 +50,24 @@ public sealed class GetFindingsFunction(
     {
         try
         {
+            var (scope, error) = await ReadScopeAsync(req, ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { source = "error", error });
+
+            if (!scope.IncludesIncumbent)
+            {
+                return await WriteJsonAsync(req, HttpStatusCode.OK, new
+                {
+                    source = "not-applicable",
+                    applicable = false,
+                    profileKey = scope.Label,
+                    message = "Findings come from the incumbent's journey pipeline; this company has none.",
+                    count = 0,
+                    findings = Array.Empty<object>(),
+                });
+            }
+
             var findings = await findingsRepository.GetAllAsync(ct);
-            return await WriteJsonAsync(req, HttpStatusCode.OK, new { source = "live", count = findings.Count, findings });
+            return await WriteJsonAsync(req, HttpStatusCode.OK, new { source = "live", applicable = true, profileKey = scope.Label, count = findings.Count, findings });
         }
         catch (Exception ex)
         {
@@ -62,7 +89,10 @@ public sealed class GetFindingsFunction(
 
         try
         {
-            var finding = await findingsRepository.GetByIdAsync(id, ct);
+            var (scope, error) = await ReadScopeAsync(req, ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { source = "error", error });
+
+            var finding = scope.IncludesIncumbent ? await findingsRepository.GetByIdAsync(id, ct) : null;
             if (finding is null)
             {
                 return await WriteJsonAsync(req, HttpStatusCode.NotFound, new { source = "error", error = $"Finding '{id}' not found." });

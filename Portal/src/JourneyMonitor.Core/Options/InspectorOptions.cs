@@ -163,6 +163,14 @@ public sealed class InspectorOptions
     /// <summary>Whether a finished investigation notifies. Default true; which channels actually fire is the notification settings' job.</summary>
     public bool? NotifyOnCompletion { get; set; }
 
+    /// <summary>
+    /// After a triage signal, go on to Scout packages in the same cycle instead of ending it. Default false (triage
+    /// takes the whole cycle). Turn on when several companies keep the triage queue busy, or packages starve.
+    /// </summary>
+    public bool? RunPackagesAfterTriage { get; set; }
+
+    public bool ResolvedRunPackagesAfterTriage => RunPackagesAfterTriage ?? false;
+
     public bool ResolvedEnabled => Enabled ?? true;
 
     public int ResolvedConcurrency => Concurrency is > 0 ? Concurrency.Value : 1;

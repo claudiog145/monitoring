@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using JourneyMonitor.Core.Abstractions;
 using JourneyMonitor.Core.Domain;
+using JourneyMonitor.Core.Monitoring;
 
 namespace JourneyMonitor.Infrastructure.Monitoring;
 
@@ -21,6 +22,9 @@ public sealed class InMemoryKnowledgeRetriever(ILlmClient llmClient) : IKnowledg
 
     private IEnumerable<KnowledgeChunk> AllChunks => _chunks.Select(s => s.Chunk);
 
+    private IEnumerable<KnowledgeChunk> VisibleTo(string? profileKey) =>
+        _chunks.Where(s => KnowledgeScope.IsVisibleTo(s.Chunk.SourceType, s.ProfileKey, profileKey)).Select(s => s.Chunk);
+
     public Task IndexAsync(KnowledgeChunk chunk, CancellationToken ct = default, string? profileKey = null)
     {
         // Blank is the shared corpus, same meaning as N'' in monitoring.KnowledgeChunk.
@@ -33,8 +37,12 @@ public sealed class InMemoryKnowledgeRetriever(ILlmClient llmClient) : IKnowledg
             AllChunks.Select(c => c.ContentHash).Where(h => !string.IsNullOrEmpty(h)).Select(h => h!).ToHashSet(StringComparer.Ordinal));
 
     public Task<IReadOnlyList<KnowledgeDocumentSummary>> GetIndexedDocumentsAsync(CancellationToken ct = default) =>
+        GetIndexedDocumentsForProfileAsync(null, ct);
+
+    /// <summary>MCRV L2: the same boundary as <see cref="RetrieveAsync"/> - see <see cref="KnowledgeScope"/>.</summary>
+    public Task<IReadOnlyList<KnowledgeDocumentSummary>> GetIndexedDocumentsForProfileAsync(string? profileKey, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<KnowledgeDocumentSummary>>(
-            AllChunks
+            VisibleTo(profileKey)
                 .GroupBy(c => (Title: string.IsNullOrWhiteSpace(c.DocumentTitle) ? "(untitled)" : c.DocumentTitle!, c.SourceType))
                 .Select(g => new KnowledgeDocumentSummary(
                     g.Key.Title,
@@ -47,8 +55,11 @@ public sealed class InMemoryKnowledgeRetriever(ILlmClient llmClient) : IKnowledg
                 .ToList());
 
     public Task<IReadOnlyList<KnowledgeDocumentSection>> GetDocumentSectionsAsync(string documentTitle, string? sourceType, CancellationToken ct = default) =>
+        GetDocumentSectionsForProfileAsync(documentTitle, sourceType, null, ct);
+
+    public Task<IReadOnlyList<KnowledgeDocumentSection>> GetDocumentSectionsForProfileAsync(string documentTitle, string? sourceType, string? profileKey, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<KnowledgeDocumentSection>>(
-            AllChunks
+            VisibleTo(profileKey)
                 .Where(c => (string.IsNullOrWhiteSpace(c.DocumentTitle) ? "(untitled)" : c.DocumentTitle) == documentTitle)
                 .Where(c => string.IsNullOrWhiteSpace(sourceType) || c.SourceType == sourceType)
                 .OrderBy(c => c.CreatedAt)
@@ -60,11 +71,7 @@ public sealed class InMemoryKnowledgeRetriever(ILlmClient llmClient) : IKnowledg
         // Same semantics as the SQL retriever, enforced before anything is scored: the company's
         // own chunks plus the shared corpus (""), never another company's. A fake that skipped this
         // would make an isolation test pass over a real leak.
-        var scope = string.IsNullOrWhiteSpace(profileKey) ? null : profileKey.Trim();
-        var all = _chunks
-            .Where(s => scope is null || s.ProfileKey == scope || s.ProfileKey.Length == 0)
-            .Select(s => s.Chunk)
-            .ToList();
+        var all = VisibleTo(profileKey).ToList();
         if (all.Count == 0) return [];
 
         var queryEmbedding = await llmClient.GetEmbeddingAsync(query, ct);

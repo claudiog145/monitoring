@@ -25,7 +25,8 @@ public sealed class GetIncidentsFunction(
             query["club"],
             query["env"] ?? query["environment"],
             query["win"],
-            query["id"]);
+            query["id"],
+            query["profileKey"]);
 
         try
         {

@@ -44,6 +44,7 @@ public static class ProfileDraftBuilder
 
         var identitySources = BuildIdentitySources(report, opts, proposals, out var bestUsableCoverage);
         var services = BuildServices(report, alias, opts, proposals, warnings);
+        var partners = BuildPartners(report, proposals, warnings);
 
         AddAttributionVerdict(report, opts, identitySources, bestUsableCoverage, warnings);
         AddStandingWarnings(identitySources.Count, services.Count, warnings);
@@ -67,7 +68,11 @@ public static class ProfileDraftBuilder
             Enabled: false,
             Notes: BuildNotes(report, alias),
             UpdatedAt: null,
-            UpdatedBy: null);
+            UpdatedBy: null,
+            Partners: partners.Count > 0 ? partners : null);
+
+        var suggestions = SuggestedKpiBuilder.Build(profile);
+        AddSuggestedKpiWarnings(suggestions, warnings);
 
         var ordered = warnings
             .OrderByDescending(w => w.Severity)
@@ -86,7 +91,8 @@ public static class ProfileDraftBuilder
             SourceEnvironment: report.Environment ?? "",
             WindowFrom: report.WindowFrom,
             WindowTo: report.WindowTo,
-            GeneratedAt: report.GeneratedAt);
+            GeneratedAt: report.GeneratedAt,
+            SuggestedKpis: suggestions.Kpis);
     }
 
     /// <summary>
@@ -369,6 +375,120 @@ public static class ProfileDraftBuilder
         return services;
     }
 
+    /// <summary>
+    /// Partners come from the most frequent dependency TARGETS the probe measured, copied verbatim
+    /// into a <see cref="PartnerMatcherKind.DependencyTargetContains"/> matcher. A frequent target is
+    /// not necessarily an external partner - it may be the application's own database - and nothing
+    /// measured can tell the two apart, so every proposal is flagged for review and every target the
+    /// probe saw is listed, with the share of sampled calls that decided it.
+    /// </summary>
+    private static IReadOnlyList<PartnerDefinition> BuildPartners(
+        TelemetryResourceProfile report,
+        List<DraftProposal> proposals,
+        List<DraftWarning> warnings)
+    {
+        if (report.Status == TelemetryProfileStatus.SourceUnresolved) return [];
+
+        var dependencies = report.Dependencies;
+        if (dependencies is null || dependencies.State != TelemetryProbeState.Ok || dependencies.SampledRows <= 0
+            || dependencies.Targets is not { Count: > 0 })
+        {
+            var why = dependencies is null
+                ? "the dependencies table was not probed or held no rows in the window"
+                : dependencies.State == TelemetryProbeState.Failed
+                    ? $"the dependency target probe failed ({dependencies.Error})"
+                    : "no dependency call carried a target";
+            warnings.Add(new DraftWarning(
+                DraftWarningSeverity.Info,
+                DraftWarningCode.NoPartnersProposed,
+                $"No partner was proposed because {why}. Without partners no partner dependency KPI is suggested; add partners by hand if this company depends on external systems."));
+            return [];
+        }
+
+        var grouped = dependencies.Targets
+            .Where(t => t is not null && !string.IsNullOrWhiteSpace(t.Target))
+            .GroupBy(t => t.Target.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(g => (
+                Target: g.Key,
+                Calls: g.Where(t => !IsInProc(t.Type)).Sum(t => t.ObservationCount),
+                Types: g.Select(t => string.IsNullOrWhiteSpace(t.Type) ? "(none)" : t.Type.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList()))
+            .OrderByDescending(g => g.Calls)
+            .ThenBy(g => g.Target, StringComparer.Ordinal)
+            .ToList();
+
+        var partners = new List<PartnerDefinition>();
+        var usedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (target, calls, types) in grouped)
+        {
+            var share = dependencies.SampledRows <= 0 ? 0.0 : Math.Round(100.0 * calls / dependencies.SampledRows, 2);
+            string? rejection = null;
+            if (calls <= 0)
+                rejection = $"Not proposed: only {ProfileDraftDefaults.InProcDependencyType} spans go to this target - the application calling itself, not a partner.";
+            else if (target.Contains("{{", StringComparison.Ordinal) || target.Contains("}}", StringComparison.Ordinal))
+                rejection = "Not proposed: the target contains \"{{\" or \"}}\", which delimit KPI query tokens.";
+            else if (share < ProfileDraftDefaults.MinPartnerSharePercent)
+                rejection = $"Not proposed: {share:0.##}% of sampled dependency calls is below the {ProfileDraftDefaults.MinPartnerSharePercent:0.##}% floor for a partner.";
+            else if (partners.Count >= ProfileDraftDefaults.MaxPartners)
+                rejection = $"Eligible, but the draft already carries {ProfileDraftDefaults.MaxPartners} partners; add it by hand if it matters.";
+
+            var accepted = rejection is null;
+            if (accepted)
+            {
+                partners.Add(new PartnerDefinition(
+                    Key: UniqueKey(target, partners.Count, usedKeys, "partner", 64),
+                    DisplayName: target,
+                    Matchers: [new PartnerMatcher(PartnerMatcherKind.DependencyTargetContains, target)]));
+            }
+
+            var evidence = new List<string>();
+            if (rejection is not null) evidence.Add(rejection);
+            evidence.Add($"{calls:N0} of {dependencies.SampledRows:N0} sampled dependency calls ({share:0.##}%), type(s): {string.Join(", ", types)}.");
+            if (accepted)
+            {
+                evidence.Add("A frequent target is not necessarily an external partner - remove it if it is this company's own database or service.");
+            }
+
+            proposals.Add(new DraftProposal(
+                Kind: DraftProposalKind.Partner,
+                Target: accepted ? $"partners[{partners.Count - 1}]" : "",
+                Value: target,
+                Proposed: accepted,
+                CoveragePercent: share,
+                Score: null,
+                Evidence: evidence));
+        }
+
+        warnings.Add(partners.Count > 0
+            ? new DraftWarning(
+                DraftWarningSeverity.Warning,
+                DraftWarningCode.PartnersNeedReview,
+                $"{partners.Count} partner(s) were proposed from the most frequent dependency targets (at least {ProfileDraftDefaults.MinPartnerSharePercent:0.##}% of sampled calls each). Nothing measured says which targets are external partners and which are this company's own systems: remove the internal ones and give the rest business names.")
+            : new DraftWarning(
+                DraftWarningSeverity.Info,
+                DraftWarningCode.NoPartnersProposed,
+                $"No dependency target reached {ProfileDraftDefaults.MinPartnerSharePercent:0.##}% of sampled calls, so no partner was proposed and no partner dependency KPI is suggested. Every target the probe saw is listed in the proposals."));
+
+        return partners;
+    }
+
+    private static bool IsInProc(string? type) =>
+        string.Equals(type?.Trim(), ProfileDraftDefaults.InProcDependencyType, StringComparison.OrdinalIgnoreCase);
+
+    private static void AddSuggestedKpiWarnings(SuggestedKpiPlan suggestions, List<DraftWarning> warnings)
+    {
+        if (suggestions.Kpis.Count > 0)
+        {
+            warnings.Add(new DraftWarning(
+                DraftWarningSeverity.Info,
+                DraftWarningCode.SuggestedKpisDisabled,
+                $"{suggestions.Kpis.Count} KPI(s) are suggested, every one with enabled=false. Creating them requires the profile to be saved and enabled first (the KPI API only accepts a stored, enabled profile); switch each KPI on from Settings > KPIs once its baseline makes sense."));
+        }
+        foreach (var note in suggestions.Notes)
+        {
+            warnings.Add(new DraftWarning(DraftWarningSeverity.Info, DraftWarningCode.SuggestedKpiNote, note));
+        }
+    }
+
     private static void AddAttributionVerdict(
         TelemetryResourceProfile report,
         ProfileDraftOptions opts,
@@ -447,6 +567,7 @@ public static class ProfileDraftBuilder
         "4. Set labels and glossary to the enterprise's vocabulary, and write glossary.description - it is what tells the agents what this product is.",
         "5. PUT the reviewed profile to /api/settings/company-profiles/{key} with the X-Settings-Write-Secret header.",
         "6. Verify with GET /api/settings/company-profiles/{key}, then enable it with a second PUT carrying enabled=true.",
+        "7. Create the suggested KPIs (POST /api/settings/kpis, all enabled=false) once the profile is enabled, and switch each on from Settings > KPIs after review.",
     ];
 
     private static string BuildNotes(TelemetryResourceProfile report, string alias) =>
@@ -462,19 +583,30 @@ public static class ProfileDraftBuilder
         return slug.Length > 0 ? slug : "draft";
     }
 
-    private static string UniqueKey(string name, int index, HashSet<string> used)
+    private static string UniqueKey(string name, int index, HashSet<string> used) =>
+        UniqueKey(name, index, used, "service", ProfileDraftDefaults.MaxServiceKeyLength);
+
+    /// <summary>
+    /// A service key is capped at <see cref="ProfileDraftDefaults.MaxServiceKeyLength"/> because it is
+    /// also the KPI domain every suggested KPI carries; the suffix that keeps it unique fits in the cap.
+    /// </summary>
+    private static string UniqueKey(string name, int index, HashSet<string> used, string fallbackPrefix, int maxLength)
     {
-        var slug = Slug(name);
-        if (slug.Length == 0) slug = $"service-{index + 1}";
+        var slug = Truncate(Slug(name), maxLength);
+        if (slug.Length == 0) slug = $"{fallbackPrefix}-{index + 1}";
 
         var candidate = slug;
         var suffix = 2;
         while (!used.Add(candidate))
         {
-            candidate = $"{slug}-{suffix++}";
+            var tail = $"-{suffix++}";
+            candidate = Truncate(slug, maxLength - tail.Length) + tail;
         }
         return candidate;
     }
+
+    private static string Truncate(string slug, int maxLength) =>
+        slug.Length <= maxLength ? slug : slug[..maxLength].Trim('-');
 
     /// <summary>
     /// Keys reach URLs, SQL keys and dedup keys, so they are reduced to the character class every

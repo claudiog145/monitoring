@@ -75,14 +75,26 @@ public sealed class ImportKnowledgeCorpusFunction(
         var profileKey = req.Query["profileKey"];
         if (string.IsNullOrWhiteSpace(profileKey)) profileKey = null;
 
+        // ?subPath=bank/corpus restricts the read to that sub-folder of the corpus (one company's
+        // pack in the demo stack); the document's domain is then the first folder under it.
+        var subPath = req.Query["subPath"];
+        if (!KnowledgeCorpusSubPath.TryNormalize(subPath, out _, out var subPathError))
+        {
+            return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error = subPathError });
+        }
+
         try
         {
-            var result = await importService.ImportAsync(max, onlyTypes, profileKey, ct);
+            var result = await importService.ImportAsync(max, onlyTypes, profileKey, ct, subPath);
 
             // A corpus that is not mounted is a configuration problem, not an empty import - 409
             // so it cannot be mistaken for "ran fine, found nothing".
             var status = result.SourceAvailable ? HttpStatusCode.OK : HttpStatusCode.Conflict;
             return await WriteJsonAsync(req, status, result);
+        }
+        catch (InvalidKnowledgeSubPathException ex)
+        {
+            return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error = ex.Message });
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

@@ -1,6 +1,8 @@
 using System.Text.Json;
 using JourneyMonitor.Core.Abstractions;
+using JourneyMonitor.Core.Company;
 using JourneyMonitor.Core.Domain;
+using JourneyMonitor.Core.Monitoring.Privacy;
 using Microsoft.Extensions.Logging;
 
 namespace JourneyMonitor.Core.Monitoring;
@@ -25,10 +27,17 @@ public sealed class DoctorAgentService(
     ILogger<DoctorAgentService> logger,
     // Trailing and optional, like the provider on RcaAgentService: the composition root builds
     // this type with an explicit `new`, so a required parameter would break files this change
-    // does not own. Null means the whole corpus - the behaviour before companies existed.
-    IActiveCompanyProfileStore? activeCompany = null) : IDoctorAgent
+    // does not own. It governs the prompt's privacy rule only; the finding's owner (MCRV H1)
+    // decides which company's knowledge is read and written.
+    IActiveCompanyProfileStore? activeCompany = null,
+    // Contract v4 §5 (AG6B): same rule as Triage and the Inspector, applied to the active company
+    // (no active company = the configured default, i.e. the incumbent). Null redactor still redacts.
+    ICompanyProfileStore? profiles = null,
+    IEvidenceRedactor? redactor = null) : IDoctorAgent
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    private readonly IEvidenceRedactor _redactor = redactor ?? new EvidenceRedactor();
 
     public async Task<DoctorReport> DiagnoseAsync(Finding finding, CancellationToken ct = default)
     {
@@ -36,14 +45,27 @@ public sealed class DoctorAgentService(
 
         var heuristicCategory = classifier.Classify(finding);
 
-        // One read for both the lookup and the write-back, so a diagnosis cannot be grounded in
-        // one company's history and then filed under another's.
-        var profileKey = await ResolveCompanyAsync(ct);
+        var (activeKey, companyUnknown) = await ResolveCompanyAsync(ct);
 
-        var query = $"{finding.Domain} {finding.Stage} {heuristicCategory} {finding.Title}";
-        var chunks = await knowledgeRetriever.RetrieveAsync(query, topK: 5, ct, profileKey);
+        // MCRV H1: the precedents are read from, and the diagnosis filed under, the company that owns
+        // the finding - never whichever company happens to be active. One owner for both, so a
+        // diagnosis cannot be grounded in one company's history and then filed under another's.
+        var ownerKey = FindingOwnership.OwnerOf(finding, await IsIncumbentRegisteredAsync(ct), activeKey);
+
+        // An unreadable active company is not "no company": it may be any profile, so the
+        // diagnosis redacts closed (contract v4 §5) instead of falling back to the incumbent.
+        var profile = companyUnknown
+            ? PromptPrivacy.ClosedProfile()
+            : await PromptPrivacy.ResolveProfileAsync(profiles, activeKey, logger, "DoctorAgent", ct);
+        var redactions = new SortedDictionary<string, int>(StringComparer.Ordinal);
+
+        // The query is embedded by the provider before the search, so it follows the same rule as the prompt.
+        var query = PromptPrivacy.Redact(_redactor, $"{finding.Domain} {finding.Stage} {heuristicCategory} {finding.Title}", profile, redactions);
+        var chunks = await knowledgeRetriever.RetrieveAsync(query, topK: 5, ct, ownerKey);
 
         var prompt = BuildPrompt(finding, heuristicCategory, chunks);
+        // The redacted prompt is also what LlmCallLog stores: the log shows what was actually sent.
+        prompt = PromptPrivacy.Redact(_redactor, prompt, profile, redactions);
         var (content, tokensIn, tokensOut, modelUsed) = await llmClient.CompleteAsync(prompt, maxTokens: 800, ct);
 
         var report = string.IsNullOrWhiteSpace(content)
@@ -75,40 +97,81 @@ public sealed class DoctorAgentService(
         }
 
         // Self-bootstrap the KB from this report so the NEXT similar finding has a precedent.
-        var embedding = await llmClient.GetEmbeddingAsync(
-            $"{finding.Title}\n{report.Verdict}\n{report.RootCauseHypothesis}", ct);
+        // The embedding input leaves for the provider too, so it follows the same privacy rule.
+        // Not when the active company is unknown: its privacy rule, which governs the stored text, could not be applied.
+        if (companyUnknown)
+        {
+            logger.LogWarning(
+                "[DoctorAgent] finding {FindingId}: the active company could not be read, so the diagnosis was not indexed into the knowledge base.",
+                finding.Id);
+        }
+        var embedding = companyUnknown
+            ? EmbeddingResult.Unavailable
+            : await llmClient.GetEmbeddingAsync(
+                PromptPrivacy.Redact(_redactor, $"{finding.Title}\n{report.Verdict}\n{report.RootCauseHypothesis}", profile, redactions), ct);
         if (embedding.IsAvailable)
         {
             await knowledgeRetriever.IndexAsync(new KnowledgeChunk
             {
                 SourceType = KnowledgeSourceType.FindingHistory,
                 SourceRef = saved.Id.ToString(),
-                Content = $"[{finding.Domain}/{finding.Stage}] {finding.Title}\nVerdict: {report.Verdict}\nRootCause: {report.RootCauseHypothesis}",
+                Content = PromptPrivacy.Redact(
+                    _redactor,
+                    $"[{finding.Domain}/{finding.Stage}] {finding.Title}\nVerdict: {report.Verdict}\nRootCause: {report.RootCauseHypothesis}",
+                    profile,
+                    redactions),
                 Embedding = embedding.Vector!,
                 EmbeddingModel = embedding.Model,
-            }, ct, profileKey);
+            }, ct, ownerKey);
+        }
+
+        if (redactions.Count > 0)
+        {
+            logger.LogInformation(
+                "[DoctorAgent] finding {FindingId} [{ProfileKey}]: evidence redacted before the LLM calls ({Redactions}).",
+                finding.Id, profile.ProfileKey, PromptPrivacy.Describe(redactions));
         }
 
         return saved;
     }
 
     /// <summary>
-    /// Null on anything other than a clean answer: an unattributed diagnosis is worth a warning,
-    /// never worth failing the diagnosis the operator is waiting for.
+    /// Key null on anything other than a clean answer: an unattributed diagnosis is worth a warning,
+    /// never worth failing the diagnosis the operator is waiting for. <c>Unknown</c> separates a
+    /// failed read from "no company activated", because only the latter means the incumbent.
     /// </summary>
-    private async Task<string?> ResolveCompanyAsync(CancellationToken ct)
+    private async Task<(string? Key, bool Unknown)> ResolveCompanyAsync(CancellationToken ct)
     {
-        if (activeCompany is null) return null;
+        if (activeCompany is null) return (null, false);
 
         try
         {
             var key = await activeCompany.GetActiveAsync(ct);
-            return string.IsNullOrWhiteSpace(key) ? null : key;
+            return (string.IsNullOrWhiteSpace(key) ? null : key, false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogWarning(ex, "The active company could not be read, so this diagnosis is neither scoped to one nor attributed to one.");
-            return null;
+            logger.LogWarning(ex, "The active company could not be read, so this diagnosis is redacted closed and not indexed.");
+            return (null, true);
+        }
+    }
+
+    /// <summary>
+    /// Whether the company registry knows the incumbent (see <see cref="FindingOwnership.OwnerOf"/>).
+    /// No registry, or one that cannot be read, keeps the incumbent: the findings are its pipeline's.
+    /// </summary>
+    private async Task<bool> IsIncumbentRegisteredAsync(CancellationToken ct)
+    {
+        if (profiles is null) return true;
+
+        try
+        {
+            return await profiles.GetAsync(KpiProfiles.Default, ct) is not null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "The company registry could not be read; the finding stays with the incumbent that owns the findings pipeline.");
+            return true;
         }
     }
 

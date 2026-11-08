@@ -1,0 +1,214 @@
+{
+  "companyKey": "retail",
+  "profileKey": "mercadolibre",
+  "displayName": "Mercado Libre (demo)",
+  "apps": [
+    { "appId": "demo-retail-storefront", "database": "retail-storefront", "roleName": "storefront", "host": "www.mercadolibre.demo" },
+    { "appId": "demo-retail-search-api", "database": "retail-search-api", "roleName": "search-api", "host": "search-api.mercadolibre.demo" },
+    { "appId": "demo-retail-checkout-api", "database": "retail-checkout-api", "roleName": "checkout-api", "host": "checkout-api.mercadolibre.demo" },
+    { "appId": "demo-retail-payments", "database": "retail-payments", "roleName": "payments", "host": "payments.mercadolibre.demo" },
+    { "appId": "demo-retail-shipping", "database": "retail-shipping", "roleName": "shipping", "host": "shipping.mercadolibre.demo" }
+  ],
+  "entities": {
+    "kind": "site",
+    "dimension": "SiteId",
+    "count": 5,
+    "zipf": 1.2,
+    "ids": ["MLB", "MLA", "MLM", "MCO", "MLC"],
+    "idFormat": null,
+    "hostTemplate": null
+  },
+  "traffic": {
+    "requestsPerDay": 220000,
+    "hourlyCurve": [10, 9.5, 8, 6, 4, 2.5, 1.8, 1.5, 1.8, 2.5, 4, 5.5, 7, 8, 8.5, 9, 9, 8.5, 8.5, 8.5, 9, 9.5, 10, 10.5],
+    "weekendFactor": 0.85
+  },
+  "steps": [
+    {
+      "app": "demo-retail-storefront", "name": "GET /search", "url": "/search?q=zapatillas+running", "weight": 0.15,
+      "p50Ms": 240, "p95Ms": 950, "errorRate": 0.0015,
+      "exceptions": [
+        { "type": "System.Threading.Tasks.TaskCanceledException", "message": "Search results request was canceled after 3000 ms", "method": "SearchPage.RenderResults", "weight": 3 },
+        { "type": "System.NullReferenceException", "message": "Facet 'shipping_cost' was null in the search response", "method": "SearchPage.BuildFacets", "weight": 1 }
+      ]
+    },
+    {
+      "app": "demo-retail-storefront", "name": "GET /item", "url": "/item/ITM-4829137", "weight": 0.21,
+      "p50Ms": 210, "p95Ms": 820, "errorRate": 0.001,
+      "exceptions": [
+        { "type": "System.Collections.Generic.KeyNotFoundException", "message": "Item ITM-4829137 has no price for the requested site", "method": "ItemPage.ResolvePrice", "weight": 2 },
+        { "type": "System.Threading.Tasks.TaskCanceledException", "message": "Item detail request was canceled after 3000 ms", "method": "ItemPage.LoadItem", "weight": 1 }
+      ]
+    },
+    {
+      "app": "demo-retail-storefront", "name": "GET /cart", "url": "/cart", "weight": 0.07,
+      "p50Ms": 160, "p95Ms": 640, "errorRate": 0.0015,
+      "exceptions": [ { "type": "System.InvalidOperationException", "message": "Cart session expired while loading items", "method": "CartPage.Load", "weight": 1 } ]
+    },
+    {
+      "app": "demo-retail-storefront", "name": "POST /cart/items", "url": "/cart/items", "weight": 0.06,
+      "p50Ms": 140, "p95Ms": 560, "errorRate": 0.002,
+      "exceptions": [
+        { "type": "System.InvalidOperationException", "message": "Cart already holds the maximum quantity for this item", "method": "Cart.AddItem", "weight": 2 },
+        { "type": "System.ArgumentException", "message": "Variation id is not valid for the selected item", "method": "Cart.ValidateVariation", "weight": 1 }
+      ],
+      "businessEvent": { "name": "CartItemAdded", "onSuccessOnly": true, "measurements": { "Quantity": { "min": 1, "max": 4 } } }
+    },
+    {
+      "app": "demo-retail-search-api", "name": "GET /api/search", "url": "/api/search?q=notebook&limit=48", "weight": 0.18,
+      "p50Ms": 85, "p95Ms": 420, "errorRate": 0.001,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Search cluster did not answer within 800 ms", "method": "SearchService.Query", "weight": 3 },
+        { "type": "Retail.Search.QueryParseException", "message": "Query could not be parsed into ranking terms", "method": "QueryParser.Parse", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "search-cluster", "target": "search-cluster.retail.internal", "type": "HTTP", "name": "POST /items/_search", "p50Ms": 45, "p95Ms": 240, "failureRate": 0.0008 }
+      ]
+    },
+    {
+      "app": "demo-retail-search-api", "name": "GET /api/items", "url": "/api/items/ITM-4829137", "weight": 0.1,
+      "p50Ms": 35, "p95Ms": 170, "errorRate": 0.0008,
+      "exceptions": [ { "type": "System.Collections.Generic.KeyNotFoundException", "message": "Item ITM-4829137 was not found in the catalog", "method": "ItemService.Get", "weight": 1 } ],
+      "dependencies": [
+        { "partner": "catalog-db", "target": "catalog-db.retail.internal", "type": "SQL", "name": "SELECT item_detail", "p50Ms": 6, "p95Ms": 45, "failureRate": 0.0003 }
+      ]
+    },
+    {
+      "app": "demo-retail-checkout-api", "name": "POST /api/checkout/quote", "url": "/api/checkout/quote", "weight": 0.05,
+      "p50Ms": 190, "p95Ms": 820, "errorRate": 0.002,
+      "exceptions": [
+        { "type": "System.NullReferenceException", "message": "Shipping option was null for cart line", "method": "QuoteBuilder.AddShipping", "weight": 2 },
+        { "type": "System.InvalidOperationException", "message": "Promotion engine returned an empty price breakdown", "method": "QuoteBuilder.ApplyPromotions", "weight": 1 }
+      ]
+    },
+    {
+      "app": "demo-retail-checkout-api", "name": "POST /api/checkout/orders", "url": "/api/checkout/orders", "weight": 0.04,
+      "p50Ms": 380, "p95Ms": 1600, "errorRate": 0.003,
+      "exceptions": [
+        { "type": "System.InvalidOperationException", "message": "Promotion engine returned an empty price breakdown", "method": "OrderService.Place", "weight": 2 },
+        { "type": "Retail.Checkout.StockReservationException", "message": "Stock reservation expired before the order was placed", "method": "OrderService.ReserveStock", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "fraud-screening", "target": "score.fraud-partner.demo", "type": "HTTP", "name": "POST /v2/score", "p50Ms": 110, "p95Ms": 480, "failureRate": 0.001 },
+        { "partner": "orders-db", "target": "orders-db.retail.internal", "type": "SQL", "name": "INSERT orders", "p50Ms": 9, "p95Ms": 60, "failureRate": 0.0004 }
+      ],
+      "businessEvent": { "name": "OrderPlaced", "onSuccessOnly": true, "measurements": { "AmountUsd": { "min": 6, "max": 950 }, "Items": { "min": 1, "max": 6 } } }
+    },
+    {
+      "app": "demo-retail-payments", "name": "GET /api/payments/methods", "url": "/api/payments/methods", "weight": 0.03,
+      "p50Ms": 60, "p95Ms": 260, "errorRate": 0.0008,
+      "exceptions": [ { "type": "System.InvalidOperationException", "message": "No installment plan configured for the site", "method": "PaymentMethods.List", "weight": 1 } ]
+    },
+    {
+      "app": "demo-retail-payments", "name": "POST /api/payments", "url": "/api/payments", "weight": 0.04,
+      "p50Ms": 520, "p95Ms": 2300, "errorRate": 0.002,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Payment gateway did not confirm the charge within 10 s", "method": "PaymentService.Charge", "weight": 2 },
+        { "type": "Retail.Payments.AcquirerResponseException", "message": "Card acquirer returned an unexpected response code", "method": "PaymentService.Authorize", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "payment-gateway", "target": "gateway.payments-partner.demo", "type": "HTTP", "name": "POST /v1/charges", "p50Ms": 300, "p95Ms": 1400, "failureRate": 0.003 },
+        { "partner": "card-acquirer", "target": "auth.acquirer-partner.demo", "type": "HTTP", "name": "POST /authorize", "p50Ms": 170, "p95Ms": 850, "failureRate": 0.002 }
+      ],
+      "businessEvent": { "name": "PaymentApproved", "onSuccessOnly": true, "measurements": { "AmountUsd": { "min": 6, "max": 950 } } }
+    },
+    {
+      "app": "demo-retail-shipping", "name": "POST /api/shipping/quote", "url": "/api/shipping/quote", "weight": 0.05,
+      "p50Ms": 130, "p95Ms": 620, "errorRate": 0.0015,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Carrier rate request timed out after 5000 ms", "method": "ShippingQuote.Rates", "weight": 2 },
+        { "type": "Retail.Shipping.UnserviceableZipException", "message": "No carrier serves the destination postal code", "method": "ShippingQuote.Coverage", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "carrier-a", "target": "api.carrier-a.demo", "type": "HTTP", "name": "POST /rates", "p50Ms": 80, "p95Ms": 380, "failureRate": 0.001 },
+        { "partner": "carrier-b", "target": "ws.carrier-b.demo", "type": "HTTP", "name": "POST /quote", "p50Ms": 110, "p95Ms": 520, "failureRate": 0.0015 }
+      ]
+    },
+    {
+      "app": "demo-retail-shipping", "name": "POST /api/shipping/labels", "url": "/api/shipping/labels", "weight": 0.02,
+      "p50Ms": 320, "p95Ms": 1500, "errorRate": 0.002,
+      "exceptions": [
+        { "type": "System.TimeoutException", "message": "Carrier label request timed out after 8000 ms", "method": "LabelService.Create", "weight": 2 },
+        { "type": "Retail.Shipping.LabelRejectedException", "message": "Carrier rejected the label: package dimensions out of range", "method": "LabelService.Validate", "weight": 1 }
+      ],
+      "dependencies": [
+        { "partner": "carrier-a", "target": "api.carrier-a.demo", "type": "HTTP", "name": "POST /labels", "p50Ms": 210, "p95Ms": 950, "failureRate": 0.0015 },
+        { "partner": "carrier-b", "target": "ws.carrier-b.demo", "type": "HTTP", "name": "POST /shipments", "p50Ms": 260, "p95Ms": 1200, "failureRate": 0.002 }
+      ],
+      "businessEvent": { "name": "ShipmentLabelCreated", "onSuccessOnly": true }
+    }
+  ],
+  "scenarios": [
+    {
+      "key": "search-latency-mlm",
+      "title": "Search latency in Mexico (MLM)",
+      "description": "A search-cluster shard serving the MLM index is rebalancing: search on site MLM gets 6-7x slower and a few queries time out. The other sites are healthy.",
+      "defaultDurationMinutes": 30,
+      "effects": [
+        { "kind": "entity-only", "entities": ["MLM"] },
+        { "kind": "latency-multiplier", "partner": "search-cluster", "factor": 7 },
+        { "kind": "latency-multiplier", "step": "GET /search", "factor": 3.5 },
+        { "kind": "error-rate", "step": "GET /api/search", "rate": 0.04, "exceptionType": "System.TimeoutException" }
+      ]
+    },
+    {
+      "key": "payment-gateway-outage",
+      "title": "Payment gateway outage",
+      "description": "The external payment gateway rejects or times out most charges. POST /api/payments fails with 502 and approved payments collapse on every site.",
+      "defaultDurationMinutes": 30,
+      "effects": [
+        { "kind": "dependency-failure", "partner": "payment-gateway", "rate": 0.65 },
+        { "kind": "latency-multiplier", "partner": "payment-gateway", "factor": 5 }
+      ]
+    },
+    {
+      "key": "checkout-deploy-exceptions",
+      "title": "Checkout exception storm after deploy",
+      "description": "checkout-api release 2026.11.3 ships a promotion-engine change that returns empty price breakdowns: order placement throws InvalidOperationException and quotes get slower.",
+      "defaultDurationMinutes": 25,
+      "effects": [
+        { "kind": "error-rate", "step": "POST /api/checkout/orders", "rate": 0.35, "exceptionType": "System.InvalidOperationException" },
+        { "kind": "error-rate", "step": "POST /api/checkout/quote", "rate": 0.12, "exceptionType": "System.InvalidOperationException" },
+        { "kind": "latency-multiplier", "step": "POST /api/checkout/quote", "factor": 2.5 }
+      ]
+    },
+    {
+      "key": "carrier-b-timeouts",
+      "title": "Shipping carrier B timeouts",
+      "description": "Carrier B's rating and label API answers 8x slower and three quarters of the calls time out; shipping quotes and labels fail while carrier A stays healthy.",
+      "defaultDurationMinutes": 40,
+      "effects": [
+        { "kind": "dependency-failure", "partner": "carrier-b", "rate": 0.75 },
+        { "kind": "latency-multiplier", "partner": "carrier-b", "factor": 8 },
+        { "kind": "error-rate", "step": "POST /api/shipping/quote", "rate": 0.05, "exceptionType": "System.TimeoutException" }
+      ]
+    },
+    {
+      "key": "orders-drop",
+      "title": "Silent drop in orders and GMV",
+      "description": "A storefront feature flag hides the buy box for part of the catalog: add-to-cart, orders, payments and labels fall by 60-70 % with no errors and normal latency. Only the business KPIs notice.",
+      "defaultDurationMinutes": 45,
+      "effects": [
+        { "kind": "traffic-multiplier", "step": "POST /cart/items", "factor": 0.4 },
+        { "kind": "traffic-multiplier", "step": "POST /api/checkout/orders", "factor": 0.3 },
+        { "kind": "traffic-multiplier", "step": "POST /api/payments", "factor": 0.3 },
+        { "kind": "traffic-multiplier", "step": "POST /api/shipping/labels", "factor": 0.3 }
+      ]
+    },
+    {
+      "key": "hot-sale",
+      "title": "Hot Sale (legitimate traffic peak)",
+      "description": "Hot Sale campaign: traffic triples on every site and step. Nothing is broken: error rates and latency stay normal and orders go up. No KPI should alert.",
+      "defaultDurationMinutes": 120,
+      "effects": [
+        { "kind": "traffic-multiplier", "factor": 3 }
+      ]
+    }
+  ],
+  "historicalIncidents": [
+    { "scenario": "search-latency-mlm", "hoursAgo": 54, "durationMinutes": 60 },
+    { "scenario": "hot-sale", "hoursAgo": 44, "durationMinutes": 180 },
+    { "scenario": "payment-gateway-outage", "hoursAgo": 29, "durationMinutes": 40 },
+    { "scenario": "carrier-b-timeouts", "hoursAgo": 13, "durationMinutes": 50 }
+  ]
+}

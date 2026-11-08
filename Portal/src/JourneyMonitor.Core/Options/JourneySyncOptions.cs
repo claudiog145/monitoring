@@ -17,7 +17,7 @@ public sealed class JourneySyncOptions
     /// binding APPENDS to a non-empty collection default instead of replacing it, so "hotels" in
     /// config on top of a ["hotels"] default silently syncs the same domain twice.
     /// </summary>
-    public string Domains { get; set; } = "hotels,cruises";
+    public string Domains { get; set; } = "hotels,cruises,cars";
 
     public IEnumerable<string> EnumerateDomains() =>
         Domains.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

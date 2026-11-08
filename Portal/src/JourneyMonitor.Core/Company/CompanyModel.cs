@@ -26,13 +26,30 @@ public sealed record CompanyProfile(
     bool Enabled = true,
     string? Notes = null,
     DateTimeOffset? UpdatedAt = null,
-    string? UpdatedBy = null)
+    string? UpdatedBy = null,
+    /// <summary>Optional. Null or empty means "no tenant map": telemetry tenants resolve to their own UUID.</summary>
+    IReadOnlyList<TelemetryTenant>? TelemetryTenants = null,
+    /// <summary>Contract v4 §5. Optional; null means the profile declares no partners.</summary>
+    IReadOnlyList<PartnerDefinition>? Partners = null,
+    /// <summary>Contract v4 §5. Optional; null means closed by default (no raw evidence, no extra patterns).</summary>
+    PrivacySettings? Privacy = null,
+    /// <summary>Contract v6 §2. Optional; null means the portal keeps its default palette.</summary>
+    CompanyTheme? Theme = null)
 {
     public ServiceDefinition? FindService(string? key) =>
         string.IsNullOrWhiteSpace(key)
             ? null
             : Services.FirstOrDefault(s => string.Equals(s.Key, key.Trim(), StringComparison.OrdinalIgnoreCase));
 }
+
+/// <summary>
+/// Contract v6 §2. How the portal looks while this company is active: colours are <c>#RRGGBB</c>
+/// and <see cref="ShortName"/> (≤ 32 chars) is shown next to the title instead of the display name.
+/// </summary>
+public sealed record CompanyTheme(
+    string? PrimaryColor = null,
+    string? AccentColor = null,
+    string? ShortName = null);
 
 /// <summary>
 /// What this company calls each role, for the UI and for prompts. The roles themselves never
@@ -46,6 +63,17 @@ public sealed record CompanyLabels(
     string Step,
     string Entity,
     string Owner);
+
+/// <summary>
+/// One key under which an App Insights token is stored, and the Entra tenant / telemetry domains it
+/// answers for. Several keys may share one <see cref="AadTenantId"/>; <see cref="Domains"/> (the
+/// InsightsOptions slot names, lower case) disambiguates them, and otherwise the first in list
+/// order wins.
+/// </summary>
+public sealed record TelemetryTenant(
+    string TenantKey,
+    string AadTenantId,
+    IReadOnlyList<string> Domains);
 
 /// <summary>One addressable part of the product (Arrivia: a vertical such as Hotels or Cruises).</summary>
 public sealed record ServiceDefinition(
@@ -145,3 +173,40 @@ public sealed record CompanyGlossary(
     string OwnerNoun,
     /// <summary>One or two sentences telling a model what this company's product actually is.</summary>
     string? Description = null);
+
+/// <summary>
+/// Contract v4 §5: an external system the company depends on (watchlist provider, payment gateway...),
+/// recognised in <c>dependencies</c> telemetry by its matchers. Key becomes the EntityKey of the
+/// <c>appinsights:dependency</c> source. The validator requires unique keys and at least one matcher.
+/// </summary>
+public sealed record PartnerDefinition(
+    string Key,
+    string DisplayName,
+    IReadOnlyList<PartnerMatcher> Matchers);
+
+/// <summary>One test against a dependency row. Kind is one of <see cref="PartnerMatcherKind"/>.</summary>
+public sealed record PartnerMatcher(
+    string Kind,
+    string Value);
+
+public static class PartnerMatcherKind
+{
+    public const string DependencyTargetContains = "dependency-target-contains";
+    public const string DependencyNameContains = "dependency-name-contains";
+    public const string DependencyTypeEquals = "dependency-type-equals";
+    public const string Regex = "regex";
+
+    public static readonly IReadOnlyList<string> All =
+        [DependencyTargetContains, DependencyNameContains, DependencyTypeEquals, Regex];
+}
+
+/// <summary>
+/// Contract v4 §5: what <c>IEvidenceRedactor</c> hides before evidence reaches a model. Closed by
+/// default: raw evidence is not allowed unless the profile says so.
+/// </summary>
+public sealed record PrivacySettings(
+    bool AllowRawEvidence = false,
+    /// <summary>customDimensions names whose values are personal data.</summary>
+    IReadOnlyList<string>? PiiDimensions = null,
+    /// <summary>Extra regular expressions to redact.</summary>
+    IReadOnlyList<string>? Patterns = null);

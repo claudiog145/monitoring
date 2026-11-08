@@ -25,16 +25,24 @@ public class SyncJourneysServiceTests
     public async Task TimerStoresEveryCarClubFromBrandInformation()
     {
         var store = new RecordingJourneyStore();
-        var service = Build(store, new StaticBrandCatalog(Brands), "cars");
+        var telemetry = new ScriptedTelemetry(skipWhenKqlContains: null);
+        var service = Build(store, new StaticBrandCatalog(Brands), "cars", telemetry);
 
         var passes = await service.SyncAllAsync(CancellationToken.None);
 
+        Assert.Equal(1, telemetry.QueryCount);
+        var kql = Assert.Single(telemetry.Kqls);
+        Assert.Contains("clubByCorr", kql, StringComparison.Ordinal);
+        Assert.Contains("url has_any (tmoHosts)", kql, StringComparison.Ordinal);
+        Assert.Contains("| where Club in (tmoClubs)", kql, StringComparison.Ordinal);
+        Assert.Contains("_Rank <= 200", kql, StringComparison.Ordinal);
         var stored = passes.Where(p => p.Stored).Select(p => p.ClubId).ToList();
         Assert.Equal(["15639", "15827", "15893", "16108"], stored);
         Assert.Equal(
             ["stays.tmobiletravel.com", "book.wesalute.com", "members.aarparrivia.com", "members.aarparrivia.com"],
             store.Requests.Select(r => r.Host));
         Assert.All(store.Requests, r => Assert.Equal("cars", r.Domain));
+        Assert.DoesNotContain(store.Requests.SelectMany(r => r.Rows), row => row.Extra.ContainsKey("ClubId"));
     }
 
     [Fact]
@@ -53,11 +61,12 @@ public class SyncJourneysServiceTests
     public async Task EmptyQueryKeepsTheOtherClubs()
     {
         var store = new RecordingJourneyStore();
-        var telemetry = new ScriptedTelemetry(skipWhenKqlContains: "15827");
+        var telemetry = new ScriptedTelemetry(skipWhenKqlContains: null, carClubIds: ["15639", "15893", "16108"]);
         var service = Build(store, new StaticBrandCatalog(Brands), "cars", telemetry);
 
         var passes = await service.SyncAllAsync(CancellationToken.None);
 
+        Assert.Equal(1, telemetry.QueryCount);
         var skipped = passes.Single(p => p.ClubId == "15827");
         Assert.False(skipped.Stored);
         Assert.Equal("query returned no rows", skipped.SkipReason);
@@ -225,7 +234,7 @@ public class SyncJourneysServiceTests
             Task.FromResult(rows);
     }
 
-    private sealed class ScriptedTelemetry(string? skipWhenKqlContains, string[]? hotelClubIds = null) : ITelemetrySource
+        private sealed class ScriptedTelemetry(string? skipWhenKqlContains, string[]? hotelClubIds = null, string[]? carClubIds = null) : ITelemetrySource
     {
         public int QueryCount { get; private set; }
         public List<string> Kqls { get; } = [];
@@ -257,6 +266,12 @@ public class SyncJourneysServiceTests
             if (request.Kql.Contains("partnerBySession", StringComparison.Ordinal))
             {
                 return Task.FromResult<IReadOnlyList<TelemetryJourneyRow>>([Row("308"), Row("323")]);
+            }
+
+            if (request.Kql.Contains("clubByCorr", StringComparison.Ordinal))
+            {
+                var ids = carClubIds ?? ["15639", "15827", "15893", "16108"];
+                return Task.FromResult<IReadOnlyList<TelemetryJourneyRow>>(ids.Select(Row).ToArray());
             }
 
             var row = new TelemetryJourneyRow();

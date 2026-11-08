@@ -9,6 +9,9 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Dapper" Version="2.1.66" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.1" />
+    <PackageReference Include="Microsoft.Data.SqlClient.Extensions.Azure" Version="7.1.1" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
@@ -21,6 +24,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\JourneyMonitor.Core\JourneyMonitor.Core.csproj" />
     <ProjectReference Include="..\..\src\JourneyMonitor.Infrastructure\JourneyMonitor.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\JourneyMonitor.HealthConsole\JourneyMonitor.HealthConsole.csproj" />
     <!-- The HTTP layer is a contract the Web proxy and the UI are built against, so its JSON shape
          needs to be assertable. ExcludeAssets="analyzers" keeps the Functions Worker SDK generator
          from running over this project, which has no functions of its own to index. -->

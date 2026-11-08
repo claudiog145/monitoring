@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using JourneyMonitor.Core.Abstractions;
 using JourneyMonitor.Core.Configuration;
+using JourneyMonitor.Core.Monitoring.Kpi;
 
 namespace JourneyMonitor.Core.UseCases;
 
@@ -46,7 +47,9 @@ public sealed class KqlQueryAdminService(
     /// <summary>Must be the EMBEDDED provider, not the decorated one: "revert" and the diff need
     /// the text that shipped, and the decorator would hand back the override instead.</summary>
     IKqlQueryTextProvider builtInTextProvider,
-    ITelemetrySourceStore sourceStore)
+    ITelemetrySourceStore sourceStore,
+    /// <summary>KPIs that use a custom kpi: query: an edit is dry-run for one of them, a delete is refused while one is enabled. Null = no check.</summary>
+    KqlQueryUsage? usage = null)
 {
     /// <summary>A stored query longer than this is almost certainly a paste accident, and it would run on a timer.</summary>
     public const int MaxTextLength = 200_000;
@@ -106,7 +109,19 @@ public sealed class KqlQueryAdminService(
     };
 
     public static string UsedByFor(string queryKey) =>
-        UsedByKey.TryGetValue(queryKey, out var usedBy) ? usedBy : "—";
+        UsedByKey.TryGetValue(queryKey, out var usedBy) ? usedBy
+        : KqlQueryKeys.IsCustomKpi(queryKey) ? $"KPI ingestion — SourceKey {KqlKpiContract.SourceKeyPrefix}{queryKey}"
+        : "—";
+
+    private bool IsBuiltInKey(string queryKey) =>
+        builtInTextProvider.KnownKeys.Contains(queryKey, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A built-in key, or a custom <c>kpi:</c> key (contract v4 §5) whose only text is its catalog row.</summary>
+    private bool IsEditableKey(string queryKey) => IsBuiltInKey(queryKey) || KqlQueryKeys.IsCustomKpi(queryKey);
+
+    private static string UnknownKeyMessage(string queryKey) =>
+        $"Unknown query key \"{queryKey}\". Custom queries must use a lowercase key starting with " +
+        $"\"{KqlQueryKeys.CustomKpiPrefix}\" ([a-z0-9:._-], at most {KqlQueryKeys.MaxCustomKeyLength} characters).";
 
     private static IReadOnlyList<string> AliasesIn(string kqlText) =>
         KqlSourceResolver.PlaceholderPattern.Matches(kqlText)
@@ -120,8 +135,11 @@ public sealed class KqlQueryAdminService(
         var storedTexts = await store.GetEnabledTextsAsync(ct);
 
         // Driven by the built-in key list, not by the table: a key with no row still has to appear,
-        // otherwise the admin screen would only show what somebody already edited.
+        // otherwise the admin screen would only show what somebody already edited. Custom kpi: keys
+        // exist only as rows, so they are appended from the table.
+        var customKeys = overrides.Keys.Where(k => KqlQueryKeys.IsCustomKpi(k) && !IsBuiltInKey(k));
         return builtInTextProvider.KnownKeys
+            .Concat(customKeys)
             .OrderBy(k => k, StringComparer.Ordinal)
             .Select(key =>
             {
@@ -144,10 +162,11 @@ public sealed class KqlQueryAdminService(
 
     public async Task<KqlQueryDetailView?> GetAsync(string queryKey, CancellationToken ct = default)
     {
-        if (!builtInTextProvider.KnownKeys.Contains(queryKey, StringComparer.OrdinalIgnoreCase)) return null;
+        if (!IsEditableKey(queryKey)) return null;
 
-        var builtIn = BuiltInTextOrEmpty(queryKey);
+        var builtIn = IsBuiltInKey(queryKey) ? BuiltInTextOrEmpty(queryKey) : "";
         var row = await store.GetAsync(queryKey, ct);
+        if (row is null && !IsBuiltInKey(queryKey)) return null;
         var text = row?.KqlText ?? builtIn;
 
         return new KqlQueryDetailView(
@@ -163,9 +182,21 @@ public sealed class KqlQueryAdminService(
     {
         if (string.IsNullOrWhiteSpace(kqlText)) return "The query text cannot be empty.";
         if (kqlText.Length > MaxTextLength) return $"The query text is {kqlText.Length} characters; the limit is {MaxTextLength}.";
-        if (!builtInTextProvider.KnownKeys.Contains(queryKey, StringComparer.OrdinalIgnoreCase))
+        if (!IsEditableKey(queryKey))
         {
-            return $"Unknown query key \"{queryKey}\".";
+            return UnknownKeyMessage(queryKey);
+        }
+        if (!IsBuiltInKey(queryKey))
+        {
+            // A kpi: query is only ever run by the kql: KPI source, which fills nothing else.
+            var disallowed = KqlKpiContract.FindDisallowedTokens(kqlText);
+            if (disallowed.Count > 0)
+            {
+                return $"A KPI query may only use {KqlKpiContract.AllowedTokensText}; found {string.Join(", ", disallowed)}.";
+            }
+
+            var calls = KqlKpiContract.FindCrossResourceCalls(kqlText);
+            if (calls.Count > 0) return KqlKpiContract.CrossResourceMessage(calls);
         }
 
         // The telemetry source catalog is the allow-list; app()/cluster() accepts an ARM path, a
@@ -216,9 +247,24 @@ public sealed class KqlQueryAdminService(
         var error = await ValidateAsync(queryKey, kqlText, ct);
         if (error is not null) return (400, new { error });
 
+        if (usage is not null && !IsBuiltInKey(queryKey))
+        {
+            // An edit must not silently break the KPIs that already run this query.
+            var users = await usage.GetUsersAsync(queryKey, ct);
+            var probe = users.FirstOrDefault(d => d.Enabled) ?? users.FirstOrDefault();
+            if (probe is not null)
+            {
+                var dryRunError = await usage.DryRunAsync(probe, kqlText, ct);
+                if (dryRunError is not null)
+                {
+                    return (400, new { error = $"Query is used by KPI {probe.KpiDefinitionId}; the dry run of the new text failed: {dryRunError}" });
+                }
+            }
+        }
+
         var saved = await store.UpsertAsync(
             new KqlQueryEntry(queryKey, kqlText, Description: description, SourceRef: sourceRef,
-                IsBuiltIn: builtInTextProvider.KnownKeys.Contains(queryKey, StringComparer.OrdinalIgnoreCase),
+                IsBuiltIn: IsBuiltInKey(queryKey),
                 Enabled: enabled),
             string.IsNullOrWhiteSpace(changedBy) ? "portal" : changedBy,
             ct);
@@ -226,16 +272,35 @@ public sealed class KqlQueryAdminService(
         return (200, new { saved.QueryKey, saved.Version, saved.UpdatedAt, saved.UpdatedBy });
     }
 
-    /// <summary>Drops the override so the key goes back to the text embedded in the build.</summary>
+    /// <summary>
+    /// Drops the override so the key goes back to the text embedded in the build. A custom kpi: key
+    /// has no built-in text, so reverting it deletes the query (audited as a removal).
+    /// </summary>
     public async Task<(int StatusCode, object Payload)> RevertAsync(string queryKey, string changedBy, CancellationToken ct = default)
     {
-        if (!builtInTextProvider.KnownKeys.Contains(queryKey, StringComparer.OrdinalIgnoreCase))
+        if (!IsEditableKey(queryKey))
         {
             return (404, new { error = $"Unknown query key \"{queryKey}\"." });
         }
 
+        var custom = !IsBuiltInKey(queryKey);
+        if (custom && await store.GetAsync(queryKey, ct) is null)
+        {
+            return (404, new { error = $"No custom query \"{queryKey}\"." });
+        }
+        if (custom && usage is not null)
+        {
+            var enabled = (await usage.GetUsersAsync(queryKey, ct)).Where(d => d.Enabled).Select(d => d.KpiDefinitionId).ToList();
+            if (enabled.Count > 0)
+            {
+                return (409, new { error = $"Query is used by KPI(s) {string.Join(", ", enabled)}; disable them first." });
+            }
+        }
+
         await store.DeleteAsync(queryKey, string.IsNullOrWhiteSpace(changedBy) ? "portal" : changedBy, ct);
-        return (200, new { queryKey, reverted = true });
+        return custom
+            ? (200, (object)new { queryKey, reverted = true, deleted = true })
+            : (200, new { queryKey, reverted = true });
     }
 
     /// <summary>Restores a previous version by copying its text forward as a new version.</summary>

@@ -17,6 +17,18 @@ builder.ConfigureFunctionsWebApplication();
 builder.Services.AddApplicationInsightsTelemetryWorkerService();
 builder.Services.ConfigureFunctionsApplicationInsights();
 
+builder.Logging.Services.Configure<LoggerFilterOptions>(options =>
+{
+    var applicationInsightsRule = options.Rules.FirstOrDefault(rule =>
+        string.Equals(
+            rule.ProviderName,
+            "Microsoft.Extensions.Logging.ApplicationInsights.ApplicationInsightsLoggerProvider",
+            StringComparison.Ordinal));
+
+    if (applicationInsightsRule is not null)
+        options.Rules.Remove(applicationInsightsRule);
+});
+
 // Encrypts the Doctor Monkey's GitHub token at rest (see SqlLlmClientSettingsStore) with a key
 // kept outside the SQL database, not the token itself. DataProtection:KeysDirectory (blank
 // locally = OS temp dir, survives `func start` restarts on the same machine; docker-compose
@@ -38,11 +50,12 @@ builder.Services.AddSingleton<IAppInsightsTokenRepository>(sp =>
 {
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
     var logger = sp.GetRequiredService<ILogger<SqlAppInsightsTokenRepository>>();
-    return new SqlAppInsightsTokenRepository(connectionString, logger);
+    return new SqlAppInsightsTokenRepository(() => new Microsoft.Data.SqlClient.SqlConnection(connectionString), logger);
 });
 
 builder.Services.AddScoped<IAppInsightsTokenService, AppInsightsTokenService>();
 builder.Services.AddScoped<IAppInsightsQueryService, AppInsightsQueryService>();
+builder.Services.AddSingleton<ITenantResolver, TenantResolver>();
 
 // Core use cases: no Azure/HTTP/EF dependency, unit-testable in isolation (see AGENTS.md).
 builder.Services.AddScoped<GetJourneysService>();
@@ -50,6 +63,8 @@ builder.Services.AddScoped<GetClubsService>();
 builder.Services.AddScoped<GetClubInventoryService>();
 builder.Services.AddScoped<ClubHostResolver>();
 builder.Services.AddScoped<SyncJourneysService>();
+builder.Services.AddScoped<GetHotelBookingKpisService>();
+builder.Services.AddScoped<GetHotelBusinessHealthService>();
 builder.Services.AddScoped<SyncIncidentsService>();
 builder.Services.AddScoped<GetStoredJourneysService>();
 builder.Services.AddScoped<GetDbJourneysService>();
@@ -67,11 +82,19 @@ builder.Services.AddScoped<DoctorMonkeyRunner>();
 builder.Services.AddScoped<ScoutMonkeyRunner>();
 
 builder.Services.AddJourneyMonitorInfrastructure(builder.Configuration);
+builder.Services.AddFabricHotelBookingKpis();
 builder.Services.AddJourneyMonitorMonitoring(builder.Configuration);
+builder.Services.AddSpec1000(builder.Configuration);
 
 // Durable journey store (per-vertical hotel/car/cruise/air schemas). Always registered so the
 // timer and the stored-reads endpoint can report "not configured" themselves; with no
 // JourneyStore:ConnectionString they no-op and the live endpoint is unaffected.
 builder.Services.AddSqlJourneyStore(builder.Configuration);
+
+// Contract v6 (multi-company UI): per-company journeys, exceptions, analytics and overview.
+builder.Services.AddProfileJourneys(builder.Configuration);
+builder.Services.AddProfileExceptions(builder.Configuration);
+builder.Services.AddProfileAnalytics(builder.Configuration);
+builder.Services.AddProfileOverview(builder.Configuration);
 
 builder.Build().Run();

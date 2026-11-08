@@ -1,3 +1,5 @@
+using JourneyMonitor.Core.Incidents;
+
 namespace JourneyMonitor.Core.Abstractions;
 
 /// <summary>
@@ -24,13 +26,15 @@ public sealed record IncidentRow(
     string? LatestMemberId,
     string? LatestUrl,
     IReadOnlyList<string> JourneyKeys,
-    IReadOnlyList<IncidentOccurrenceRow> RecentOccurrences);
+    IReadOnlyList<IncidentOccurrenceRow> RecentOccurrences,
+    string Source = ExceptionSource.Server);
 
 public sealed record IncidentOccurrenceRow(
     DateTimeOffset OccurredAt,
     string? MemberId,
     string? Url,
-    string? Message);
+    string? Message,
+    string Source = ExceptionSource.Server);
 
 public sealed record IncidentReadQuery(
     string? Domain,
@@ -41,9 +45,23 @@ public sealed record IncidentReadQuery(
     int Limit);
 
 /// <summary>
+/// Incident rows whose latest occurrence is at or after <see cref="Since"/>, or all rows when it is null. Same domain, club,
+/// environment and search filters as <see cref="IncidentReadQuery"/>, without the list cap.
+/// </summary>
+public sealed record IncidentCountQuery(
+    string? Domain,
+    string? ClubId,
+    string Environment,
+    DateTimeOffset? Since,
+    string? SearchPattern);
+
+/// <summary>
 /// Reads grouped incidents already stored by exception ingestion.
 /// </summary>
 public interface IIncidentReader
 {
     Task<IReadOnlyList<IncidentRow>> ListAsync(IncidentReadQuery query, CancellationToken cancellationToken);
+
+    /// <summary>One count per domain. A domain with no matching incidents is absent.</summary>
+    Task<IReadOnlyDictionary<string, int>> CountByDomainAsync(IncidentCountQuery query, CancellationToken cancellationToken);
 }

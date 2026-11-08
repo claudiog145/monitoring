@@ -86,11 +86,16 @@ public sealed class TelemetryResourceProfiler(
         }
 
         var hosts = await ProfileHostsAsync(normalized, environment, from, to, appId, tenantId, ct);
+        var dependencies = await ProfileDependenciesAsync(normalized, environment, tableProfiles, from, to, appId, tenantId, ct);
 
         var candidates = EntityIdentityCandidateRanker.Rank(
             tableProfiles.SelectMany(t => t.Dimensions.Select(d => (t.Table, Dimension: d))));
 
         warnings.AddRange(BuildWarnings(normalized, tableProfiles, hosts, candidates));
+        if (dependencies?.State == TelemetryProbeState.Failed)
+        {
+            warnings.Add($"Dependency target probe failed, so no partner was measured - absence of partner proposals is not evidence of absence. {dependencies.Error}");
+        }
 
         return new TelemetryResourceProfile(
             Alias: normalized.Alias,
@@ -99,13 +104,56 @@ public sealed class TelemetryResourceProfiler(
             WindowTo: to,
             WindowHours: normalized.WindowHours,
             MaxSampledRows: normalized.MaxSampledRows,
-            Status: DetermineStatus(tableProfiles, hosts),
+            Status: DetermineStatus(tableProfiles, hosts, dependencies),
             Error: null,
             Tables: tableProfiles,
             IdentityCandidates: candidates,
             Hosts: hosts,
             Warnings: warnings,
-            GeneratedAt: now);
+            GeneratedAt: now,
+            Dependencies: dependencies);
+    }
+
+    /// <summary>
+    /// Runs only when the dependencies table was probed and held rows: there is nothing to ask
+    /// otherwise, and an extra query against an absent table would only add a failure.
+    /// </summary>
+    private async Task<TelemetryDependencyProfile?> ProfileDependenciesAsync(
+        TelemetryProfileRequest request,
+        string environment,
+        IReadOnlyList<TelemetryTableProfile> tables,
+        DateTimeOffset from,
+        DateTimeOffset to,
+        string appId,
+        string? tenantId,
+        CancellationToken ct)
+    {
+        var table = tables.FirstOrDefault(t => t.Table == TelemetryProbeTables.Dependencies);
+        if (table is null || table.RowCountState != TelemetryProbeState.Ok || table.RowCount <= 0) return null;
+
+        var kql = TelemetryProbeKql.DependencyTargets(request.Alias, from, to, request.MaxSampledRows, TelemetryProfileDefaults.MaxDependencyTargetRows);
+        var result = await RunProbeAsync(kql, environment, appId, tenantId, TelemetryProbeTables.Dependencies, "dependency targets", ct);
+        if (result.State != TelemetryProbeState.Ok)
+        {
+            return new TelemetryDependencyProfile(result.State, result.Error, kql, 0, []);
+        }
+
+        var sampledFromQuery = GetLong(result.Rows.FirstOrDefault(), "SampledRows");
+        var sampledRows = sampledFromQuery > 0 ? sampledFromQuery : Math.Min(table.RowCount, request.MaxSampledRows);
+
+        var targets = result.Rows
+            .Select(r => new ObservedDependencyTarget(r.GetString("Target").Trim(), r.GetString("DependencyType").Trim(), GetLong(r, "ObservationCount")))
+            .Where(t => t.Target.Length > 0 && t.ObservationCount > 0)
+            .OrderByDescending(t => t.ObservationCount)
+            .ThenBy(t => t.Target, StringComparer.Ordinal)
+            .ToList();
+
+        return new TelemetryDependencyProfile(
+            targets.Count > 0 ? TelemetryProbeState.Ok : TelemetryProbeState.NoData,
+            null,
+            kql,
+            sampledRows,
+            targets);
     }
 
     private async Task<TelemetryTableProfile> ProfileTableAsync(
@@ -350,10 +398,11 @@ public sealed class TelemetryResourceProfiler(
         return (long)Math.Round(value.Value, MidpointRounding.AwayFromZero);
     }
 
-    private static TelemetryProfileStatus DetermineStatus(IReadOnlyList<TelemetryTableProfile> tables, TelemetryHostProfile hosts)
+    private static TelemetryProfileStatus DetermineStatus(IReadOnlyList<TelemetryTableProfile> tables, TelemetryHostProfile hosts, TelemetryDependencyProfile? dependencies)
     {
         var anyFailure =
             hosts.State == TelemetryProbeState.Failed ||
+            dependencies?.State == TelemetryProbeState.Failed ||
             tables.Any(t => t.RowCountState == TelemetryProbeState.Failed || t.DimensionState == TelemetryProbeState.Failed);
         if (anyFailure) return TelemetryProfileStatus.Degraded;
 

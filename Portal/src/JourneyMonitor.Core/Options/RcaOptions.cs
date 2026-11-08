@@ -20,6 +20,12 @@ public sealed class RcaOptions
     public bool? AutoComposeOnEscalation { get; set; }
 
     /// <summary>
+    /// When set (0..1), an escalated case WITHOUT a probable root cause still composes its RCA once the Inspector's
+    /// confidence exceeds this value. Unset by default: only cases with a named root cause compose.
+    /// </summary>
+    public double? AutoComposeMinConfidence { get; set; }
+
+    /// <summary>
     /// Past incidents pulled from the knowledge base as context. Default 5 - enough to recognise a
     /// repeat, few enough that the prompt stays about THIS incident rather than drifting toward a
     /// similar one.

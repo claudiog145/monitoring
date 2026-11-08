@@ -83,6 +83,9 @@ public static class AgentWorkPayloadType
 {
     /// <summary><see cref="PayloadId"/> is an <see cref="InvestigationPackage"/> id.</summary>
     public const string InvestigationPackage = "investigation-package";
+
+    /// <summary>PayloadId is a TriageInvestigation id.</summary>
+    public const string TriageSignal = "triage-signal";
 }
 
 /// <summary>Backlog counters for the card - answers "is it falling behind?", which a heartbeat of past cycles cannot.</summary>

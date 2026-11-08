@@ -1,0 +1,104 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "crossComponentResources": [
+          "/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/sor-appinsights-rg-usw/providers/microsoft.insights/components/sor-frontend-ai-prod-usw"
+        ],
+        "parameters": [
+          {
+            "id": "p-clubid",
+            "version": "KqlParameterItem/1.0",
+            "name": "ClubId",
+            "type": 1,
+            "value": "15639",
+            "isRequired": true
+          },
+          {
+            "id": "p-time",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "value": { "durationMs": 86400000 },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 3600000 },
+                { "durationMs": 14400000 },
+                { "durationMs": 43200000 },
+                { "durationMs": 86400000 },
+                { "durationMs": 259200000 },
+                { "durationMs": 604800000 },
+                { "durationMs": 1209600000 },
+                { "durationMs": 2592000000 }
+              ],
+              "allowCustom": true
+            }
+          },
+          {
+            "id": "p-rows",
+            "version": "KqlParameterItem/1.0",
+            "name": "RowLimit",
+            "label": "Latest events",
+            "type": 2,
+            "value": "1000",
+            "isRequired": true,
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "showDefault": false
+            },
+            "jsonData": "[{\"value\":\"100\",\"label\":\"100\"},{\"value\":\"500\",\"label\":\"500\"},{\"value\":\"1000\",\"label\":\"1,000\"},{\"value\":\"5000\",\"label\":\"5,000\"}]"
+          }
+        ]
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Cars — club activity\n\nSource: `sor-frontend-ai-prod-usw`. Filtered by **ClubId** and car calls only (`CarSearch`, `CarBooking`, `/cars/`). Hotel calls stay on the Hotels workbook.\n\n**Time range** refreshes the chart and the list. **Latest events** only limits how many rows the list shows."
+      },
+      "name": "intro"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "size": 0,
+        "query": "let clubId = tostring(\"{ClubId}\");\nunion isfuzzy=true customEvents, traces, pageViews, requests\n| where timestamp {TimeRange}\n| extend Club = tostring(customDimensions.ClubId)\n| extend Club = iff(isempty(Club), tostring(customDimensions.VacationClubID), Club)\n| extend Club = iff(isempty(Club), tostring(customDimensions.VacationClubId), Club)\n| where isnotempty(clubId) and Club == clubId\n| extend Signal = strcat(name, \" \", operation_Name, \" \", url)\n| where Signal has \"CarSearch\" or Signal has \"BackgroundCarSearch\" or Signal has \"CarBooking\" or Signal has \"CarLocationSearch\" or Signal has \"searchlocations\" or Signal has \"/cars/\"\n| summarize Events = count() by bin(timestamp, {TimeRange:grain})\n| order by timestamp asc",
+        "title": "Activity over time — {TimeRange:label}",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "linechart",
+        "crossComponentResources": [
+          "/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/sor-appinsights-rg-usw/providers/microsoft.insights/components/sor-frontend-ai-prod-usw"
+        ]
+      },
+      "name": "timechart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "size": 0,
+        "query": "let clubId = tostring(\"{ClubId}\");\nlet rowLimit = toint(\"{RowLimit}\");\nunion isfuzzy=true customEvents, traces, pageViews, requests\n| where timestamp {TimeRange}\n| extend Club = tostring(customDimensions.ClubId)\n| extend Club = iff(isempty(Club), tostring(customDimensions.VacationClubID), Club)\n| extend Club = iff(isempty(Club), tostring(customDimensions.VacationClubId), Club)\n| where isnotempty(clubId) and Club == clubId\n| extend Signal = strcat(name, \" \", operation_Name, \" \", url)\n| where Signal has \"CarSearch\" or Signal has \"BackgroundCarSearch\" or Signal has \"CarBooking\" or Signal has \"CarLocationSearch\" or Signal has \"searchlocations\" or Signal has \"/cars/\"\n| project timestamp, itemType, name, message, operation_Name, Club, customDimensions\n| order by timestamp desc\n| take rowLimit",
+        "title": "Latest events in this range",
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/sor-appinsights-rg-usw/providers/microsoft.insights/components/sor-frontend-ai-prod-usw"
+        ]
+      },
+      "name": "table"
+    }
+  ],
+  "fallbackResourceIds": [
+    "/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/sor-appinsights-rg-usw/providers/microsoft.insights/components/sor-frontend-ai-prod-usw"
+  ]
+}

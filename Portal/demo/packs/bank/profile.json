@@ -1,0 +1,71 @@
+{
+  "profileKey": "banco",
+  "displayName": "Banco Andino (demo)",
+  "theme": { "primaryColor": "#7A1426", "accentColor": "#D4A72C", "shortName": "Banco Andino" },
+  "labels": { "service": "Canal", "flow": "Operación", "step": "Paso", "entity": "Sucursal", "owner": "Equipo" },
+  "services": [
+    {
+      "key": "banca-web", "displayName": "Banca por Internet", "telemetrySourceAliases": ["bank-web-banking"], "hostFilters": ["www.bancoandino.demo"],
+      "flows": [ { "key": "operaciones-web", "displayName": "Operaciones web", "steps": [
+        { "key": "login", "displayName": "Login", "order": 1, "matchers": [ { "kind": "path-contains", "value": "/auth/login" } ] },
+        { "key": "saldos", "displayName": "Saldos", "order": 2, "matchers": [ { "kind": "path-contains", "value": "/banca/cuentas/saldos" } ] },
+        { "key": "movimientos", "displayName": "Movimientos", "order": 3, "matchers": [ { "kind": "path-contains", "value": "/banca/cuentas/movimientos" } ] },
+        { "key": "transferencia", "displayName": "Transferencia", "order": 4, "matchers": [ { "kind": "path-contains", "value": "/banca/transferencias" } ] },
+        { "key": "pago-servicios", "displayName": "Pago de servicios", "order": 5, "matchers": [ { "kind": "path-contains", "value": "/banca/pagos/servicios" } ] },
+        { "key": "comprobante", "displayName": "Comprobante", "order": 6, "matchers": [ { "kind": "path-contains", "value": "/banca/comprobantes" } ] }
+      ] } ]
+    },
+    {
+      "key": "banca-movil", "displayName": "App móvil", "telemetrySourceAliases": ["bank-mobile-api"], "hostFilters": ["api.bancoandino.demo"],
+      "flows": [
+        { "key": "operaciones-movil", "displayName": "Operaciones móviles", "steps": [
+          { "key": "login", "displayName": "Login", "order": 1, "matchers": [ { "kind": "path-contains", "value": "/api/mobile/v2/auth/login" } ] },
+          { "key": "saldo", "displayName": "Saldo", "order": 2, "matchers": [ { "kind": "path-contains", "value": "/api/mobile/v2/accounts/balance" } ] },
+          { "key": "transferencia", "displayName": "Transferencia", "order": 3, "matchers": [ { "kind": "path-contains", "value": "/api/mobile/v2/transfers" } ] }
+        ] },
+        { "key": "tarjetas", "displayName": "Tarjetas", "steps": [
+          { "key": "bloqueo-tarjeta", "displayName": "Bloqueo de tarjeta", "order": 4, "matchers": [ { "kind": "operation-equals", "value": "POST /api/mobile/v2/cards/lock" } ] },
+          { "key": "consulta-tarjetas", "displayName": "Consulta de tarjetas", "order": 5, "matchers": [ { "kind": "operation-equals", "value": "GET /api/mobile/v2/cards" } ] }
+        ] }
+      ]
+    },
+    {
+      "key": "pagos", "displayName": "Pagos", "telemetrySourceAliases": ["bank-payments-svc"], "hostFilters": ["pagos.bancoandino.internal"],
+      "flows": [ { "key": "pagos", "displayName": "Procesamiento de pagos", "steps": [
+        { "key": "ach-interbancaria", "displayName": "Transferencia interbancaria (ACH)", "order": 1, "matchers": [ { "kind": "path-contains", "value": "/payments/v1/ach/transfers" } ] },
+        { "key": "pago-servicios", "displayName": "Pago de servicios", "order": 2, "matchers": [ { "kind": "path-contains", "value": "/payments/v1/bill-payments" } ] },
+        { "key": "autorizacion-tarjeta", "displayName": "Autorización de tarjeta", "order": 3, "matchers": [ { "kind": "path-contains", "value": "/payments/v1/card-authorizations" } ] }
+      ] } ]
+    },
+    {
+      "key": "core", "displayName": "Core bancario (gateway)", "telemetrySourceAliases": ["bank-core-gateway"], "hostFilters": ["core-gw.bancoandino.internal"],
+      "flows": [ { "key": "core", "displayName": "Transacciones del core", "steps": [
+        { "key": "transferencia", "displayName": "Transferencia en core", "order": 1, "matchers": [ { "kind": "path-contains", "value": "/core/v1/transfers" } ] },
+        { "key": "saldos", "displayName": "Consulta de saldos", "order": 2, "matchers": [ { "kind": "path-contains", "value": "/core/v1/accounts/balances" } ] },
+        { "key": "debito", "displayName": "Débito", "order": 3, "matchers": [ { "kind": "path-contains", "value": "/core/v1/debits" } ] }
+      ] } ]
+    }
+  ],
+  "entityIdentitySources": [ { "order": 1, "kind": "custom-dimension", "key": "BranchId", "entityKind": "branch" } ],
+  "glossary": {
+    "serviceNoun": "canal", "flowNoun": "operación", "stepNoun": "paso", "entityNoun": "sucursal", "ownerNoun": "equipo",
+    "description": "Banco Andino (demo) is a fictional retail bank of the Andean region. Customers log in to web banking or the mobile app, check balances, transfer money, pay bills and manage their cards; payments-svc settles interbank (ACH) transfers, bill payments and card authorizations, and core-gateway fronts the core banking mainframe. Every operation is booked to a branch (sucursal, BranchId). All data is synthetic."
+  },
+  "enabled": true,
+  "notes": "Demo company pack 'bank' (contract v5 §6). Synthetic data only; partner names are fictional.",
+  "partners": [
+    { "key": "core-banking", "displayName": "Core bancario (mainframe)", "matchers": [
+      { "kind": "dependency-target-contains", "value": "core-gw.bancoandino.internal" },
+      { "kind": "dependency-target-contains", "value": "mainframe.bancoandino.internal" } ] },
+    { "key": "card-network", "displayName": "Red de tarjetas (Red Cóndor)", "matchers": [ { "kind": "dependency-target-contains", "value": "redcondor.demo" } ] },
+    { "key": "ach-clearing", "displayName": "Cámara de compensación ACH (CompensAndes)", "matchers": [ { "kind": "dependency-target-contains", "value": "compensandes.demo" } ] },
+    { "key": "antifraud", "displayName": "Motor antifraude (VigíaFraude)", "matchers": [ { "kind": "dependency-target-contains", "value": "vigiafraude.demo" } ] },
+    { "key": "otp-sms", "displayName": "Proveedor SMS/OTP (Mensajería Andes)", "matchers": [ { "kind": "dependency-target-contains", "value": "mensajeriaandes.demo" } ] },
+    { "key": "biller-hub", "displayName": "Agregador de recaudos (RecaudaNet)", "matchers": [ { "kind": "dependency-target-contains", "value": "recaudanet.demo" } ] }
+  ],
+  "privacy": {
+    "allowRawEvidence": false,
+    "piiDimensions": ["CustomerId", "AccountNumber", "CardNumber", "DocumentNumber", "PhoneNumber"],
+    "patterns": ["\\b\\d{13,19}\\b", "DNI[ :]?\\d{8}"]
+  }
+}

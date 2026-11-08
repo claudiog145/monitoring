@@ -7,8 +7,9 @@ using Microsoft.Extensions.Options;
 namespace JourneyMonitor.Infrastructure.Sql;
 
 /// <summary>
-/// Reads Fusion/Hybrid clubs from <c>brand.ClubInventory</c> with per-product maturity
-/// from <c>brand.ClubProductMaturityStatus</c> (no stored procedure).
+/// Reads Application Map clubs from <c>brand.ClubInventory</c> with per-product
+/// maturity from <c>brand.ClubProductMaturityStatus</c> (no stored procedure).
+/// Returns all seeded platform families: Fusion, Hybrid, SOR, and NG.
 /// </summary>
 public sealed class SqlClubInventoryStore(IOptions<JourneyStoreOptions> storeOptions) : IClubInventoryStore
 {
@@ -26,7 +27,6 @@ public sealed class SqlClubInventoryStore(IOptions<JourneyStoreOptions> storeOpt
             BusinessDataLocation,
             Environment
         FROM brand.ClubInventory
-        WHERE FusionPlatform IN (N'Fusion', N'Hybrid')
         ORDER BY ClubId;
         """;
 
@@ -41,7 +41,6 @@ public sealed class SqlClubInventoryStore(IOptions<JourneyStoreOptions> storeOpt
         INNER JOIN brand.Product AS p ON p.ProductId = cps.ProductId
         INNER JOIN brand.MaturityLevel AS ml ON ml.MaturityLevelId = cps.MaturityLevelId
         INNER JOIN brand.ClubInventory AS c ON c.ClubId = cps.ClubId
-        WHERE c.FusionPlatform IN (N'Fusion', N'Hybrid')
         ORDER BY cps.ClubId, p.SortOrder;
         """;
 

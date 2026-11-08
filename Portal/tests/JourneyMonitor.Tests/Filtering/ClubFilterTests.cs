@@ -186,6 +186,26 @@ public class ClubFilterTests
         Assert.Contains("extend ClubId = PartnerId", cruises);
         Assert.Contains("_Rank <= 200", cruises);
         Assert.DoesNotContain("PartnerId == tmoPartner", cruises);
+
+        var cars = ClubFilter.InjectVerticalJourneyKql(
+            "cars",
+            Kql.GetJourneyKql("cars"),
+            "15m",
+            ["15639", "15827", "15893", "16108"],
+            ["stays.tmobiletravel.com", "book.wesalute.com", "members.aarparrivia.com"],
+            ["308", "323", "333"],
+            rowCap: 200);
+        Assert.Contains("let win = 15m;", cars);
+        Assert.Contains("url has_any (tmoHosts)", cars);
+        Assert.Contains("| where Club in (tmoClubs)", cars);
+        Assert.Contains("let clubByCorr =", cars);
+        Assert.Contains("| join kind=inner clubByCorr on $left.RawCorrelationId == $right.CorrelationId", cars);
+        Assert.Contains("Journey, ClubId", cars);
+        Assert.Contains("_Rank <= 200", cars);
+        Assert.DoesNotContain("| where url has tmoHost", cars);
+        Assert.DoesNotContain("| where Club == tmoClub", cars);
+        Assert.DoesNotContain("top 200 by LastSeen desc", cars);
+        Assert.DoesNotContain("| top 50 by LastSeen desc", cars);
     }
 
     [Fact]

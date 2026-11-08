@@ -1,0 +1,678 @@
+{
+  "profileKey": "arrivia",
+  "displayName": "Arrivia (demo)",
+  "theme": {
+    "primaryColor": "#0E4F5C",
+    "accentColor": "#2EC4B6",
+    "shortName": "Arrivia"
+  },
+  "labels": {
+    "service": "Vertical",
+    "flow": "Journey",
+    "step": "Stage",
+    "entity": "Club",
+    "owner": "Owning team"
+  },
+  "services": [
+    {
+      "key": "cruises",
+      "displayName": "Cruises",
+      "telemetrySourceAliases": [
+        "cruise-core",
+        "cruise-api"
+      ],
+      "hostFilters": [],
+      "flows": [
+        {
+          "key": "booking",
+          "displayName": "Cruise booking",
+          "steps": [
+            {
+              "key": "02-cruise-listing",
+              "displayName": "02 Cruise Listing",
+              "order": 10,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/cruisesearch",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "/getcustomerid",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "/searchmatrix",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "03-cruise-detail",
+              "displayName": "03 Cruise Detail",
+              "order": 11,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/cruiseitinerary",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "04-rooms-and-rates",
+              "displayName": "04 Rooms & Rates",
+              "order": 12,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/cruisecategory",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "06-cabin-selection",
+              "displayName": "06 Cabin Selection",
+              "order": 13,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/cruisecabinonhold",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "05-total-price",
+              "displayName": "05 Total Price",
+              "order": 14,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/cruisecabin",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "07-passenger",
+              "displayName": "07 Passenger",
+              "order": 15,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "passenger",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "/secure/cruisetravelwith.jsp",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "/api/guest/get-guests",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "08-options",
+              "displayName": "08 Options",
+              "order": 16,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/featuresandoptions",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "/insurance",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "09-payment",
+              "displayName": "09 Payment",
+              "order": 17,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/cruisepayment",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "10-review",
+              "displayName": "10 Review",
+              "order": 18,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/secure/cruisesummary.jsp",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "11-confirmation",
+              "displayName": "11 Confirmation",
+              "order": 19,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/cruiseconfirm",
+                  "caseSensitive": false
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "fallbackStep": null
+    },
+    {
+      "key": "cars",
+      "displayName": "Cars",
+      "telemetrySourceAliases": [
+        "sor-frontend",
+        "club"
+      ],
+      "hostFilters": [],
+      "flows": [
+        {
+          "key": "booking",
+          "displayName": "Car booking",
+          "steps": [
+            {
+              "key": "03-car-results",
+              "displayName": "03 Car Results",
+              "order": 30,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "backgroundcarsearch",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "/cars/",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "02-car-search",
+              "displayName": "02 Car Search",
+              "order": 31,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "carlocationsearch",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "searchlocations",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "carsearch",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "05-prebook",
+              "displayName": "05 PreBook",
+              "order": 32,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "carbooking",
+                  "caseSensitive": false
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "fallbackStep": null
+    },
+    {
+      "key": "hotels",
+      "displayName": "Hotels",
+      "telemetrySourceAliases": [
+        "sor-frontend",
+        "club"
+      ],
+      "hostFilters": [],
+      "flows": [
+        {
+          "key": "booking",
+          "displayName": "Hotel booking",
+          "steps": [
+            {
+              "key": "03-hotel-results",
+              "displayName": "03 Hotel Results",
+              "order": 40,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "backgroundhotelsearch",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "02-hotel-search",
+              "displayName": "02 Hotel Search",
+              "order": 41,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "search.json",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "04-hotel-details",
+              "displayName": "04 Hotel Details",
+              "order": 42,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "searchrooms",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "getcancelpolicy",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "hoteldetails",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "zentrumhubhoteldetailscontent",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "getreviews",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "05-prebook",
+              "displayName": "05 PreBook",
+              "order": 43,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "book.json",
+                  "caseSensitive": false
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "fallbackStep": null
+    },
+    {
+      "key": "shared",
+      "displayName": "Shared Booking Services",
+      "telemetrySourceAliases": [
+        "sor-frontend",
+        "club"
+      ],
+      "hostFilters": [],
+      "flows": [
+        {
+          "key": "booking",
+          "displayName": "Shared booking steps",
+          "steps": [
+            {
+              "key": "01-login",
+              "displayName": "01 Login",
+              "order": 1,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "login.json",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "logincheck",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "08-confirmation",
+              "displayName": "08 Confirmation",
+              "order": 90,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "purchasecomplete",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "07-booking",
+              "displayName": "07 Booking",
+              "order": 91,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "completepurchase",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "determine3dseligibility",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "06-checkout",
+              "displayName": "06 Checkout",
+              "order": 92,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/reservations/purchase",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "userpeople_read",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "addremoveinsurance",
+                  "caseSensitive": false
+                },
+                {
+                  "kind": "path-contains",
+                  "value": "travelerprofile",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "09-cancellation",
+              "displayName": "09 Cancellation",
+              "order": 93,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/reservations/cancel",
+                  "caseSensitive": false
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "fallbackStep": null
+    },
+    {
+      "key": "air",
+      "displayName": "Air",
+      "telemetrySourceAliases": [
+        "air-ui",
+        "air-api"
+      ],
+      "hostFilters": [],
+      "flows": [
+        {
+          "key": "booking",
+          "displayName": "Air booking",
+          "steps": [
+            {
+              "key": "02-air-search",
+              "displayName": "02 Air Search",
+              "order": 50,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/air/search",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "03-air-results",
+              "displayName": "03 Air Results",
+              "order": 51,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/air/results",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "04-fare-rules",
+              "displayName": "04 Fare Rules",
+              "order": 52,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/air/farerules",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "05-air-price",
+              "displayName": "05 Air Price",
+              "order": 53,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/air/price",
+                  "caseSensitive": false
+                }
+              ]
+            },
+            {
+              "key": "07-air-booking",
+              "displayName": "07 Air Booking",
+              "order": 54,
+              "matchers": [
+                {
+                  "kind": "path-contains",
+                  "value": "/air/book",
+                  "caseSensitive": false
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "fallbackStep": null
+    }
+  ],
+  "entityIdentitySources": [
+    {
+      "order": 1,
+      "kind": "custom-dimension",
+      "key": "VacationClubId",
+      "entityKind": "club"
+    },
+    {
+      "order": 2,
+      "kind": "custom-dimension",
+      "key": "ClubId",
+      "entityKind": "club"
+    },
+    {
+      "order": 3,
+      "kind": "custom-dimension",
+      "key": "club_id",
+      "entityKind": "club"
+    },
+    {
+      "order": 4,
+      "kind": "query-parameter",
+      "key": "cobrand",
+      "entityKind": "club"
+    },
+    {
+      "order": 5,
+      "kind": "query-parameter",
+      "key": "cobrandId",
+      "entityKind": "club"
+    },
+    {
+      "order": 6,
+      "kind": "host",
+      "key": "",
+      "entityKind": "host"
+    }
+  ],
+  "glossary": {
+    "serviceNoun": "vertical",
+    "flowNoun": "journey",
+    "stepNoun": "stage",
+    "entityNoun": "club",
+    "ownerNoun": "owning team",
+    "description": "Arrivia (demo) is a SYNTHETIC copy of the Arrivia company profile used by the demo stack. Arrivia runs white-label travel booking sites for member clubs. A member arrives on a club-branded site and moves through a booking funnel - search, results, detail, pre-book, checkout, booking, confirmation - in one of four verticals: Hotels, Cars, Cruises and Air. Hotels and Cars share one storefront (and the club front end); Cruises runs on its own core and API; Air has its own UI and API. Login, checkout, booking, confirmation and cancellation hit the same endpoints whatever the member is buying, so they are grouped as Shared Booking Services. Who is affected is always a club: a stamped club id (VacationClubId) wins, otherwise the club-branded hostname identifies it. Every club id, host and number in the demo is invented."
+  },
+  "enabled": true,
+  "notes": "Demo pack (Portal/demo/packs/tourism). Services, stages, matchers and identity sources mirror the real Arrivia profile; the air service, the club alias on the Hotels/Cars/Shared verticals and the partners are demo additions. Synthetic data only.",
+  "partners": [
+    {
+      "key": "identity-provider",
+      "displayName": "Identity provider (fictional)",
+      "matchers": [
+        {
+          "kind": "dependency-target-contains",
+          "value": "idp-demo"
+        }
+      ]
+    },
+    {
+      "key": "hotel-hub",
+      "displayName": "Hotel content and rates hub (fictional)",
+      "matchers": [
+        {
+          "kind": "dependency-target-contains",
+          "value": "hotel-hub-demo"
+        }
+      ]
+    },
+    {
+      "key": "booking-partner",
+      "displayName": "Hotel and car distribution partner (fictional)",
+      "matchers": [
+        {
+          "kind": "dependency-target-contains",
+          "value": "partner-bookings-demo"
+        }
+      ]
+    },
+    {
+      "key": "car-gds",
+      "displayName": "Car rental GDS (fictional)",
+      "matchers": [
+        {
+          "kind": "dependency-target-contains",
+          "value": "car-gds-demo"
+        }
+      ]
+    },
+    {
+      "key": "payment-gateway",
+      "displayName": "Payment gateway (fictional)",
+      "matchers": [
+        {
+          "kind": "dependency-target-contains",
+          "value": "paygateway-demo"
+        }
+      ]
+    },
+    {
+      "key": "club-membership",
+      "displayName": "Club membership registry (fictional)",
+      "matchers": [
+        {
+          "kind": "dependency-target-contains",
+          "value": "club-registry-demo"
+        }
+      ]
+    },
+    {
+      "key": "cruise-line-gds",
+      "displayName": "Cruise line inventory GDS (fictional)",
+      "matchers": [
+        {
+          "kind": "dependency-target-contains",
+          "value": "cruiseline-gds-demo"
+        }
+      ]
+    },
+    {
+      "key": "cruise-core-db",
+      "displayName": "Cruise Core SQL database",
+      "matchers": [
+        {
+          "kind": "dependency-target-contains",
+          "value": "cruisecore-sql"
+        }
+      ]
+    },
+    {
+      "key": "travel-insurance",
+      "displayName": "Travel insurance provider (fictional)",
+      "matchers": [
+        {
+          "kind": "dependency-target-contains",
+          "value": "insure-demo"
+        }
+      ]
+    },
+    {
+      "key": "air-gds",
+      "displayName": "Air fare provider (fictional)",
+      "matchers": [
+        {
+          "kind": "dependency-target-contains",
+          "value": "airfare-gds-demo"
+        }
+      ]
+    }
+  ],
+  "privacy": {
+    "allowRawEvidence": false,
+    "piiDimensions": [
+      "MemberEmail",
+      "MemberName",
+      "CardHolderName"
+    ],
+    "patterns": [
+      "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
+    ]
+  }
+}

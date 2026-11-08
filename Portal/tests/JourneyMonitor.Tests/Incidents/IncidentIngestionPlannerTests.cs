@@ -182,10 +182,12 @@ public class IncidentIngestionPlannerTests
                 "WES47642EFV",
                 "2ff71128-d7b3-478c-9818-e4ce8f615b01",
                 "de9c3391-cd1c-453f-b31d-25f331c9c74a",
-                null),
+                null,
+                Source: ExceptionSource.Browser),
         ]);
 
         var incident = Assert.Single(plan.Incidents);
+        Assert.Equal(ExceptionSource.Browser, Assert.Single(incident.Occurrences).Source);
         Assert.Equal("2ff71128-d7b3-478c-9818-e4ce8f615b01", Assert.Single(incident.JourneyKeys));
         Assert.Equal(
             "2ff71128-d7b3-478c-9818-e4ce8f615b01",
@@ -206,15 +208,32 @@ public class IncidentIngestionPlannerTests
     }
 
     [Fact]
-    public void MissingClubIsNotAnIncident()
+    public void HotelMissingClubIsNotAnIncident()
     {
-        var plan = IncidentIngestionPlanner.Plan("cars", "production",
+        var plan = IncidentIngestionPlanner.Plan("hotels", "production",
         [
-            Signal("System.TimeoutException", "  ", "/cars/search.json", "item-x"),
+            Signal("System.TimeoutException", "  ", "/vacationclub/logincheck.aspx", "item-x"),
         ]);
 
         Assert.Empty(plan.Incidents);
         Assert.Equal(1, plan.DroppedWithoutClub);
+    }
+
+    [Fact]
+    public void CarExceptionsWithoutAClubAreDropped()
+    {
+        var plan = IncidentIngestionPlanner.Plan("cars", "production",
+        [
+            Signal("System.NullReferenceException", "", "/api/CarSearch", "item-1"),
+            Signal("System.NullReferenceException", "  ", "/api/CarSearch", "item-2", at: Noon.AddMinutes(1)),
+            Signal("System.Exception", "", "/api/CarBooking", "item-3"),
+            Signal("System.TimeoutException", "15639", "/api/CarSearch", "item-4"),
+        ]);
+
+        Assert.Equal(3, plan.DroppedWithoutClub);
+        var known = Assert.Single(plan.Incidents);
+        Assert.Equal("15639", known.ClubId);
+        Assert.Equal("System.TimeoutException", known.ExceptionType);
     }
 
     private static ExceptionSignal Signal(

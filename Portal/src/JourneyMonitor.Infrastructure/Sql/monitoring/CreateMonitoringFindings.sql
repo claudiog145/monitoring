@@ -116,6 +116,9 @@ GO
 --   a concrete key   - visible ONLY to that company.
 -- Retrieval filters on (ProfileKey = @ProfileKey OR ProfileKey = N''), so a precedent is either
 -- deliberately shared or deliberately scoped, and never reaches a company by accident.
+-- One exception (MCRV H1): an untagged finding_history chunk is a Doctor diagnosis of the
+-- incumbent's legacy findings, so it is the incumbent's (@IncumbentProfileKey), never shared.
+-- KnowledgeScope (Core) applies the same rule in memory.
 --
 -- The backfill lives INSIDE this guard on purpose, and it is the most delicate line of the change.
 -- The chunks already stored are real RCA documents belonging to the incumbent company; leaving
@@ -132,6 +135,20 @@ BEGIN
 
     EXEC(N'UPDATE monitoring.KnowledgeChunk SET ProfileKey = N''arrivia'';');
 END
+GO
+
+-- MCRV H1 data fix (review report §4.2), idempotent: a second run updates nothing. The Doctor
+-- diagnoses findings of the incumbent's legacy pipeline (hotels/cruises/cars/air) but used to file
+-- each diagnosis under whichever company was active, and older ones had no company at all and were
+-- served to every company as "shared". Every such finding_history chunk is the incumbent's. It runs
+-- with the code fix on purpose: applied alone, the Doctor would keep mislabelling new diagnoses.
+UPDATE monitoring.KnowledgeChunk
+SET ProfileKey = N'arrivia'
+WHERE SourceType = N'finding_history'
+  AND ProfileKey <> N'arrivia'
+  AND (ProfileKey = N''
+       OR Content LIKE N'[[]hotels/%' OR Content LIKE N'[[]cruises/%'
+       OR Content LIKE N'[[]cars/%'   OR Content LIKE N'[[]air/%');
 GO
 
 -- SourceRef now holds a document path ("MemberMaint/1.10.24 MemberMaint Outage ( No servers are
@@ -328,14 +345,16 @@ GO
 -- positional record that Dapper matches by position, name and exact count, and the filter is
 -- already enforced here.
 CREATE OR ALTER PROCEDURE monitoring.usp_GetAllKnowledgeChunks
-    @ProfileKey nvarchar(128) = NULL
+    @ProfileKey nvarchar(128) = NULL,
+    @IncumbentProfileKey nvarchar(128) = N'arrivia'
 AS
 BEGIN
     SET NOCOUNT ON;
     SELECT Id, SourceType, SourceRef, Content, EmbeddingJson, EmbeddingModel,
            Domain, DocumentTitle, SectionTitle, ContentHash, CreatedAt
     FROM monitoring.KnowledgeChunk
-    WHERE (@ProfileKey IS NULL OR ProfileKey = @ProfileKey OR ProfileKey = N'')
+    WHERE (@ProfileKey IS NULL OR ProfileKey = @ProfileKey
+           OR (ProfileKey = N'' AND (SourceType <> N'finding_history' OR @ProfileKey = @IncumbentProfileKey)))
     ORDER BY CreatedAt DESC;
 END
 GO
@@ -346,9 +365,13 @@ GO
 -- Both "no vector" sentinels come from the caller rather than being hardcoded here, so they stay
 -- defined in exactly one place (KnowledgeChunk). Counting only one of them would report an
 -- unembedded chunk as retrievable by meaning, which is the opposite of what this column is for.
+-- @ProfileKey (contract v6 §5): NULL lists the whole corpus; a company sees its own documents plus the
+-- shared corpus (N''), the same boundary usp_GetAllKnowledgeChunks applies to retrieval.
 CREATE OR ALTER PROCEDURE monitoring.usp_GetKnowledgeDocuments
     @UnknownEmbeddingModel nvarchar(128),
-    @NoEmbeddingModel nvarchar(128)
+    @NoEmbeddingModel nvarchar(128),
+    @ProfileKey nvarchar(128) = NULL,
+    @IncumbentProfileKey nvarchar(128) = N'arrivia'
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -361,6 +384,8 @@ BEGIN
                                              OR EmbeddingModel = @NoEmbeddingModel THEN 0 ELSE 1 END),
             IndexedAt           = MAX(CreatedAt)
     FROM monitoring.KnowledgeChunk
+    WHERE (@ProfileKey IS NULL OR ProfileKey = @ProfileKey
+           OR (ProfileKey = N'' AND (SourceType <> N'finding_history' OR @ProfileKey = @IncumbentProfileKey)))
     GROUP BY ISNULL(DocumentTitle, N'(untitled)'), SourceType
     ORDER BY MAX(CreatedAt) DESC;
 END
@@ -370,7 +395,9 @@ GO
 -- is thousands of numbers that no reader can use, and shipping it would dwarf the text itself.
 CREATE OR ALTER PROCEDURE monitoring.usp_GetKnowledgeChunksByDocument
     @DocumentTitle nvarchar(400),
-    @SourceType nvarchar(64) = NULL
+    @SourceType nvarchar(64) = NULL,
+    @ProfileKey nvarchar(128) = NULL,
+    @IncumbentProfileKey nvarchar(128) = N'arrivia'
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -380,6 +407,8 @@ BEGIN
     FROM monitoring.KnowledgeChunk
     WHERE ISNULL(DocumentTitle, N'(untitled)') = @DocumentTitle
       AND (@SourceType IS NULL OR SourceType = @SourceType)
+      AND (@ProfileKey IS NULL OR ProfileKey = @ProfileKey
+           OR (ProfileKey = N'' AND (SourceType <> N'finding_history' OR @ProfileKey = @IncumbentProfileKey)))
     ORDER BY CreatedAt, Id;
 END
 GO

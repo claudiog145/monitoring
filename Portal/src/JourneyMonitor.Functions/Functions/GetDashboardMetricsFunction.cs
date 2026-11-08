@@ -36,8 +36,8 @@ public sealed class GetDashboardMetricsFunction(
 
         try
         {
-            var (statusCode, result) = await getDashboardMetricsService.GetAsync(
-                query["domain"], query["chart"], query["win"], query["env"], query["club"], cancellationToken);
+            var (statusCode, result) = await getDashboardMetricsService.GetForProfileAsync(
+                query["profileKey"], query["domain"], query["chart"], query["win"], query["env"], query["club"] ?? query["entity"], cancellationToken);
             var response = req.CreateResponse((HttpStatusCode)statusCode);
             response.Headers.Add("Content-Type", "application/json; charset=utf-8");
             response.Headers.Add("Cache-Control", "no-store");

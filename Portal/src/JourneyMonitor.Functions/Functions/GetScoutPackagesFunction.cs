@@ -2,7 +2,9 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using JourneyMonitor.Core.Abstractions;
+using JourneyMonitor.Core.Company;
 using JourneyMonitor.Core.Domain;
+using JourneyMonitor.Core.Monitoring.Kpi;
 using JourneyMonitor.Core.Options;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -19,8 +21,8 @@ namespace JourneyMonitor.Functions.Functions;
 /// GET /api/scout/runs          - recent cycles, including the quiet and the failed ones.
 /// GET /api/scout/stats         - cumulative counters across the recorded cycles.
 ///
-/// The list endpoints take <c>?board=</c> and <c>?profileKey=</c>; both absent means everything,
-/// so a caller written before multi-company existed keeps working unchanged.
+/// The endpoints take <c>?board=</c> (absent = both boards) and <c>?profileKey=</c> (absent = the
+/// active company, "*" = every company; see ReadScopeAsync).
 ///
 /// The list deliberately omits the evidence payloads: those carry member ids and correlation
 /// ids, so the full package is gated by X-Internal-Api-Secret, the same fail-closed guard
@@ -31,7 +33,8 @@ public sealed class GetScoutPackagesFunction(
     IScoutRunRepository runs,
     IScoutLlmCallLogRepository llmCallLogs,
     IOptions<MonitoringOptions> monitoringOptions,
-    ILogger<GetScoutPackagesFunction> logger)
+    ILogger<GetScoutPackagesFunction> logger,
+    KpiProfileResolver? profileResolver = null)
 {
     private const int DefaultTop = 50;
     private const int MaxTop = 200;
@@ -50,18 +53,12 @@ public sealed class GetScoutPackagesFunction(
     }
 
     /// <summary>
-    /// Optional <c>?profileKey=</c> filter - which company's work to show. Absent or blank means
-    /// every company, which is what the portal asked for before it knew about companies at all.
-    /// Blank is collapsed to null rather than passed through: the empty string is a real stored
-    /// ProfileKey (rows written before the column existed), so "?profileKey=" must not be read as
-    /// a request for those. Unknown keys are not rejected - they simply match nothing, which is a
-    /// truthful empty list rather than an error the caller cannot act on.
+    /// Contract v6 §5: <c>?profileKey=</c> picks the company whose work to show - missing means the active
+    /// company, "*" every company, an unknown key is rejected. Rows stored without a profile are the
+    /// incumbent's (the SQL procs and <see cref="ProfileReadScope.Includes"/> both apply that rule).
     /// </summary>
-    private static string? ReadProfileKey(HttpRequestData req)
-    {
-        var raw = System.Web.HttpUtility.ParseQueryString(req.Url.Query)["profileKey"];
-        return string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
-    }
+    private Task<(ProfileReadScope? Scope, string? Error)> ReadScopeAsync(HttpRequestData req, CancellationToken ct) =>
+        ProfileReadScope.ResolveAsync(profileResolver, System.Web.HttpUtility.ParseQueryString(req.Url.Query)["profileKey"], ct);
 
     [Function("GetScoutPackages")]
     public async Task<HttpResponseData> GetPackagesAsync(
@@ -70,8 +67,11 @@ public sealed class GetScoutPackagesFunction(
     {
         try
         {
-            var items = await packages.GetRecentAsync(ReadTop(req), ReadBoard(req), ReadProfileKey(req), ct);
-            return await WriteJsonAsync(req, HttpStatusCode.OK, items.Select(ToSummary).ToList());
+            var (scope, error) = await ReadScopeAsync(req, ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error });
+
+            var items = await packages.GetRecentAsync(ReadTop(req), ReadBoard(req), scope.ProfileKey, ct);
+            return await WriteJsonAsync(req, HttpStatusCode.OK, items.Where(p => scope.Includes(p.ProfileKey)).Select(ToSummary).ToList());
         }
         catch (Exception ex)
         {
@@ -102,8 +102,12 @@ public sealed class GetScoutPackagesFunction(
 
         try
         {
+            var (scope, error) = await ReadScopeAsync(req, ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error });
+
             var package = await packages.GetByIdAsync(packageId, ct);
-            if (package is null)
+            // Another company's package does not exist for this one.
+            if (package is null || !scope.Includes(package.ProfileKey))
             {
                 return await WriteJsonAsync(req, HttpStatusCode.NotFound, new { error = $"No investigation package with id '{id}'." });
             }
@@ -197,8 +201,11 @@ public sealed class GetScoutPackagesFunction(
     {
         try
         {
-            var items = await runs.GetRecentAsync(ReadTop(req), ReadBoard(req), ReadProfileKey(req), ct);
-            return await WriteJsonAsync(req, HttpStatusCode.OK, items.Select(r => new
+            var (scope, error) = await ReadScopeAsync(req, ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error });
+
+            var items = await runs.GetRecentAsync(ReadTop(req), ReadBoard(req), scope.ProfileKey, ct);
+            return await WriteJsonAsync(req, HttpStatusCode.OK, items.Where(r => scope.Includes(r.ProfileKey)).Select(r => new
             {
                 id = r.Id,
                 board = r.Board,
@@ -234,7 +241,10 @@ public sealed class GetScoutPackagesFunction(
     {
         try
         {
-            var s = await runs.GetStatsAsync(ReadBoard(req), ReadProfileKey(req), ct);
+            var (scope, error) = await ReadScopeAsync(req, ct);
+            if (scope is null) return await WriteJsonAsync(req, HttpStatusCode.BadRequest, new { error });
+
+            var s = await runs.GetStatsAsync(ReadBoard(req), scope.ProfileKey, ct);
             return await WriteJsonAsync(req, HttpStatusCode.OK, new
             {
                 cycles = s.Cycles,

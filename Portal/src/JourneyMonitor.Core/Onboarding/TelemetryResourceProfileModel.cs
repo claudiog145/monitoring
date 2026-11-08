@@ -66,6 +66,7 @@ public static class TelemetryProfileDefaults
     public const int MaxSampledRowsCeiling = 200_000;
     public const int MaxDimensionKeys = 200;
     public const int MaxHostRows = 200;
+    public const int MaxDependencyTargetRows = 50;
 }
 
 /// <summary>
@@ -151,7 +152,21 @@ public sealed record TelemetryResourceProfile(
     TelemetryHostProfile Hosts,
     /// <summary>Plain-language notes a human needs in order to read the numbers correctly (sampling hit the cap, a table could not be asked, nothing was attributable at all).</summary>
     IReadOnlyList<string> Warnings,
-    DateTimeOffset GeneratedAt);
+    DateTimeOffset GeneratedAt,
+    /// <summary>Most frequent dependency targets (contract v4 §5 partners). Null when the dependencies table was not probed or held no rows.</summary>
+    TelemetryDependencyProfile? Dependencies = null);
+
+/// <summary>What the <c>dependencies</c> table calls out to, measured on the same capped sample as every other probe.</summary>
+public sealed record TelemetryDependencyProfile(
+    TelemetryProbeState State,
+    string? Error,
+    string Kql,
+    /// <summary>Denominator of every target share: dependency rows actually examined.</summary>
+    long SampledRows,
+    IReadOnlyList<ObservedDependencyTarget> Targets);
+
+/// <summary>One dependency target (lower-cased, verbatim otherwise) and type, with how many sampled calls went to it.</summary>
+public sealed record ObservedDependencyTarget(string Target, string Type, long ObservationCount);
 
 public sealed record TelemetryTableProfile(
     string Table,

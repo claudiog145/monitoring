@@ -43,10 +43,25 @@ BEGIN
             CONSTRAINT DF_monitoring_TelemetrySource_UpdatedAt DEFAULT SYSDATETIMEOFFSET(),
         UpdatedBy    nvarchar(128)     NOT NULL
             CONSTRAINT DF_monitoring_TelemetrySource_UpdatedBy DEFAULT N'',
+        -- The company profile allowed to reference this alias; NULL = shared. See the block below.
+        OwnerProfileKey nvarchar(128)  NULL,
         CONSTRAINT PK_monitoring_TelemetrySource PRIMARY KEY (Alias, Environment),
         CONSTRAINT CK_monitoring_TelemetrySource_Environment
             CHECK (Environment IN (N'production', N'staging', N'development'))
     );
+END
+GO
+
+-- Ownership (AG8). Aliases used to be global, so anyone allowed to save a company profile could put
+-- another company's alias into their own service and read its telemetry through Scouts, KPIs and
+-- kql: queries. A profile save now refuses an alias owned by a different profile; NULL = shared.
+-- Rows that predate the column belonged to the incumbent. The backfill runs ONLY in the batch that
+-- adds the column, so re-running the script never turns a row an operator marked shared (NULL)
+-- back into an incumbent-owned one.
+IF COL_LENGTH(N'monitoring.TelemetrySource', N'OwnerProfileKey') IS NULL
+BEGIN
+    ALTER TABLE monitoring.TelemetrySource ADD OwnerProfileKey nvarchar(128) NULL;
+    EXEC(N'UPDATE monitoring.TelemetrySource SET OwnerProfileKey = N''arrivia'' WHERE OwnerProfileKey IS NULL');
 END
 GO
 
@@ -82,21 +97,45 @@ CREATE OR ALTER PROCEDURE monitoring.usp_GetAllTelemetrySources
 AS
 BEGIN
     SET NOCOUNT ON;
-    SELECT Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled, Notes, UpdatedAt, UpdatedBy
+    SELECT Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled, Notes, UpdatedAt, UpdatedBy, OwnerProfileKey
     FROM monitoring.TelemetrySource
     ORDER BY Alias, Environment;
 END
 GO
 
+-- Who owned the row before and after each change (AG8), so an ownership transfer is a recorded
+-- event and not something only a diff of two snapshots could reveal.
+IF COL_LENGTH(N'monitoring.TelemetrySourceAudit', N'OwnerProfileKey') IS NULL
+    ALTER TABLE monitoring.TelemetrySourceAudit ADD OwnerProfileKey nvarchar(128) NULL;
+GO
+IF COL_LENGTH(N'monitoring.TelemetrySourceAudit', N'PreviousOwnerProfileKey') IS NULL
+    ALTER TABLE monitoring.TelemetrySourceAudit ADD PreviousOwnerProfileKey nvarchar(128) NULL;
+GO
+
 -- MERGE WITH (HOLDLOCK) rather than IF NOT EXISTS + UPDATE: two concurrent writers on the same
 -- (Alias, Environment) would otherwise race between the check and the insert.
+--
+-- Owner: decided by the caller (the admin API keeps the stored owner unless an explicit transfer
+-- names a new one). Omitting @OwnerProfileKey keeps the stored owner - a caller that does not
+-- know about ownership (an older binary mid-deploy) must never turn a row into a shared one.
+-- Shared (NULL) has to be asked for with @MakeShared = 1. A new row with no owner named belongs
+-- to the incumbent, the same default the admin API falls back to.
 CREATE OR ALTER PROCEDURE monitoring.usp_UpsertTelemetrySource
     @Alias nvarchar(64), @Environment nvarchar(32), @Kind nvarchar(32),
     @ResourceId nvarchar(512), @AppId nvarchar(64), @TenantId nvarchar(64),
-    @Enabled bit, @Notes nvarchar(1000), @ChangedBy nvarchar(128)
+    @Enabled bit, @Notes nvarchar(1000), @ChangedBy nvarchar(128),
+    @OwnerProfileKey nvarchar(128) = NULL,
+    @MakeShared bit = 0
 AS
 BEGIN
     SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    BEGIN TRANSACTION;
+
+    DECLARE @PreviousOwner nvarchar(128) =
+        (SELECT OwnerProfileKey FROM monitoring.TelemetrySource WITH (UPDLOCK, HOLDLOCK)
+         WHERE Alias = @Alias AND Environment = @Environment);
 
     MERGE monitoring.TelemetrySource WITH (HOLDLOCK) AS target
     USING (SELECT @Alias AS Alias, @Environment AS Environment) AS source
@@ -104,16 +143,23 @@ BEGIN
     WHEN MATCHED THEN
         UPDATE SET Kind = @Kind, ResourceId = @ResourceId, AppId = @AppId, TenantId = @TenantId,
                    Enabled = @Enabled, Notes = @Notes,
+                   OwnerProfileKey = CASE WHEN @MakeShared = 1 THEN NULL
+                                          ELSE COALESCE(@OwnerProfileKey, target.OwnerProfileKey) END,
                    UpdatedAt = SYSDATETIMEOFFSET(), UpdatedBy = @ChangedBy
     WHEN NOT MATCHED THEN
-        INSERT (Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled, Notes, UpdatedAt, UpdatedBy)
+        INSERT (Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled, Notes, UpdatedAt, UpdatedBy, OwnerProfileKey)
         VALUES (@Alias, @Environment, @Kind, @ResourceId, @AppId, @TenantId, @Enabled, @Notes,
-                SYSDATETIMEOFFSET(), @ChangedBy);
+                SYSDATETIMEOFFSET(), @ChangedBy,
+                CASE WHEN @MakeShared = 1 THEN NULL ELSE COALESCE(@OwnerProfileKey, N'arrivia') END);
 
-    INSERT INTO monitoring.TelemetrySourceAudit (Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled, Notes, Removed, ChangedBy)
-    VALUES (@Alias, @Environment, @Kind, @ResourceId, @AppId, @TenantId, @Enabled, @Notes, 0, @ChangedBy);
+    INSERT INTO monitoring.TelemetrySourceAudit (Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled, Notes, Removed, ChangedBy, OwnerProfileKey, PreviousOwnerProfileKey)
+    SELECT @Alias, @Environment, @Kind, @ResourceId, @AppId, @TenantId, @Enabled, @Notes, 0, @ChangedBy, OwnerProfileKey, @PreviousOwner
+    FROM monitoring.TelemetrySource
+    WHERE Alias = @Alias AND Environment = @Environment;
 
-    SELECT Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled, Notes, UpdatedAt, UpdatedBy
+    COMMIT TRANSACTION;
+
+    SELECT Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled, Notes, UpdatedAt, UpdatedBy, OwnerProfileKey
     FROM monitoring.TelemetrySource
     WHERE Alias = @Alias AND Environment = @Environment;
 END
@@ -125,11 +171,15 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    DELETE FROM monitoring.TelemetrySource WHERE Alias = @Alias AND Environment = @Environment;
+    DECLARE @Removed TABLE (OwnerProfileKey nvarchar(128) NULL);
+    DELETE FROM monitoring.TelemetrySource
+    OUTPUT deleted.OwnerProfileKey INTO @Removed
+    WHERE Alias = @Alias AND Environment = @Environment;
 
     -- Recorded even when nothing was deleted: "someone tried to remove this source" is still history.
-    INSERT INTO monitoring.TelemetrySourceAudit (Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled, Notes, Removed, ChangedBy)
-    VALUES (@Alias, @Environment, NULL, NULL, NULL, NULL, NULL, NULL, 1, @ChangedBy);
+    INSERT INTO monitoring.TelemetrySourceAudit (Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled, Notes, Removed, ChangedBy, OwnerProfileKey, PreviousOwnerProfileKey)
+    SELECT @Alias, @Environment, NULL, NULL, NULL, NULL, NULL, NULL, 1, @ChangedBy, NULL,
+           (SELECT TOP (1) OwnerProfileKey FROM @Removed);
 END
 GO
 
@@ -139,9 +189,25 @@ AS
 BEGIN
     SET NOCOUNT ON;
     SELECT TOP (@Top) AuditId, Alias, Environment, Kind, ResourceId, AppId, TenantId, Enabled,
-           Notes, Removed, ChangedAt, ChangedBy
+           Notes, Removed, ChangedAt, ChangedBy, OwnerProfileKey, PreviousOwnerProfileKey
     FROM monitoring.TelemetrySourceAudit
     ORDER BY ChangedAt DESC, AuditId DESC;
+END
+GO
+
+-- The newest owner the history records for an alias (AG8): a row's owner after a write, or the
+-- owner it had when it was deleted. Lets an alias whose rows were all deleted keep its owner, so
+-- recreating it for another profile needs an explicit transfer instead of a delete + create.
+CREATE OR ALTER PROCEDURE monitoring.usp_GetTelemetrySourceLastKnownOwner
+    @Alias nvarchar(64)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT TOP (1) CASE WHEN Removed = 1 THEN PreviousOwnerProfileKey ELSE OwnerProfileKey END AS OwnerProfileKey
+    FROM monitoring.TelemetrySourceAudit
+    WHERE Alias = @Alias
+      AND CASE WHEN Removed = 1 THEN PreviousOwnerProfileKey ELSE OwnerProfileKey END IS NOT NULL
+    ORDER BY AuditId DESC;
 END
 GO
 
@@ -164,6 +230,24 @@ USING (VALUES
 ) AS source (Alias, Environment, ResourceId, Notes)
     ON target.Alias = source.Alias AND target.Environment = source.Environment
 WHEN NOT MATCHED BY TARGET THEN
-    INSERT (Alias, Environment, Kind, ResourceId, Enabled, Notes, UpdatedBy)
-    VALUES (source.Alias, source.Environment, N'app-insights', source.ResourceId, 1, source.Notes, N'seed');
+    INSERT (Alias, Environment, Kind, ResourceId, Enabled, Notes, UpdatedBy, OwnerProfileKey)
+    VALUES (source.Alias, source.Environment, N'app-insights', source.ResourceId, 1, source.Notes, N'seed', N'arrivia');
+GO
+
+-- The demo profile's own alias (AG8). Demo used to declare the incumbent's 'club' alias, i.e. it
+-- read Arrivia's real club telemetry; with ownership that is exactly what a profile must not do.
+-- 'demo-club' belongs to 'demo', is DISABLED and points at a placeholder resource, so no real
+-- telemetry is reachable through it until an operator registers a real resource for the demo.
+-- INSERT-only like the seed above. Kept in sync with TelemetrySourceDefaults.
+MERGE monitoring.TelemetrySource WITH (HOLDLOCK) AS target
+USING (VALUES
+    (N'demo-club', N'production'),
+    (N'demo-club', N'staging')
+) AS source (Alias, Environment)
+    ON target.Alias = source.Alias AND target.Environment = source.Environment
+WHEN NOT MATCHED BY TARGET THEN
+    INSERT (Alias, Environment, Kind, ResourceId, Enabled, Notes, UpdatedBy, OwnerProfileKey)
+    VALUES (source.Alias, source.Environment, N'app-insights',
+            N'/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/demo-rg/providers/microsoft.insights/components/demo-club',
+            0, N'Demo profile placeholder. Disabled: register a real resource before enabling.', N'seed', N'demo');
 GO

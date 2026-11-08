@@ -1,6 +1,7 @@
 using System.Data;
 using System.Text.Json;
 using JourneyMonitor.Core.Abstractions;
+using JourneyMonitor.Core.Company;
 using JourneyMonitor.Core.Domain;
 using JourneyMonitor.Core.Options;
 using Microsoft.Data.SqlClient;
@@ -49,7 +50,10 @@ public sealed class SqlKnowledgeRetriever(ILlmClient llmClient, IOptions<Journey
         return hashes.Where(h => !string.IsNullOrEmpty(h)).ToHashSet(StringComparer.Ordinal);
     }
 
-    public async Task<IReadOnlyList<KnowledgeDocumentSummary>> GetIndexedDocumentsAsync(CancellationToken ct = default)
+    public Task<IReadOnlyList<KnowledgeDocumentSummary>> GetIndexedDocumentsAsync(CancellationToken ct = default) =>
+        GetIndexedDocumentsForProfileAsync(null, ct);
+
+    public async Task<IReadOnlyList<KnowledgeDocumentSummary>> GetIndexedDocumentsForProfileAsync(string? profileKey, CancellationToken ct = default)
     {
         await using var connection = OpenConnection();
         var rows = await connection.QueryAsync<KnowledgeDocumentSummary>(new CommandDefinition(
@@ -58,6 +62,8 @@ public sealed class SqlKnowledgeRetriever(ILlmClient llmClient, IOptions<Journey
             {
                 UnknownEmbeddingModel = KnowledgeChunk.UnknownEmbeddingModel,
                 NoEmbeddingModel = KnowledgeChunk.NoEmbeddingModel,
+                ProfileKey = string.IsNullOrWhiteSpace(profileKey) ? null : profileKey.Trim(),
+                IncumbentProfileKey = KpiProfiles.Default,
             },
             commandType: CommandType.StoredProcedure,
             cancellationToken: ct));
@@ -65,11 +71,16 @@ public sealed class SqlKnowledgeRetriever(ILlmClient llmClient, IOptions<Journey
         return rows.ToList();
     }
 
-    public async Task<IReadOnlyList<KnowledgeDocumentSection>> GetDocumentSectionsAsync(string documentTitle, string? sourceType, CancellationToken ct = default)
+    public Task<IReadOnlyList<KnowledgeDocumentSection>> GetDocumentSectionsAsync(string documentTitle, string? sourceType, CancellationToken ct = default) =>
+        GetDocumentSectionsForProfileAsync(documentTitle, sourceType, null, ct);
+
+    public async Task<IReadOnlyList<KnowledgeDocumentSection>> GetDocumentSectionsForProfileAsync(string documentTitle, string? sourceType, string? profileKey, CancellationToken ct = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("DocumentTitle", documentTitle, DbType.String, size: 400);
         parameters.Add("SourceType", string.IsNullOrWhiteSpace(sourceType) ? null : sourceType, DbType.String, size: 64);
+        parameters.Add("ProfileKey", string.IsNullOrWhiteSpace(profileKey) ? null : profileKey.Trim(), DbType.String, size: 128);
+        parameters.Add("IncumbentProfileKey", KpiProfiles.Default, DbType.String, size: 128);
 
         await using var connection = OpenConnection();
         var rows = await connection.QueryAsync<KnowledgeDocumentSection>(new CommandDefinition(
@@ -123,6 +134,7 @@ public sealed class SqlKnowledgeRetriever(ILlmClient llmClient, IOptions<Journey
     {
         var parameters = new DynamicParameters();
         parameters.Add("ProfileKey", string.IsNullOrWhiteSpace(profileKey) ? null : profileKey.Trim(), DbType.String, size: 128);
+        parameters.Add("IncumbentProfileKey", KpiProfiles.Default, DbType.String, size: 128);
 
         await using var connection = OpenConnection();
         var rows = await connection.QueryAsync<KnowledgeChunkRow>(new CommandDefinition(

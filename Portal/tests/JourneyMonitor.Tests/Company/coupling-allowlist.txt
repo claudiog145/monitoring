@@ -121,3 +121,26 @@ JourneyMonitor.Infrastructure/Sql/SqlForensicCaseRepository.cs|icepartner|IcePar
 JourneyMonitor.Infrastructure/Sql/SqlInvestigationPackageRepository.cs|icepartner|IcePartnerId is a stored procedure parameter and a column name
 JourneyMonitor.Infrastructure/Sql/SqlJourneyStore.cs|service-name-literal|Maps Arrivia vertical keys to the per-vertical SQL schema names
 JourneyMonitor.Infrastructure/Sql/SqlOverviewReader.cs|service-name-literal|Maps Arrivia vertical keys to the per-vertical SQL schema names
+
+# --- Inherited by the spec-1000 merge (2026-11-06) ---------------------------------------------
+# Hotel Business Health / Fabric (from main): Fabric schema columns are VacationClub* and the
+# source only exists for the hotel vertical; moving them needs a profile-driven Fabric mapping.
+JourneyMonitor.Core/Abstractions/IHotelBookingConversionSource.cs|vacationclub|Fabric hotel booking schema keys rows by VacationClubId; no profile-driven Fabric mapping exists yet
+JourneyMonitor.Core/Abstractions/IHotelBusinessHealthSource.cs|vacationclub|Fabric hotel business health is keyed by VacationClubId; no profile-driven Fabric mapping exists yet
+JourneyMonitor.Core/Analytics/HotelBookingConversion.cs|service-name-literal|Hotel-only Fabric conversion source; vertical key matches the Fabric dataset name
+JourneyMonitor.Core/Analytics/HotelBookingConversion.cs|vacationclub|Fabric hotel booking schema keys rows by VacationClubId
+JourneyMonitor.Core/Domain/HotelBookingKpiResponse.cs|vacationclub|Mirrors the Fabric HotelBookingKpi column names one to one
+JourneyMonitor.Core/Domain/HotelBusinessHealth.cs|vacationclub|Mirrors the Fabric hotel business health grain (VacationClubId)
+JourneyMonitor.Core/UseCases/GetHotelBusinessHealthService.cs|service-name-literal|Hotel-only Fabric business health use case; vertical key matches the dataset
+JourneyMonitor.Core/UseCases/GetHotelBusinessHealthService.cs|vacationclub|Parses the club filter into the Fabric VacationClubId grain
+JourneyMonitor.Infrastructure/Fabric/FabricBusinessEvidenceProvider.cs|service-name-literal|Triage business evidence exists only for the hotel Fabric dataset
+JourneyMonitor.Infrastructure/Fabric/FabricBusinessEvidenceProvider.cs|vacationclub|Reads Fabric rows keyed by VacationClubID
+JourneyMonitor.Infrastructure/Fabric/FabricHotelBusinessHealthSource.cs|service-name-literal|Hotel-only Fabric source; vertical key matches the dataset
+JourneyMonitor.Infrastructure/Fabric/FabricHotelBusinessHealthSource.cs|vacationclub|Fabric SQL columns are VacationClub*
+JourneyMonitor.Infrastructure/Fabric/HotelBookingKpiConnection.cs|vacationclub|Fabric SQL columns are VacationClub*
+JourneyMonitor.Infrastructure/Hotel/SampleHotelBusinessHealthSource.cs|service-name-literal|Offline sample of the hotel Fabric dataset used when Fabric is not configured
+JourneyMonitor.Infrastructure/Hotel/SampleHotelBusinessHealthSource.cs|vacationclub|Offline sample mirrors the Fabric VacationClubId grain
+JourneyMonitor.Infrastructure/Sql/SqlHotelBookingConversionSource.cs|vacationclub|SQL mirror of the Fabric hotel booking schema keyed by VacationClubId
+# Spec 1000 KPI domains: the KPI catalog is per vertical key; MT2 scopes it by ProfileKey.
+JourneyMonitor.Core/Domain/Kpi.cs|service-name-literal|Spec 1000 frozen contract lists the KPI vertical keys; scoped per company by ProfileKey in MT2
+# Branch-own debt owned by tasks MT1/MT3 - these two lines MUST be deleted by those tasks.

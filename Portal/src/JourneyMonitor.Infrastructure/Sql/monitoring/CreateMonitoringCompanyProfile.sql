@@ -1,4 +1,4 @@
-﻿-- What a company IS, versioned. Grain: one row per ProfileKey in monitoring.CompanyProfile, with
+-- What a company IS, versioned. Grain: one row per ProfileKey in monitoring.CompanyProfile, with
 -- CompanyProfileAudit as append-only history - same shape as monitoring.KqlQuery(+Audit).
 --
 -- Why this table exists: which services exist, which steps a request can belong to, how to tell
@@ -438,6 +438,11 @@ BEGIN
     "ownerNoun": "owning team",
     "description": "Arrivia runs white-label travel booking sites for member clubs. A member arrives on a club-branded site and moves through a booking funnel - search, results, detail, pre-book, checkout, booking, confirmation - in one of three verticals: Hotels, Cars and Cruises. Hotels and Cars share one storefront; Cruises runs on its own core and API. Login, checkout, booking, confirmation and cancellation hit the same endpoints whatever the member is buying, so they are grouped as Shared Booking Services. Who is affected is always a club. Most traffic does not stamp a club id, so it is identified by the club-branded hostname it was served on, which the club inventory maps to the club; a stamped club id, when present, is the stronger answer and wins."
   },
+  "telemetryTenants": [
+    { "tenantKey": "arrivia", "aadTenantId": "60396ff5-e90f-4bc5-aced-a4f462f2636e", "domains": ["hotels", "cars"] },
+    { "tenantKey": "cruises", "aadTenantId": "60396ff5-e90f-4bc5-aced-a4f462f2636e", "domains": ["cruises"] },
+    { "tenantKey": "ice", "aadTenantId": "b0298d22-1db0-4550-8fa6-a116a5ab4208", "domains": ["air"] }
+  ],
   "version": 1,
   "enabled": true,
   "notes": "Derived from the scout board KQL''s Club=coalesce(...) chain and its four StageNo/Stage case() blocks. The deviations from that query are listed in the comment above this seed; they are corrections, not drift."
@@ -502,6 +507,43 @@ BEGIN
 END
 GO
 
+-- Migration for databases seeded BEFORE profiles declared their telemetry tenants (the map that
+-- turns an Entra tenant id + telemetry domain into the key an App Insights token is stored under;
+-- it used to be hardcoded in TenantResolver). Only ADDS a property that is absent, so it never
+-- overwrites an operator's edit: a profile whose telemetryTenants was set - even to [] - is left
+-- alone, and once it has run the predicate no longer matches. Audited like any other write.
+IF EXISTS (
+    SELECT 1 FROM monitoring.CompanyProfile WITH (UPDLOCK, HOLDLOCK)
+    WHERE ProfileKey = N'arrivia'
+      AND ISJSON(ProfileJson) = 1
+      AND JSON_QUERY(ProfileJson, N'$.telemetryTenants') IS NULL)
+BEGIN
+    DECLARE @ArriviaTenants nvarchar(max) = N'[
+    { "tenantKey": "arrivia", "aadTenantId": "60396ff5-e90f-4bc5-aced-a4f462f2636e", "domains": ["hotels", "cars"] },
+    { "tenantKey": "cruises", "aadTenantId": "60396ff5-e90f-4bc5-aced-a4f462f2636e", "domains": ["cruises"] },
+    { "tenantKey": "ice", "aadTenantId": "b0298d22-1db0-4550-8fa6-a116a5ab4208", "domains": ["air"] }
+  ]';
+    DECLARE @TenantsVersion int = ISNULL((SELECT Version FROM monitoring.CompanyProfile WHERE ProfileKey = N'arrivia'), 1) + 1;
+    DECLARE @TenantsJson nvarchar(max);
+
+    SELECT @TenantsJson = JSON_MODIFY(
+               JSON_MODIFY(ProfileJson, N'$.telemetryTenants', JSON_QUERY(@ArriviaTenants)),
+               N'$.version', @TenantsVersion)
+    FROM monitoring.CompanyProfile
+    WHERE ProfileKey = N'arrivia';
+
+    UPDATE monitoring.CompanyProfile
+    SET ProfileJson = @TenantsJson,
+        Version = @TenantsVersion,
+        UpdatedAt = SYSDATETIMEOFFSET(),
+        UpdatedBy = N'seed:telemetry-tenants'
+    WHERE ProfileKey = N'arrivia';
+
+    INSERT INTO monitoring.CompanyProfileAudit (ProfileKey, Version, ProfileJson, Removed, ChangedBy)
+    VALUES (N'arrivia', @TenantsVersion, @TenantsJson, 0, N'seed:telemetry-tenants');
+END
+GO
+
 -- Demo: the same telemetry described with a DIFFERENT vocabulary, which is the whole proof that
 -- the platform is decoupled. One service called "checkout" instead of a vertical, four steps named
 -- step-01..step-04 instead of booking stages, and the entity is a "tenant" rather than a club -
@@ -519,7 +561,7 @@ BEGIN
     {
       "key": "checkout",
       "displayName": "Checkout",
-      "telemetrySourceAliases": ["club"],
+      "telemetrySourceAliases": ["demo-club"],
       "hostFilters": [],
       "flows": [
         {
@@ -555,6 +597,56 @@ BEGIN
   "notes": "Decoupling probe. Same telemetry, different ontology."
 }', 1, N'Demo Company', 1,
     N'Decoupling probe: deliberately different vocabulary over the same telemetry.', N'seed');
+END
+GO
+
+-- Migration (AG8): telemetry source aliases now belong to a profile, and 'club' belongs to the
+-- incumbent - a demo that declares it is reading Arrivia's real telemetry, and can no longer be
+-- saved at all. Points the demo at its own 'demo-club' alias (CreateMonitoringTelemetrySource.sql
+-- seeds it, owned by 'demo' and disabled). Only the telemetrySourceAliases arrays are rewritten,
+-- element by element, so nothing else in the document changes. 'club' is matched the way a save
+-- compares aliases (case- and whitespace-insensitively). Idempotent by shape: once no
+-- service lists 'club' the predicate no longer matches. Version bumped and audited like any write.
+IF EXISTS (
+    SELECT 1
+    FROM monitoring.CompanyProfile p WITH (UPDLOCK, HOLDLOCK)
+    CROSS APPLY OPENJSON(p.ProfileJson, N'$.services') s
+    CROSS APPLY OPENJSON(s.value, N'$.telemetrySourceAliases') a
+    WHERE p.ProfileKey = N'demo' AND ISJSON(p.ProfileJson) = 1 AND LOWER(LTRIM(RTRIM(a.value))) = N'club')
+BEGIN
+    DECLARE @DemoJson nvarchar(max) = (SELECT ProfileJson FROM monitoring.CompanyProfile WHERE ProfileKey = N'demo');
+    DECLARE @DemoServiceCount int = (SELECT COUNT(*) FROM OPENJSON(@DemoJson, N'$.services'));
+    DECLARE @DemoIndex int = 0;
+    DECLARE @DemoPath nvarchar(200);
+    DECLARE @DemoAliases nvarchar(max);
+
+    WHILE @DemoIndex < @DemoServiceCount
+    BEGIN
+        SET @DemoPath = N'$.services[' + CAST(@DemoIndex AS nvarchar(10)) + N'].telemetrySourceAliases';
+        IF JSON_QUERY(@DemoJson, @DemoPath) IS NOT NULL
+        BEGIN
+            SET @DemoAliases = (
+                SELECT N'[' + ISNULL(STRING_AGG(
+                           N'"' + STRING_ESCAPE(CASE WHEN LOWER(LTRIM(RTRIM(a.value))) = N'club' THEN N'demo-club' ELSE a.value END, 'json') + N'"', N', ')
+                           WITHIN GROUP (ORDER BY CAST(a.[key] AS int)), N'') + N']'
+                FROM OPENJSON(@DemoJson, @DemoPath) a);
+            SET @DemoJson = JSON_MODIFY(@DemoJson, @DemoPath, JSON_QUERY(@DemoAliases));
+        END
+        SET @DemoIndex += 1;
+    END
+
+    DECLARE @DemoVersion int = ISNULL((SELECT Version FROM monitoring.CompanyProfile WHERE ProfileKey = N'demo'), 1) + 1;
+    SET @DemoJson = JSON_MODIFY(@DemoJson, N'$.version', @DemoVersion);
+
+    UPDATE monitoring.CompanyProfile
+    SET ProfileJson = @DemoJson,
+        Version = @DemoVersion,
+        UpdatedAt = SYSDATETIMEOFFSET(),
+        UpdatedBy = N'seed:demo-own-alias'
+    WHERE ProfileKey = N'demo';
+
+    INSERT INTO monitoring.CompanyProfileAudit (ProfileKey, Version, ProfileJson, Removed, ChangedBy)
+    VALUES (N'demo', @DemoVersion, @DemoJson, 0, N'seed:demo-own-alias');
 END
 GO
 

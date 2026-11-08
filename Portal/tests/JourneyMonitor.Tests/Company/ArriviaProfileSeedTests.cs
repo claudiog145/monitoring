@@ -344,6 +344,9 @@ public class ArriviaProfileSeedTests
     /// regex: the document contains braces, quotes and brackets, and a pattern that got the
     /// escaping subtly wrong would hand the test a corrupted document and blame the seed for it.
     /// </summary>
+    /// <summary>The applied seed document for <paramref name="profileKey"/>, read out of the SQL script exactly like the tests here do.</summary>
+    internal static string SeedJsonFor(string profileKey) => ExtractSeedJson(SeedSql.Value, profileKey);
+
     private static string ExtractSeedJson(string sql, string profileKey)
     {
         var anchor = $"VALUES (N'{profileKey}', N'";

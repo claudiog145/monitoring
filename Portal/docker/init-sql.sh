@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Creates platformDB and applies journey, dashboard, monitoring, and incident schemas. Idempotent.
 # When MSSQL_DATABASE_QA is set (local docker-compose), the same scripts are applied to that
-# second database on the same server. Unset for a single-database target such as Azure SQL.
+# second database on the same server. MSSQL_DATABASE_DEMO does the same for the demo stack's
+# database. Both unset for a single-database target such as Azure SQL.
 set -euo pipefail
 
 SQLCMD="${SQLCMD:-/opt/mssql-tools18/bin/sqlcmd}"
@@ -14,6 +15,7 @@ SQL_USER="${MSSQL_USER:-sa}"
 SA_PASSWORD="${MSSQL_SA_PASSWORD:?MSSQL_SA_PASSWORD is required}"
 DB="${MSSQL_DATABASE:-platformDB}"
 DB_QA="${MSSQL_DATABASE_QA:-}"
+DB_DEMO="${MSSQL_DATABASE_DEMO:-}"
 SCRIPTS="${SQL_SCRIPTS_DIR:-/scripts}"
 
 run_sqlcmd() {
@@ -47,6 +49,7 @@ provision_database() {
 
   for script in \
     hotel/CreateHotelSchema.sql \
+    hotel/CreateBusinessHealth.sql \
     car/CreateCarSchema.sql \
     cruise/CreateCruiseSchema.sql \
     air/CreateAirSchema.sql \
@@ -54,7 +57,6 @@ provision_database() {
     CreateClubInventory.sql \
     CreateClubInventoryMaturity.sql \
     SeedClubInventory.sql \
-    SeedClubInventoryFusionHybrid.sql \
     SeedClubProductMaturityStatus.sql \
     dashboard/CreateDashboardMetrics.sql \
     monitoring/CreateMonitoringSettings.sql \
@@ -75,7 +77,13 @@ provision_database() {
     monitoring/CreateMonitoringKqlQuery.sql \
     monitoring/CreateMonitoringRca.sql \
     monitoring/CreateMonitoringCompanyProfile.sql \
-    monitoring/20241030_CreateAppInsightsTokensTable.sql
+    monitoring/20241030_CreateAppInsightsTokensTable.sql \
+    monitoring/CreateMonitoringKpi.sql \
+    monitoring/CreateMonitoringTriage.sql \
+    monitoring/CreateMonitoringScoutShadow.sql \
+    monitoring/SeedKpiDefinitions.sql \
+    monitoring/CreateMonitoringDaemonActivity.sql \
+    monitoring/CreateMonitoringProfileJourney.sql
   do
     echo "Applying ${script} to [${db}]..."
     run_sqlcmd -d "$db" -i "${SCRIPTS}/${script}"
@@ -88,6 +96,12 @@ if [[ -n "$DB_QA" && "$DB_QA" != "$DB" ]]; then
   provision_database "$DB_QA"
   echo "Applying staging hotel hosts to [${DB_QA}]..."
   run_sqlcmd -d "$DB_QA" -i "${SCRIPTS}/UpdateQaHotelHosts.sql"
+fi
+
+# The DEMO stack's database (docker-compose profile "demo"): the same schema and seeds as $DB,
+# filled with synthetic company packs by Portal/demo/scripts/demo-reset.ps1.
+if [[ -n "$DB_DEMO" && "$DB_DEMO" != "$DB" && "$DB_DEMO" != "$DB_QA" ]]; then
+  provision_database "$DB_DEMO"
 fi
 
 echo "SQL journey store is ready."

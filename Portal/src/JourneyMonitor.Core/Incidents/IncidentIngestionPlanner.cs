@@ -15,7 +15,8 @@ public sealed record ExceptionSignal(
     string? SessionId,
     string? CorrelationId,
     string? Url,
-    string? RequestUrl = null);
+    string? RequestUrl = null,
+    string Source = ExceptionSource.Server);
 
 public sealed record PlannedOccurrence(
     DateTimeOffset OccurredAt,
@@ -26,7 +27,8 @@ public sealed record PlannedOccurrence(
     string? Url,
     string Message,
     string? StackTrace,
-    string ItemId);
+    string ItemId,
+    string Source);
 
 /// <summary>
 /// A grouped problem for one club. <see cref="InitialStatus"/> applies only when the fingerprint
@@ -270,7 +272,8 @@ public static class IncidentIngestionPlanner
                 NullIfBlank(TrimTo(signal.Url, 2048)),
                 TrimTo(string.IsNullOrWhiteSpace(signal.Message) ? message : signal.Message, 1024),
                 string.IsNullOrWhiteSpace(signal.StackTrace) ? null : signal.StackTrace,
-                itemId));
+                itemId,
+                ExceptionSource.Normalize(signal.Source)));
         }
 
         public PlannedIncident ToIncident() => new(

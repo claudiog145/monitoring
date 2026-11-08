@@ -1,0 +1,113 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "crossComponentResources": [
+          "/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/cruiseng-rg-prod-usc/providers/microsoft.insights/components/cruise-web-ai-prod"
+        ],
+        "parameters": [
+          {
+            "id": "p-clubid",
+            "version": "KqlParameterItem/1.0",
+            "name": "ClubId",
+            "type": 1,
+            "value": "15639",
+            "isRequired": true
+          },
+          {
+            "id": "p-partner",
+            "version": "KqlParameterItem/1.0",
+            "name": "PartnerId",
+            "type": 1,
+            "value": "",
+            "isRequired": false,
+            "isHiddenWhenLocked": true
+          },
+          {
+            "id": "p-time",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "value": { "durationMs": 86400000 },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 3600000 },
+                { "durationMs": 14400000 },
+                { "durationMs": 43200000 },
+                { "durationMs": 86400000 },
+                { "durationMs": 259200000 },
+                { "durationMs": 604800000 },
+                { "durationMs": 1209600000 },
+                { "durationMs": 2592000000 }
+              ],
+              "allowCustom": true
+            }
+          },
+          {
+            "id": "p-rows",
+            "version": "KqlParameterItem/1.0",
+            "name": "RowLimit",
+            "label": "Latest events",
+            "type": 2,
+            "value": "1000",
+            "isRequired": true,
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "showDefault": false
+            },
+            "jsonData": "[{\"value\":\"100\",\"label\":\"100\"},{\"value\":\"500\",\"label\":\"500\"},{\"value\":\"1000\",\"label\":\"1,000\"},{\"value\":\"5000\",\"label\":\"5,000\"}]"
+          }
+        ]
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Cruises — club activity\n\nSource: `cruise-web-ai-prod`. Filtered by **PartnerId** and `product = cruise`. These events do not carry ClubId. The map sends the partner. Nobody has to type it.\n\n**Time range** refreshes the chart and the list. **Latest events** only limits how many rows the list shows."
+      },
+      "name": "intro"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "size": 0,
+        "query": "let partnerId = tostring(\"{PartnerId}\");\nunion isfuzzy=true pageViews, customEvents\n| where timestamp {TimeRange}\n| extend Partner = coalesce(tostring(customDimensions.partnerId), tostring(customDimensions.PartnerId), tostring(customDimensions.partner_id))\n| extend Product = tostring(customDimensions.product)\n| where isnotempty(partnerId) and Partner == partnerId\n| where Product == \"cruise\"\n| summarize Events = count() by bin(timestamp, {TimeRange:grain})\n| order by timestamp asc",
+        "title": "Activity over time — {TimeRange:label}",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "linechart",
+        "crossComponentResources": [
+          "/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/cruiseng-rg-prod-usc/providers/microsoft.insights/components/cruise-web-ai-prod"
+        ]
+      },
+      "name": "timechart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "size": 0,
+        "query": "let partnerId = tostring(\"{PartnerId}\");\nlet rowLimit = toint(\"{RowLimit}\");\nunion isfuzzy=true pageViews, customEvents\n| where timestamp {TimeRange}\n| extend Partner = coalesce(tostring(customDimensions.partnerId), tostring(customDimensions.PartnerId), tostring(customDimensions.partner_id))\n| extend Product = tostring(customDimensions.product)\n| where isnotempty(partnerId) and Partner == partnerId\n| where Product == \"cruise\"\n| project timestamp, itemType, name, operation_Name, Partner, Product, url, customDimensions\n| order by timestamp desc\n| take rowLimit",
+        "title": "Latest events in this range",
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/cruiseng-rg-prod-usc/providers/microsoft.insights/components/cruise-web-ai-prod"
+        ]
+      },
+      "name": "table"
+    }
+  ],
+  "fallbackResourceIds": [
+    "/subscriptions/89780439-fb9b-4f7b-bf37-115569216afe/resourceGroups/cruiseng-rg-prod-usc/providers/microsoft.insights/components/cruise-web-ai-prod"
+  ]
+}

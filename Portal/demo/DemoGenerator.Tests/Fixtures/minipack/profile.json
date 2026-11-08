@@ -1,0 +1,30 @@
+{
+  "profileKey": "fixture-demo",
+  "displayName": "Fixture Shop (demo)",
+  "labels": { "service": "Area", "flow": "Journey", "step": "Step", "entity": "Store", "owner": "Team" },
+  "services": [
+    {
+      "key": "checkout", "displayName": "Checkout", "telemetrySourceAliases": ["fixture-web"], "hostFilters": ["fixtureshop.demo"],
+      "flows": [ { "key": "purchase", "displayName": "Purchase", "steps": [
+        { "key": "cart", "displayName": "Cart", "order": 1, "matchers": [ { "kind": "path-contains", "value": "/checkout/cart" } ] },
+        { "key": "pay", "displayName": "Pay", "order": 2, "matchers": [ { "kind": "path-contains", "value": "/checkout/pay" } ] }
+      ] } ]
+    },
+    {
+      "key": "inventory", "displayName": "Inventory", "telemetrySourceAliases": ["fixture-api"], "hostFilters": [],
+      "flows": [ { "key": "stock", "displayName": "Stock", "steps": [
+        { "key": "stock-check", "displayName": "Stock check", "order": 1, "matchers": [ { "kind": "operation-equals", "value": "GET /api/stock" } ] }
+      ] } ]
+    }
+  ],
+  "entityIdentitySources": [ { "order": 1, "kind": "custom-dimension", "key": "StoreId", "entityKind": "store" } ],
+  "glossary": { "serviceNoun": "area", "flowNoun": "journey", "stepNoun": "step", "entityNoun": "store", "ownerNoun": "team",
+    "description": "Fixture Shop is a synthetic test retailer used only by the DemoGenerator unit tests." },
+  "enabled": true,
+  "notes": "Test fixture. Synthetic data only.",
+  "partners": [
+    { "key": "pay-gw", "displayName": "Payment gateway", "matchers": [ { "kind": "dependency-target-contains", "value": "paygate.demo" } ] },
+    { "key": "inventory-db", "displayName": "Inventory database", "matchers": [ { "kind": "dependency-type-equals", "value": "SQL" } ] }
+  ],
+  "privacy": { "allowRawEvidence": false, "piiDimensions": ["CustomerEmail"], "patterns": [] }
+}

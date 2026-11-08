@@ -16,10 +16,10 @@ public class JourneySyncOptionsTests
     }
 
     [Fact]
-    public void DefaultsToHotelsAndCruises()
+    public void DefaultsToHotelsCruisesAndCars()
     {
         var options = new JourneySyncOptions();
 
-        Assert.Equal(new[] { "hotels", "cruises" }, options.EnumerateDomains());
+        Assert.Equal(new[] { "hotels", "cruises", "cars" }, options.EnumerateDomains());
     }
 }

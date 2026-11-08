@@ -17,4 +17,12 @@ public interface IKnowledgeDocumentSource
     string Location { get; }
 
     IAsyncEnumerable<KnowledgeDocumentFile> ReadAllAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The same corpus restricted to the sub-folder <paramref name="subPath"/> (already validated by
+    /// <see cref="UseCases.KnowledgeCorpusSubPath"/>: relative, '/'-separated, no '..'). Paths it
+    /// yields are relative to that sub-folder, so a document's domain is the first folder under it.
+    /// Null when the sub-folder does not exist.
+    /// </summary>
+    IKnowledgeDocumentSource? Scope(string subPath);
 }
