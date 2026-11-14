@@ -76,7 +76,7 @@ jobs:
       # credential for this repo's main branch. ARRIVIA_AZURE_TENANT_ID is the org variable the
       # shared workflow already uses.
       - name: Azure login
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.SPEC1000_AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.ARRIVIA_AZURE_TENANT_ID }}
